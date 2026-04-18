@@ -13,7 +13,7 @@ export async function GET(req: NextRequest) {
   const matched = req.nextUrl.searchParams.get('matched')
   let query = supabase
     .from('transaction_images')
-    .select('*, matched_tx:bank_transactions(id, transaction_date, description, amount, check_number)')
+    .select('*, matched_tx:bank_transactions!transaction_images_matched_bank_transaction_id_fkey(id, transaction_date, description, amount, check_number)')
     .order('created_at', { ascending: false })
   if (type) query = query.eq('image_type', type)
   if (matched === 'true') query = query.not('matched_bank_transaction_id', 'is', null)
