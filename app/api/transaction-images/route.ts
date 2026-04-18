@@ -98,6 +98,17 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // ── Auto-OCR: call parse-receipt in the background ──────────
+    // We fire-and-forget so the upload response is fast.
+    // The OCR result updates the row and returns suggestions via
+    // a separate call from the UI.
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
+    fetch(`${appUrl}/api/parse-receipt`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image_id: row.id }),
+    }).catch(() => { /* non-blocking — UI polls separately */ })
+
     return NextResponse.json(row, { status: 201 })
   }
 

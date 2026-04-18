@@ -1,6 +1,6 @@
 'use client'
 import { useEffect, useState, useRef } from 'react'
-import { Upload, Search, Download, TrendingUp, TrendingDown, DollarSign, FileText, Loader2, X, Paperclip, Receipt, FileImage, Trash2, Plus, File, Camera, Image as ImageIcon, Link2, RefreshCw, Unplug, Edit3, FolderOpen } from 'lucide-react'
+import { Upload, Search, Download, TrendingUp, TrendingDown, DollarSign, FileText, Loader2, X, Paperclip, Receipt, FileImage, Trash2, Plus, File, Camera, Image as ImageIcon, Link2, RefreshCw, Unplug, Edit3, FolderOpen, Sparkles, CheckCircle2, AlertCircle } from 'lucide-react'
 import { formatCurrency, formatDateShort } from '@/lib/utils'
 import Script from 'next/script'
 
@@ -74,13 +74,13 @@ function AccountsTab() {
           Show inactive
         </label>
         <button onClick={() => { setAdding(true); setEditing({ id: '', name: '', account_type: 'expense', report_group: 'PURCHASES', sort_order: 100, is_active: true }) }}
-          className="flex items-center gap-2 text-white font-semibold px-4 py-2.5 rounded-xl shadow-md" style={{ background: '#185FA5' }}>
+          className="flex items-center gap-2 text-white font-semibold px-4 py-2.5 rounded-xl shadow-md" style={{ background: '#b8895a' }}>
           <Plus size={14} /> Add Account
         </button>
       </div>
 
       {loading ? (
-        <div className="flex justify-center py-20"><Loader2 size={28} className="animate-spin" style={{ color: '#185FA5' }} /></div>
+        <div className="flex justify-center py-20"><Loader2 size={28} className="animate-spin" style={{ color: '#b8895a' }} /></div>
       ) : Object.keys(grouped).length === 0 ? (
         <div className="text-center py-20 text-gray-400">
           <FolderOpen size={30} className="mx-auto mb-2 opacity-30" />
@@ -158,7 +158,7 @@ function AccountsTab() {
                 <input name="sort_order" type="number" defaultValue={editing?.sort_order || 100} className={inputCls} />
               </div>
               <button type="submit" disabled={saving}
-                className="w-full text-white font-bold py-3 rounded-xl flex items-center justify-center gap-2" style={{ background: '#185FA5' }}>
+                className="w-full text-white font-bold py-3 rounded-xl flex items-center justify-center gap-2" style={{ background: '#b8895a' }}>
                 {saving && <Loader2 size={14} className="animate-spin" />}
                 {editing?.id ? 'Save Changes' : 'Add Account'}
               </button>
@@ -176,6 +176,38 @@ interface AttachedImage {
   file_name: string | null
   image_type: 'receipt' | 'check'
   created_at?: string
+  // OCR-populated fields
+  vendor?: string | null
+  amount?: number | null
+  receipt_date?: string | null
+  check_number?: string | null
+  notes?: string | null
+  matched_bank_transaction_id?: string | null
+  matched_tx?: {
+    id: string
+    transaction_date: string
+    description: string
+    amount: number
+    check_number: string | null
+  } | null
+}
+
+interface OcrResult {
+  vendor?: string | null
+  amount?: number | null
+  date?: string | null
+  check_number?: string | null
+  memo?: string | null
+  category?: string | null
+  confidence?: 'high' | 'medium' | 'low'
+  matched_transactions?: Array<{
+    id: string
+    transaction_date: string
+    description: string
+    amount: number
+    payee?: string | null
+    category?: string | null
+  }>
 }
 
 interface Tx {
@@ -232,6 +264,9 @@ export default function BookkeepingPage() {
   const [bankConnections, setBankConnections] = useState<any[]>([])
   const [syncing, setSyncing] = useState(false)
   const [connecting, setConnecting] = useState(false)
+  const [ocrAnalyzing, setOcrAnalyzing] = useState<Record<string, boolean>>({})
+  const [ocrResults, setOcrResults] = useState<Record<string, OcrResult>>({})
+  const [modalOcr, setModalOcr] = useState<{ imageId: string; data: OcrResult } | null>(null)
   const docRef = useRef<HTMLInputElement>(null)
   const stmtRef = useRef<HTMLInputElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
@@ -294,6 +329,7 @@ export default function BookkeepingPage() {
   async function uploadImage(kind: 'receipt' | 'check', file: File) {
     if (!editing) return
     setImgUploading(kind)
+    setModalOcr(null)
     try {
       // 1. Upload the file
       const fd = new FormData()
@@ -324,6 +360,21 @@ export default function BookkeepingPage() {
       const fresh = await (await fetch(`/api/bookkeeping?table=bank_transactions`)).json()
       const updated = Array.isArray(fresh) ? fresh.find((t: Tx) => t.id === editing.id) : null
       if (updated) setEditing(updated)
+
+      // 4. Run OCR and show suggestions in modal
+      try {
+        const ocrRes = await fetch('/api/parse-receipt', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ image_id: img.id }),
+        })
+        if (ocrRes.ok) {
+          const ocrData: OcrResult = await ocrRes.json()
+          if (ocrData.vendor || ocrData.amount || ocrData.check_number) {
+            setModalOcr({ imageId: img.id, data: ocrData })
+          }
+        }
+      } catch { /* OCR is best-effort, don't block */ }
     } catch {
       alert('Upload failed')
     } finally {
@@ -391,7 +442,25 @@ export default function BookkeepingPage() {
       fd.append('image_type', docType)
       const res = await fetch('/api/transaction-images?action=upload', { method: 'POST', body: fd })
       if (!res.ok) { alert('Upload failed'); return }
+      const img = await res.json()
       await load()
+
+      // Run OCR — show live "Analyzing..." state in the table
+      setOcrAnalyzing(prev => ({ ...prev, [img.id]: true }))
+      try {
+        const ocrRes = await fetch('/api/parse-receipt', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ image_id: img.id }),
+        })
+        if (ocrRes.ok) {
+          const ocrData: OcrResult = await ocrRes.json()
+          setOcrResults(prev => ({ ...prev, [img.id]: ocrData }))
+          await load() // refresh so DB-updated vendor/amount/date show in the table
+        }
+      } finally {
+        setOcrAnalyzing(prev => { const n = { ...prev }; delete n[img.id]; return n })
+      }
     } catch { alert('Upload failed') }
     finally { setDocUploading(false); if (docRef.current) docRef.current.value = '' }
   }
@@ -515,7 +584,7 @@ export default function BookkeepingPage() {
           {tab !== 'statements' && tab !== 'uploads' && tab !== 'accounts' && (
           <>
             <button onClick={exportCSV} className="flex items-center gap-2 border border-gray-200 text-gray-600 font-semibold px-4 py-2.5 rounded-xl hover:bg-gray-50"><Download size={14} />Export</button>
-            <label className={`flex items-center gap-2 text-white font-semibold px-4 py-2.5 rounded-xl cursor-pointer shadow-md ${uploading?'opacity-60 cursor-not-allowed':''}`} style={{ background:'#185FA5' }}>
+            <label className={`flex items-center gap-2 text-white font-semibold px-4 py-2.5 rounded-xl cursor-pointer shadow-md ${uploading?'opacity-60 cursor-not-allowed':''}`} style={{ background:'#b8895a' }}>
               {uploading ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}{uploading?'Importing...':'Import CSV'}
               <input ref={fileRef} type="file" accept=".csv" className="hidden" onChange={handleCSV} disabled={uploading} />
             </label>
@@ -526,7 +595,7 @@ export default function BookkeepingPage() {
               {syncing ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}{syncing ? 'Syncing...' : 'Sync Bank'}
             </button>
           )}
-          <button onClick={connectBank} disabled={connecting} className="flex items-center gap-2 border-2 font-semibold px-4 py-2.5 rounded-xl hover:bg-blue-50 disabled:opacity-60" style={{ borderColor: '#185FA5', color: '#185FA5' }}>
+          <button onClick={connectBank} disabled={connecting} className="flex items-center gap-2 border-2 font-semibold px-4 py-2.5 rounded-xl hover:bg-blue-50 disabled:opacity-60" style={{ borderColor: '#b8895a', color: '#b8895a' }}>
             {connecting ? <Loader2 size={14} className="animate-spin" /> : <Link2 size={14} />}{connecting ? 'Connecting...' : bankConnections.length > 0 ? 'Add Bank' : 'Connect Bank'}
           </button>
         </div>
@@ -559,7 +628,7 @@ export default function BookkeepingPage() {
 
       <div className="flex gap-1 bg-gray-100 rounded-xl p-1 w-fit mb-5">
         {[{k:'bank',l:'Bank Ledger'},{k:'accounting',l:'Accounting Ledger'},{k:'statements',l:'Bank Statements'},{k:'uploads',l:'Checks & Receipts'},{k:'accounts',l:'Chart of Accounts'}].map(({k,l}) => (
-          <button key={k} onClick={() => setTab(k as any)} className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${tab===k?'bg-white shadow-sm':'text-gray-500'}`} style={{ color: tab===k?'#185FA5':undefined }}>{l}</button>
+          <button key={k} onClick={() => setTab(k as any)} className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${tab===k?'bg-white shadow-sm':'text-gray-500'}`} style={{ color: tab===k?'#b8895a':undefined }}>{l}</button>
         ))}
       </div>
 
@@ -579,7 +648,7 @@ export default function BookkeepingPage() {
             <div className="flex gap-3">
               <label className={`flex-1 flex flex-col items-center justify-center gap-2 border-2 border-dashed border-gray-300 rounded-xl px-4 py-8 cursor-pointer hover:bg-gray-50 hover:border-blue-300 transition-all ${docUploading ? 'opacity-60 cursor-not-allowed' : ''}`}>
                 {docUploading ? (
-                  <Loader2 size={24} className="animate-spin" style={{ color: '#185FA5' }} />
+                  <Loader2 size={24} className="animate-spin" style={{ color: '#b8895a' }} />
                 ) : (
                   <Camera size={24} className="text-gray-400" />
                 )}
@@ -590,7 +659,7 @@ export default function BookkeepingPage() {
               </label>
               <label className={`flex-1 flex flex-col items-center justify-center gap-2 border-2 border-dashed border-gray-300 rounded-xl px-4 py-8 cursor-pointer hover:bg-gray-50 hover:border-blue-300 transition-all ${docUploading ? 'opacity-60 cursor-not-allowed' : ''}`}>
                 {docUploading ? (
-                  <Loader2 size={24} className="animate-spin" style={{ color: '#185FA5' }} />
+                  <Loader2 size={24} className="animate-spin" style={{ color: '#b8895a' }} />
                 ) : (
                   <Upload size={24} className="text-gray-400" />
                 )}
@@ -604,7 +673,7 @@ export default function BookkeepingPage() {
 
           {/* Uploaded files list */}
           {loading ? (
-            <div className="flex justify-center py-20"><Loader2 size={22} className="animate-spin" style={{ color: '#185FA5' }} /></div>
+            <div className="flex justify-center py-20"><Loader2 size={22} className="animate-spin" style={{ color: '#b8895a' }} /></div>
           ) : uploads.length === 0 ? (
             <div className="text-center py-20 text-gray-400">
               <ImageIcon size={30} className="mx-auto mb-2 opacity-30" />
@@ -614,32 +683,70 @@ export default function BookkeepingPage() {
             <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
               <table className="w-full text-sm">
                 <thead><tr className="bg-gray-50 border-b border-gray-100">
-                  {['Type', 'File', 'Date Uploaded', 'Actions'].map(h => (
-                    <th key={h} className="text-left px-5 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider">{h}</th>
+                  {['Type', 'File', 'Vendor / Payee', 'Amount', 'Date', 'Matched To', 'Actions'].map(h => (
+                    <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider">{h}</th>
                   ))}
                 </tr></thead>
                 <tbody className="divide-y divide-gray-50">
-                  {uploads.map(u => (
+                  {uploads.map(u => {
+                    const analyzing = ocrAnalyzing[u.id]
+                    const ocrLive = ocrResults[u.id]
+                    const vendor = ocrLive?.vendor ?? u.vendor
+                    const amount = ocrLive?.amount ?? u.amount
+                    const date = ocrLive?.date ?? u.receipt_date
+                    const matchedTx = u.matched_tx
+                    return (
                     <tr key={u.id} className="hover:bg-gray-50">
-                      <td className="px-5 py-3">
+                      <td className="px-4 py-3">
                         <span className={`text-xs px-2.5 py-1 rounded-full font-semibold ${u.image_type === 'receipt' ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'}`}>
                           {u.image_type === 'receipt' ? 'Receipt' : 'Check'}
                         </span>
                       </td>
-                      <td className="px-5 py-3">
-                        <a href={u.file_url} target="_blank" rel="noreferrer" className="flex items-center gap-2 font-medium hover:underline" style={{ color: '#185FA5' }}>
-                          {u.image_type === 'receipt' ? <Receipt size={15} /> : <FileImage size={15} />}
-                          {u.file_name || (u.image_type === 'receipt' ? 'Receipt' : 'Check')}
+                      <td className="px-4 py-3">
+                        <a href={u.file_url} target="_blank" rel="noreferrer" className="flex items-center gap-2 font-medium hover:underline text-xs" style={{ color: '#b8895a' }}>
+                          {u.image_type === 'receipt' ? <Receipt size={14} /> : <FileImage size={14} />}
+                          <span className="truncate max-w-32">{u.file_name || (u.image_type === 'receipt' ? 'Receipt' : 'Check')}</span>
                         </a>
                       </td>
-                      <td className="px-5 py-3 text-gray-500 text-xs">{u.created_at ? formatDateShort(u.created_at) : '—'}</td>
-                      <td className="px-5 py-3">
+                      <td className="px-4 py-3">
+                        {analyzing ? (
+                          <span className="flex items-center gap-1.5 text-xs text-amber-600 font-medium">
+                            <Sparkles size={11} className="animate-pulse" /> Analyzing…
+                          </span>
+                        ) : vendor ? (
+                          <span className="text-xs font-semibold text-gray-800">{vendor}</span>
+                        ) : (
+                          <span className="text-xs text-gray-400">—</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3">
+                        {analyzing ? <span className="text-xs text-gray-300">…</span>
+                          : amount ? <span className="text-xs font-bold text-gray-800">{formatCurrency(amount)}</span>
+                          : <span className="text-xs text-gray-400">—</span>}
+                      </td>
+                      <td className="px-4 py-3">
+                        {analyzing ? <span className="text-xs text-gray-300">…</span>
+                          : date ? <span className="text-xs text-gray-600">{formatDateShort(date)}</span>
+                          : <span className="text-xs text-gray-400">—</span>}
+                      </td>
+                      <td className="px-4 py-3">
+                        {matchedTx ? (
+                          <div className="flex items-center gap-1">
+                            <CheckCircle2 size={12} className="text-emerald-500 flex-shrink-0" />
+                            <span className="text-xs text-emerald-700 truncate max-w-36 font-medium">{matchedTx.description}</span>
+                          </div>
+                        ) : (
+                          <span className="text-xs text-gray-400 italic">Unmatched</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3">
                         <button onClick={() => deleteUpload(u.id)} className="text-gray-400 hover:text-red-600">
                           <Trash2 size={14} />
                         </button>
                       </td>
                     </tr>
-                  ))}
+                    )
+                  })}
                 </tbody>
               </table>
             </div>
@@ -650,7 +757,7 @@ export default function BookkeepingPage() {
       ) : tab === 'statements' ? (
         <div>
           <div className="flex items-center gap-3 mb-5">
-            <label className={`flex items-center gap-2 text-white font-semibold px-4 py-2.5 rounded-xl cursor-pointer shadow-md ${stmtUploading?'opacity-60 cursor-not-allowed':''}`} style={{ background:'#185FA5' }}>
+            <label className={`flex items-center gap-2 text-white font-semibold px-4 py-2.5 rounded-xl cursor-pointer shadow-md ${stmtUploading?'opacity-60 cursor-not-allowed':''}`} style={{ background:'#b8895a' }}>
               {stmtUploading ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
               {stmtUploading ? 'Uploading...' : 'Upload Statement'}
               <input ref={stmtRef} type="file" accept=".pdf" className="hidden" disabled={stmtUploading} onChange={e => { const f = e.target.files?.[0]; if (f) uploadStatement(f) }} />
@@ -658,7 +765,7 @@ export default function BookkeepingPage() {
             <p className="text-xs text-gray-400">PDF bank statements</p>
           </div>
           {loading ? (
-            <div className="flex justify-center py-20"><Loader2 size={22} className="animate-spin" style={{ color:'#185FA5' }} /></div>
+            <div className="flex justify-center py-20"><Loader2 size={22} className="animate-spin" style={{ color:'#b8895a' }} /></div>
           ) : statements.length === 0 ? (
             <div className="text-center py-20 text-gray-400">
               <File size={30} className="mx-auto mb-2 opacity-30" />
@@ -676,7 +783,7 @@ export default function BookkeepingPage() {
                   {statements.map(s => (
                     <tr key={s.id} className="hover:bg-gray-50">
                       <td className="px-5 py-3">
-                        <a href={s.file_url} target="_blank" rel="noreferrer" className="flex items-center gap-2 font-medium hover:underline" style={{ color:'#185FA5' }}>
+                        <a href={s.file_url} target="_blank" rel="noreferrer" className="flex items-center gap-2 font-medium hover:underline" style={{ color:'#b8895a' }}>
                           <FileText size={15} />
                           {s.label || s.file_name}
                         </a>
@@ -710,7 +817,7 @@ export default function BookkeepingPage() {
               ))}
             </tr></thead>
             <tbody className="divide-y divide-gray-50">
-              {loading ? <tr><td colSpan={7} className="text-center py-12"><Loader2 size={22} className="animate-spin mx-auto" style={{ color:'#185FA5' }} /></td></tr>
+              {loading ? <tr><td colSpan={7} className="text-center py-12"><Loader2 size={22} className="animate-spin mx-auto" style={{ color:'#b8895a' }} /></td></tr>
                 : filtered.length === 0 ? <tr><td colSpan={7} className="text-center py-12 text-gray-400 text-sm"><FileText size={30} className="mx-auto mb-2 opacity-30" />No transactions · Import a CSV to get started</td></tr>
                 : filtered.map(tx => {
                     const accName = accountName(tx.account_id)
@@ -722,7 +829,7 @@ export default function BookkeepingPage() {
                     <td className="px-5 py-3"><div className="text-gray-900 font-medium text-xs truncate max-w-48">{tx.description}</div></td>
                     <td className="px-5 py-3 text-gray-600 text-xs">{tx.payee||'—'}</td>
                     <td className={`px-5 py-3 font-bold text-sm ${tx.amount>=0?'text-green-700':'text-red-600'}`}>{tx.amount>=0?'+':''}{formatCurrency(tx.amount)}</td>
-                    <td className="px-5 py-3">{accName || tx.category ? <span className="text-xs px-2 py-0.5 rounded-full font-medium" style={{ background:'rgba(74,173,224,0.1)', color:'#185FA5' }}>{accName || tx.category}</span> : <span className="text-xs text-gray-400 italic">Uncategorized</span>}</td>
+                    <td className="px-5 py-3">{accName || tx.category ? <span className="text-xs px-2 py-0.5 rounded-full font-medium" style={{ background:'rgba(184,137,90,0.1)', color:'#b8895a' }}>{accName || tx.category}</span> : <span className="text-xs text-gray-400 italic">Uncategorized</span>}</td>
                     <td className="px-5 py-3 text-gray-600 text-xs">{tx.check_number||'—'}</td>
                     <td className="px-5 py-3">
                       <div className="flex gap-1.5">
@@ -746,7 +853,7 @@ export default function BookkeepingPage() {
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
             <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between sticky top-0 bg-white z-10">
               <h2 className="font-bold text-gray-900">Categorize Transaction</h2>
-              <button onClick={() => setEditing(null)}><X size={18} className="text-gray-400" /></button>
+              <button onClick={() => { setEditing(null); setModalOcr(null) }}><X size={18} className="text-gray-400" /></button>
             </div>
             <div className="p-6 space-y-4">
               <div className="bg-gray-50 rounded-xl p-4 text-sm">
@@ -771,7 +878,7 @@ export default function BookkeepingPage() {
                   ))}
                 </select>
                 <button type="button" onClick={() => setShowAddAccount(!showAddAccount)}
-                  className="flex items-center gap-1 text-xs font-semibold mt-1.5 hover:underline" style={{ color: '#185FA5' }}>
+                  className="flex items-center gap-1 text-xs font-semibold mt-1.5 hover:underline" style={{ color: '#b8895a' }}>
                   <Plus size={12} /> {showAddAccount ? 'Cancel' : 'Add New Category'}
                 </button>
                 {showAddAccount && (
@@ -796,7 +903,7 @@ export default function BookkeepingPage() {
                       ))}
                     </select>
                     <button type="submit" disabled={addingSaving}
-                      className="w-full text-white font-semibold py-2 rounded-lg text-xs flex items-center justify-center gap-1" style={{ background: '#185FA5' }}>
+                      className="w-full text-white font-semibold py-2 rounded-lg text-xs flex items-center justify-center gap-1" style={{ background: '#b8895a' }}>
                       {addingSaving && <Loader2 size={12} className="animate-spin" />}
                       {addingSaving ? 'Creating...' : 'Create Category'}
                     </button>
@@ -849,21 +956,102 @@ export default function BookkeepingPage() {
 
                 <div className="flex gap-2">
                   {!editing.receipt_image && (
-                    <label className={`flex-1 flex items-center justify-center gap-2 border border-dashed border-gray-300 rounded-xl px-3 py-2.5 text-xs font-semibold text-gray-600 cursor-pointer hover:bg-gray-50 ${imgUploading==='receipt'?'opacity-60 cursor-not-allowed':''}`}>
-                      {imgUploading === 'receipt' ? <Loader2 size={13} className="animate-spin" /> : <Receipt size={13} />}
-                      {imgUploading === 'receipt' ? 'Uploading...' : 'Add Receipt'}
-                      <input ref={receiptRef} type="file" accept="image/*,.pdf" className="hidden" disabled={!!imgUploading} onChange={e => { const f = e.target.files?.[0]; if (f) uploadImage('receipt', f) }} />
-                    </label>
+                    <div className="flex-1 flex gap-1.5">
+                      <label className={`flex-1 flex items-center justify-center gap-1.5 border border-dashed border-gray-300 rounded-xl px-2 py-2.5 text-xs font-semibold text-gray-600 cursor-pointer hover:bg-gray-50 ${imgUploading==='receipt'?'opacity-60 cursor-not-allowed':''}`}>
+                        {imgUploading === 'receipt' ? <Loader2 size={12} className="animate-spin" /> : <Camera size={12} />}
+                        {imgUploading === 'receipt' ? '…' : 'Photo'}
+                        <input type="file" accept="image/*" capture="environment" className="hidden" disabled={!!imgUploading} onChange={e => { const f = e.target.files?.[0]; if (f) uploadImage('receipt', f) }} />
+                      </label>
+                      <label className={`flex-1 flex items-center justify-center gap-1.5 border border-dashed border-gray-300 rounded-xl px-2 py-2.5 text-xs font-semibold text-gray-600 cursor-pointer hover:bg-gray-50 ${imgUploading==='receipt'?'opacity-60 cursor-not-allowed':''}`}>
+                        {imgUploading === 'receipt' ? <Loader2 size={12} className="animate-spin" /> : <Receipt size={12} />}
+                        {imgUploading === 'receipt' ? 'Uploading…' : 'Add Receipt'}
+                        <input ref={receiptRef} type="file" accept="image/*,.pdf" className="hidden" disabled={!!imgUploading} onChange={e => { const f = e.target.files?.[0]; if (f) uploadImage('receipt', f) }} />
+                      </label>
+                    </div>
                   )}
                   {!editing.check_image && (
-                    <label className={`flex-1 flex items-center justify-center gap-2 border border-dashed border-gray-300 rounded-xl px-3 py-2.5 text-xs font-semibold text-gray-600 cursor-pointer hover:bg-gray-50 ${imgUploading==='check'?'opacity-60 cursor-not-allowed':''}`}>
-                      {imgUploading === 'check' ? <Loader2 size={13} className="animate-spin" /> : <FileImage size={13} />}
-                      {imgUploading === 'check' ? 'Uploading...' : 'Add Check'}
-                      <input ref={checkRef} type="file" accept="image/*,.pdf" className="hidden" disabled={!!imgUploading} onChange={e => { const f = e.target.files?.[0]; if (f) uploadImage('check', f) }} />
-                    </label>
+                    <div className="flex-1 flex gap-1.5">
+                      <label className={`flex-1 flex items-center justify-center gap-1.5 border border-dashed border-gray-300 rounded-xl px-2 py-2.5 text-xs font-semibold text-gray-600 cursor-pointer hover:bg-gray-50 ${imgUploading==='check'?'opacity-60 cursor-not-allowed':''}`}>
+                        {imgUploading === 'check' ? <Loader2 size={12} className="animate-spin" /> : <Camera size={12} />}
+                        {imgUploading === 'check' ? '…' : 'Photo'}
+                        <input type="file" accept="image/*" capture="environment" className="hidden" disabled={!!imgUploading} onChange={e => { const f = e.target.files?.[0]; if (f) uploadImage('check', f) }} />
+                      </label>
+                      <label className={`flex-1 flex items-center justify-center gap-1.5 border border-dashed border-gray-300 rounded-xl px-2 py-2.5 text-xs font-semibold text-gray-600 cursor-pointer hover:bg-gray-50 ${imgUploading==='check'?'opacity-60 cursor-not-allowed':''}`}>
+                        {imgUploading === 'check' ? <Loader2 size={12} className="animate-spin" /> : <FileImage size={12} />}
+                        {imgUploading === 'check' ? 'Uploading…' : 'Add Check'}
+                        <input ref={checkRef} type="file" accept="image/*,.pdf" className="hidden" disabled={!!imgUploading} onChange={e => { const f = e.target.files?.[0]; if (f) uploadImage('check', f) }} />
+                      </label>
+                    </div>
                   )}
                 </div>
               </div>
+
+              {/* AI OCR suggestions panel */}
+              {modalOcr && (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-xs space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5 font-bold text-amber-800">
+                      <Sparkles size={13} className="text-amber-500" />
+                      AI Detected
+                      {modalOcr.data.confidence && (
+                        <span className={`ml-1 px-1.5 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                          modalOcr.data.confidence === 'high' ? 'bg-green-100 text-green-700' :
+                          modalOcr.data.confidence === 'medium' ? 'bg-yellow-100 text-yellow-700' :
+                          'bg-red-100 text-red-700'
+                        }`}>{modalOcr.data.confidence}</span>
+                      )}
+                    </div>
+                    <button onClick={() => setModalOcr(null)} className="text-amber-400 hover:text-amber-700">
+                      <X size={14} />
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-gray-700">
+                    {modalOcr.data.vendor && <div><span className="text-gray-500">Vendor:</span> <strong>{modalOcr.data.vendor}</strong></div>}
+                    {modalOcr.data.amount && <div><span className="text-gray-500">Amount:</span> <strong>{formatCurrency(modalOcr.data.amount)}</strong></div>}
+                    {modalOcr.data.date && <div><span className="text-gray-500">Date:</span> <strong>{formatDateShort(modalOcr.data.date)}</strong></div>}
+                    {modalOcr.data.check_number && <div><span className="text-gray-500">Check #:</span> <strong>{modalOcr.data.check_number}</strong></div>}
+                    {modalOcr.data.category && <div className="col-span-2"><span className="text-gray-500">Category:</span> <strong>{modalOcr.data.category}</strong></div>}
+                    {modalOcr.data.memo && <div className="col-span-2"><span className="text-gray-500">Memo:</span> <strong>{modalOcr.data.memo}</strong></div>}
+                  </div>
+                  {(modalOcr.data.vendor || modalOcr.data.check_number) && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (modalOcr.data.vendor) {
+                          const el = document.getElementById('payee') as HTMLInputElement
+                          if (el) el.value = modalOcr.data.vendor!
+                        }
+                        if (modalOcr.data.check_number) {
+                          const el = document.getElementById('check_number') as HTMLInputElement
+                          if (el) el.value = modalOcr.data.check_number!
+                        }
+                        setModalOcr(null)
+                      }}
+                      className="w-full py-2 rounded-lg font-semibold text-white text-xs flex items-center justify-center gap-1.5"
+                      style={{ background: '#b8895a' }}>
+                      <CheckCircle2 size={12} /> Apply AI Suggestions
+                    </button>
+                  )}
+                  {modalOcr.data.matched_transactions && modalOcr.data.matched_transactions.length > 0 &&
+                    modalOcr.data.matched_transactions.some(t => t.id !== editing.id) && (
+                    <div className="border-t border-amber-200 pt-2">
+                      <div className="font-semibold text-amber-800 mb-1.5 flex items-center gap-1">
+                        <AlertCircle size={11} /> Other possible transaction matches:
+                      </div>
+                      <div className="space-y-1">
+                        {modalOcr.data.matched_transactions.filter(t => t.id !== editing.id).slice(0, 3).map(tx => (
+                          <div key={tx.id} className="flex items-center justify-between bg-white rounded-lg px-2.5 py-1.5 border border-amber-100">
+                            <div>
+                              <div className="font-medium text-gray-800 truncate max-w-52">{tx.description}</div>
+                              <div className="text-gray-500 text-[10px]">{formatDateShort(tx.transaction_date)} · {formatCurrency(tx.amount)}</div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
 
               <button onClick={() => {
                 const payee = (document.getElementById('payee') as HTMLInputElement)?.value
@@ -876,7 +1064,7 @@ export default function BookkeepingPage() {
                 const accName = accountName(account_id)
                 if (accName) (updates as any).category = accName
                 updateTx(editing.id, updates)
-              }} className="w-full text-white font-bold py-3 rounded-xl" style={{ background:'#185FA5' }}>Save Changes</button>
+              }} className="w-full text-white font-bold py-3 rounded-xl" style={{ background:'#b8895a' }}>Save Changes</button>
             </div>
           </div>
         </div>
