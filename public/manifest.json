@@ -1,21 +1,25 @@
 {
-  "name": "The Gasologist",
-  "short_name": "Gasologist",
+  "name": "L. Price Building Company",
+  "short_name": "LPBC Admin",
+  "description": "L. Price Building Company admin portal — invoicing, bookkeeping, CRM, and scheduling.",
   "start_url": "/admin/invoices",
   "display": "standalone",
-  "background_color": "#ffffff",
-  "theme_color": "#185FA5",
+  "orientation": "portrait-primary",
+  "background_color": "#faf7f2",
+  "theme_color": "#b8895a",
   "scope": "/",
   "icons": [
     {
       "src": "/icon-192.png",
       "sizes": "192x192",
-      "type": "image/png"
+      "type": "image/png",
+      "purpose": "any"
     },
     {
       "src": "/icon-512.png",
       "sizes": "512x512",
-      "type": "image/png"
+      "type": "image/png",
+      "purpose": "any maskable"
     }
   ]
 }

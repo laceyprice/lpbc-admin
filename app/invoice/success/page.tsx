@@ -6,7 +6,7 @@ export default function InvoiceSuccessPage() {
     <div className="min-h-screen flex items-center justify-center bg-gray-50 p-6">
       <div className="bg-white rounded-3xl shadow-xl p-10 w-full max-w-md text-center">
         <div className="w-20 h-20 mx-auto mb-6 relative">
-          <Image src="/logo.png" alt="The Gasologist" fill className="object-contain" />
+          <Image src="/logo.png" alt="L. Price Building Company" fill className="object-contain" />
         </div>
         <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-5">
           <svg className="w-8 h-8 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
@@ -29,10 +29,10 @@ export default function InvoiceSuccessPage() {
             Invoice updated to paid
           </div>
         </div>
-        <Link href="/" className="inline-block text-white font-bold px-8 py-3 rounded-xl w-full" style={{ background: '#185FA5' }}>
+        <Link href="/" className="inline-block text-white font-bold px-8 py-3 rounded-xl w-full" style={{ background: '#b8895a' }}>
           Return to Homepage
         </Link>
-        <p className="mt-4 text-xs text-gray-400">Questions? Call us at <a href="tel:+1XXXXXXXXXX" className="underline">your phone number</a></p>
+        <p className="mt-4 text-xs text-gray-400">Questions? Call us at <a href="tel:+18505989128" className="underline">850-598-9128</a></p>
       </div>
     </div>
   )

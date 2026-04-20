@@ -33,13 +33,13 @@ export function generateInvoiceNumber(): string {
 
 /**
  * Generates the next sequential document number for a given year/type.
- *   Invoices: DPG INV-2026-0001
- *   Quotes:   DPG EST-2026-0001
+ *   Invoices: LPBC INV-2026-0001
+ *   Quotes:   LPBC EST-2026-0001
  * Numbering resets each calendar year and is computed by scanning the
  * existing list for the highest used sequence in the current year.
  */
 export function generateDocNumber(type: 'invoice' | 'quote', existing: { invoice_number?: string }[] = []): string {
-  const prefix = type === 'quote' ? 'DPG EST' : 'DPG INV'
+  const prefix = type === 'quote' ? 'LPBC EST' : 'LPBC INV'
   const year = new Date().getFullYear().toString()
   const re = new RegExp(`^${prefix}-${year}-(\\d+)$`)
   let max = 0

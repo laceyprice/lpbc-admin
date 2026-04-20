@@ -1,5 +1,5 @@
 {
-  "name": "gasologist",
+  "name": "lpbc-admin",
   "version": "0.1.0",
   "private": true,
   "scripts": {
@@ -9,6 +9,8 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.90.0",
+    "@ducanh2912/next-pwa": "^10.2.9",
     "@hookform/resolvers": "^3.3.4",
     "@supabase/auth-helpers-nextjs": "^0.10.0",
     "@supabase/supabase-js": "^2.39.0",

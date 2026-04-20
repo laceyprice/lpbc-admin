@@ -165,7 +165,7 @@ export default function CalendarPage() {
           <h1 className="text-2xl font-extrabold text-gray-900">Calendar</h1>
           <p className="text-gray-500 text-sm mt-0.5">Manage appointments · syncs with Google Calendar</p>
         </div>
-        <button onClick={() => openCreate()} className="flex items-center gap-2 text-white font-semibold px-4 py-2.5 rounded-xl shadow-md" style={{ background: '#185FA5' }}>
+        <button onClick={() => openCreate()} className="flex items-center gap-2 text-white font-semibold px-4 py-2.5 rounded-xl shadow-md" style={{ background: '#b8895a' }}>
           <Plus size={16} />New Appointment
         </button>
       </div>
@@ -174,7 +174,7 @@ export default function CalendarPage() {
       <div className="flex items-center gap-3 mb-4">
         <div className="flex gap-1 bg-gray-100 rounded-xl p-1">
           {([['week', 'Week'], ['month', 'Month'], ['list', 'List']] as const).map(([k, l]) => (
-            <button key={k} onClick={() => setView(k)} className={`px-3 py-1.5 rounded-lg text-sm font-semibold transition-all flex items-center gap-1.5 ${view === k ? 'bg-white shadow-sm' : 'text-gray-500'}`} style={{ color: view === k ? '#185FA5' : undefined }}>
+            <button key={k} onClick={() => setView(k)} className={`px-3 py-1.5 rounded-lg text-sm font-semibold transition-all flex items-center gap-1.5 ${view === k ? 'bg-white shadow-sm' : 'text-gray-500'}`} style={{ color: view === k ? '#b8895a' : undefined }}>
               {k === 'week' && <Grid size={13} />}{k === 'list' && <List size={13} />}{k === 'month' && <Calendar size={13} />}{l}
             </button>
           ))}
@@ -191,7 +191,7 @@ export default function CalendarPage() {
       </div>
 
       {loading ? (
-        <div className="flex-1 flex items-center justify-center"><Loader2 className="animate-spin" style={{ color: '#185FA5' }} size={28} /></div>
+        <div className="flex-1 flex items-center justify-center"><Loader2 className="animate-spin" style={{ color: '#b8895a' }} size={28} /></div>
       ) : (
         <>
           {/* Week View */}
@@ -217,7 +217,7 @@ export default function CalendarPage() {
                         {appts.map(a => (
                           <div key={a.id} onClick={e => { e.stopPropagation(); setEditing(a); const sd = new Date(a.start_time); const pad2 = (n: number) => String(n).padStart(2,'0'); setForm({ ...a, appt_date: `${sd.getFullYear()}-${pad2(sd.getMonth()+1)}-${pad2(sd.getDate())}`, appt_period: sd.getHours() < 12 ? 'AM' : 'PM' } as any) }}
                             className={`text-xs rounded px-1.5 py-0.5 mb-0.5 truncate cursor-pointer ${a.status === 'scheduled' ? 'text-white' : apptColor(a.status)}`}
-                            style={a.status === 'scheduled' ? { background: '#185FA5', borderLeft: '3px solid #1a4a6b' } : {}}>
+                            style={a.status === 'scheduled' ? { background: '#b8895a', borderLeft: '3px solid #1f2a2e' } : {}}>
                             {a.customer_name}
                           </div>
                         ))}
@@ -244,13 +244,13 @@ export default function CalendarPage() {
                       {d && (
                         <>
                           <div className={`text-sm font-bold w-7 h-7 flex items-center justify-center rounded-full mb-1 ${isSameDay(d, new Date()) ? 'text-white' : 'text-gray-700'}`}
-                            style={isSameDay(d, new Date()) ? { background: '#185FA5' } : {}}>
+                            style={isSameDay(d, new Date()) ? { background: '#b8895a' } : {}}>
                             {d.getDate()}
                           </div>
                           {appts.slice(0, 3).map(a => (
                             <div key={a.id} onClick={e => { e.stopPropagation(); setEditing(a); const sd = new Date(a.start_time); const pad2 = (n: number) => String(n).padStart(2,'0'); setForm({ ...a, appt_date: `${sd.getFullYear()}-${pad2(sd.getMonth()+1)}-${pad2(sd.getDate())}`, appt_period: sd.getHours() < 12 ? 'AM' : 'PM' } as any) }}
                               className="text-xs rounded px-1.5 py-0.5 mb-0.5 truncate cursor-pointer text-white"
-                              style={{ background: a.status === 'cancelled' ? '#ef4444' : '#185FA5' }}>
+                              style={{ background: a.status === 'cancelled' ? '#ef4444' : '#b8895a' }}>
                               {a.customer_name}
                             </div>
                           ))}
@@ -290,7 +290,7 @@ export default function CalendarPage() {
                         <td className="px-5 py-3 text-xs text-gray-600">{a.service_type || '—'}</td>
                         <td className="px-5 py-3 text-xs text-gray-600 max-w-[180px] truncate">{a.service_address || '—'}</td>
                         <td className="px-5 py-3"><span className={`text-xs px-2 py-0.5 rounded-full font-medium ${a.status === 'completed' ? 'bg-green-100 text-green-700' : a.status === 'cancelled' ? 'bg-red-100 text-red-600' : 'bg-blue-100 text-blue-700'}`}>{a.status}</span></td>
-                        <td className="px-5 py-3"><button onClick={() => { setEditing(a); const sd = new Date(a.start_time); const pad2 = (n: number) => String(n).padStart(2,'0'); setForm({ ...a, appt_date: `${sd.getFullYear()}-${pad2(sd.getMonth()+1)}-${pad2(sd.getDate())}`, appt_period: sd.getHours() < 12 ? 'AM' : 'PM' } as any) }} className="text-xs font-medium underline" style={{ color: '#185FA5' }}>Edit</button></td>
+                        <td className="px-5 py-3"><button onClick={() => { setEditing(a); const sd = new Date(a.start_time); const pad2 = (n: number) => String(n).padStart(2,'0'); setForm({ ...a, appt_date: `${sd.getFullYear()}-${pad2(sd.getMonth()+1)}-${pad2(sd.getDate())}`, appt_period: sd.getHours() < 12 ? 'AM' : 'PM' } as any) }} className="text-xs font-medium underline" style={{ color: '#b8895a' }}>Edit</button></td>
                       </tr>
                     ))}
                   </tbody>
@@ -330,12 +330,12 @@ export default function CalendarPage() {
                   <div className="flex gap-2">
                     <button type="button" onClick={() => setForm(f => ({ ...f, appt_period: 'AM' } as any))}
                       className={`flex-1 py-2.5 rounded-xl text-sm font-bold border-2 transition-all ${(form as any).appt_period === 'AM' ? 'text-white border-transparent' : 'text-gray-500 border-gray-200 bg-white hover:bg-gray-50'}`}
-                      style={(form as any).appt_period === 'AM' ? { background: '#185FA5', borderColor: '#185FA5' } : {}}>
+                      style={(form as any).appt_period === 'AM' ? { background: '#b8895a', borderColor: '#b8895a' } : {}}>
                       AM
                     </button>
                     <button type="button" onClick={() => setForm(f => ({ ...f, appt_period: 'PM' } as any))}
                       className={`flex-1 py-2.5 rounded-xl text-sm font-bold border-2 transition-all ${(form as any).appt_period === 'PM' ? 'text-white border-transparent' : 'text-gray-500 border-gray-200 bg-white hover:bg-gray-50'}`}
-                      style={(form as any).appt_period === 'PM' ? { background: '#185FA5', borderColor: '#185FA5' } : {}}>
+                      style={(form as any).appt_period === 'PM' ? { background: '#b8895a', borderColor: '#b8895a' } : {}}>
                       PM
                     </button>
                   </div>
@@ -365,7 +365,7 @@ export default function CalendarPage() {
                 <textarea value={(form as any).notes || ''} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} rows={3} className={inputCls} placeholder="Additional notes..." />
               </div>
               <div className="flex gap-3 pt-2">
-                <button onClick={save} disabled={saving} className="flex-1 text-white font-bold py-3 rounded-xl flex items-center justify-center gap-2 disabled:opacity-60" style={{ background: '#185FA5' }}>
+                <button onClick={save} disabled={saving} className="flex-1 text-white font-bold py-3 rounded-xl flex items-center justify-center gap-2 disabled:opacity-60" style={{ background: '#b8895a' }}>
                   {saving ? <Loader2 size={16} className="animate-spin" /> : null}{saving ? 'Saving...' : editing ? 'Save Changes' : 'Create Appointment'}
                 </button>
                 {editing && (

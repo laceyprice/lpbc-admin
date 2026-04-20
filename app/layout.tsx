@@ -5,8 +5,8 @@ import './globals.css'
 const inter = Inter({ subsets: ['latin'] })
 
 export const metadata: Metadata = {
-  title: 'D P Gas Company | Natural Gas & Propane Specialist',
-  description: 'Natural gas and propane specialists. Professional gas fitting, appliance installation, and gas line services. Licensed and insured.',
+  title: 'L. Price Building Company | Admin',
+  description: 'L. Price Building Company admin portal — invoicing, bookkeeping, CRM, and scheduling for custom home building and remodeling.',
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -14,7 +14,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en">
       <head>
         <link rel="manifest" href="/manifest.json" />
-        <meta name="theme-color" content="#185FA5" />
+        <meta name="theme-color" content="#b8895a" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
         <link rel="apple-touch-icon" href="/icon-192.png" />

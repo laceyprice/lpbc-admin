@@ -83,7 +83,7 @@ export default function AdminAuthGuard({ children }: { children: React.ReactNode
   if (checking) {
     return (
       <div className="min-h-screen flex items-center justify-center" style={{ background: '#f1f5f9' }}>
-        <Loader2 size={32} className="animate-spin" style={{ color: '#185FA5' }} />
+        <Loader2 size={32} className="animate-spin" style={{ color: '#b8895a' }} />
       </div>
     )
   }

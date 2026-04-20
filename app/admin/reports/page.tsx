@@ -46,15 +46,15 @@ export default function ReportsPage() {
 
     // ── Branded Header ──
     const headerH = 60
-    doc.setFillColor(24, 95, 165) // #185FA5
+    doc.setFillColor(47, 90, 94) // #2f5a5e
     doc.rect(0, 0, pageW, headerH, 'F')
     doc.setTextColor(255, 255, 255)
     doc.setFontSize(20)
     doc.setFont('helvetica', 'bold')
-    doc.text('The Gasologist', 40, 28)
+    doc.text('L. Price Building Company', 40, 28)
     doc.setFontSize(10)
     doc.setFont('helvetica', 'normal')
-    doc.text('office@thegasologist.com', 40, 44)
+    doc.text('Lacey@LaceyNPrice.com', 40, 44)
 
     // ── Report Title & Date Range ──
     doc.setTextColor(30, 30, 30)
@@ -69,10 +69,10 @@ export default function ReportsPage() {
 
     let curY = headerH + 80
 
-    const brand = [24, 95, 165] as [number, number, number]
+    const brand = [47, 90, 94] as [number, number, number]
     const headStyles = { fillColor: brand, textColor: [255, 255, 255] as [number, number, number], fontStyle: 'bold' as const, fontSize: 9 }
     const bodyStyles = { fontSize: 9 }
-    const footStyles = { fillColor: [235, 245, 251] as [number, number, number], textColor: brand, fontStyle: 'bold' as const, fontSize: 9 }
+    const footStyles = { fillColor: [243, 237, 227] as [number, number, number], textColor: brand, fontStyle: 'bold' as const, fontSize: 9 }
 
     if (tab === 'pnl') {
       // Revenue
@@ -246,7 +246,7 @@ export default function ReportsPage() {
       const pageH = doc.internal.pageSize.getHeight()
       doc.setFontSize(8)
       doc.setTextColor(150, 150, 150)
-      doc.text('The Gasologist — Confidential', 40, pageH - 20)
+      doc.text('L. Price Building Company — Confidential', 40, pageH - 20)
       doc.text(`Page ${i} of ${pageCount}`, pageW - 40, pageH - 20, { align: 'right' })
     }
 
@@ -262,7 +262,7 @@ export default function ReportsPage() {
           <p className="text-gray-500 text-sm mt-0.5">P&amp;L · Balance Sheet · Cash Flow · Reconciliation</p>
         </div>
         {data && !data.error && (
-          <button onClick={downloadPDF} className="flex items-center gap-2 text-white font-semibold px-4 py-2.5 rounded-xl shadow-md" style={{ background: '#185FA5' }}>
+          <button onClick={downloadPDF} className="flex items-center gap-2 text-white font-semibold px-4 py-2.5 rounded-xl shadow-md" style={{ background: '#b8895a' }}>
             <Download size={14} />Download PDF
           </button>
         )}
@@ -281,12 +281,12 @@ export default function ReportsPage() {
         {tabs.map(({ k, l }) => (
           <button key={k} onClick={() => setTab(k)}
             className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${tab === k ? 'bg-white shadow-sm' : 'text-gray-500'}`}
-            style={{ color: tab === k ? '#185FA5' : undefined }}>{l}</button>
+            style={{ color: tab === k ? '#b8895a' : undefined }}>{l}</button>
         ))}
       </div>
 
       {loading ? (
-        <div className="flex justify-center py-20"><Loader2 size={28} className="animate-spin" style={{ color: '#185FA5' }} /></div>
+        <div className="flex justify-center py-20"><Loader2 size={28} className="animate-spin" style={{ color: '#b8895a' }} /></div>
       ) : !data || data.error ? (
         <div className="text-center py-20 text-gray-400">
           <AlertTriangle size={30} className="mx-auto mb-2 opacity-50" />
@@ -368,7 +368,7 @@ function BalanceSheetReport({ data }: { data: any }) {
       <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5">
         <div className="flex items-center justify-between">
           <span className="text-lg font-extrabold text-gray-900">Total Liabilities &amp; Equity</span>
-          <span className="text-2xl font-extrabold" style={{ color: '#185FA5' }}>{formatCurrency(data.totalLiabilitiesAndEquity)}</span>
+          <span className="text-2xl font-extrabold" style={{ color: '#b8895a' }}>{formatCurrency(data.totalLiabilitiesAndEquity)}</span>
         </div>
         {Math.abs(data.totalAssets - data.totalLiabilitiesAndEquity) > 0.01 && (
           <p className="text-xs text-amber-600 mt-2 flex items-center gap-1">
@@ -625,7 +625,7 @@ function BalanceSection({ title, lines: rawLines, total, extraLine }: { title: s
             <td className="px-5 py-3 font-extrabold text-gray-900">Total {title}</td>
             <td className="px-5 py-3" />
             <td className="px-5 py-3" />
-            <td className="px-5 py-3 text-right font-extrabold" style={{ color: '#185FA5' }}>{formatCurrency(total + (extraLine?.balance || 0))}</td>
+            <td className="px-5 py-3 text-right font-extrabold" style={{ color: '#b8895a' }}>{formatCurrency(total + (extraLine?.balance || 0))}</td>
           </tr>
         </tfoot>
       </table>

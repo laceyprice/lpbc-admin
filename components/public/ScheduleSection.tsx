@@ -74,7 +74,7 @@ export default function ScheduleSection() {
         </div>
         <h2 className="text-3xl font-extrabold text-gray-900 mb-4">Request Submitted!</h2>
         <p className="text-gray-600 text-lg mb-8">Thank you! We've received your request and will contact you within 1 business day to confirm your appointment.</p>
-        <a href="#home" className="text-white font-bold px-8 py-3 rounded-full" style={{ background: '#185FA5' }}>Back to Home</a>
+        <a href="#home" className="text-white font-bold px-8 py-3 rounded-full" style={{ background: '#b8895a' }}>Back to Home</a>
       </div>
     </section>
   )
@@ -82,7 +82,7 @@ export default function ScheduleSection() {
   const stepHead = (n: number, title: string, sub?: string) => (
     <div className="mb-4">
       <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
-        <span className="w-7 h-7 text-white rounded-full flex items-center justify-center text-sm font-bold" style={{ background: '#185FA5' }}>{n}</span>
+        <span className="w-7 h-7 text-white rounded-full flex items-center justify-center text-sm font-bold" style={{ background: '#b8895a' }}>{n}</span>
         {title}
       </h3>
       {sub && <p className="text-gray-500 text-sm ml-9">{sub}</p>}
@@ -93,8 +93,8 @@ export default function ScheduleSection() {
     <section id="schedule" className="py-24 bg-white">
       <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="text-center mb-12">
-          <span className="inline-block font-semibold px-4 py-1.5 rounded-full text-sm mb-4" style={{ background: 'rgba(74,173,224,0.1)', color: '#185FA5' }}>Book a Service</span>
-          <h2 className="text-3xl md:text-4xl font-extrabold text-gray-900 mb-4">Schedule Your <span style={{ color: '#185FA5' }}>Service</span></h2>
+          <span className="inline-block font-semibold px-4 py-1.5 rounded-full text-sm mb-4" style={{ background: 'rgba(184,137,90,0.1)', color: '#b8895a' }}>Book a Consultation</span>
+          <h2 className="text-3xl md:text-4xl font-extrabold text-gray-900 mb-4">Schedule Your <span style={{ color: '#2f5a5e' }}>Consultation</span></h2>
           <p className="text-gray-500 text-lg max-w-xl mx-auto">Fill out the form below and we'll reach out to confirm your appointment.</p>
         </div>
 
@@ -130,7 +130,7 @@ export default function ScheduleSection() {
               <div className="flex gap-6">
                 {['yes', 'no'].map(v => (
                   <label key={v} className="flex items-center gap-2 cursor-pointer">
-                    <input {...register('isOwner')} type="radio" value={v} className="w-4 h-4" style={{ accentColor: '#185FA5' }} />
+                    <input {...register('isOwner')} type="radio" value={v} className="w-4 h-4" style={{ accentColor: '#b8895a' }} />
                     <span className="font-medium text-gray-700 capitalize">{v}</span>
                   </label>
                 ))}
@@ -138,7 +138,7 @@ export default function ScheduleSection() {
             </Field>
             {isOwner === 'no' && (
               <div className="mt-4 p-4 rounded-xl border border-blue-100" style={{ background: '#EBF5FB' }}>
-                <p className="text-sm font-medium mb-3" style={{ color: '#185FA5' }}>Owner's information:</p>
+                <p className="text-sm font-medium mb-3" style={{ color: '#b8895a' }}>Owner's information:</p>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                   <Field label="Owner Name"><input {...register('ownerName')} placeholder="Full name" className={INPUT} /></Field>
                   <Field label="Owner Phone"><input {...register('ownerPhone')} type="tel" placeholder="(555) 555-5555" className={INPUT} /></Field>
@@ -158,7 +158,7 @@ export default function ScheduleSection() {
                   <div className="flex gap-6">
                     {['yes', 'no'].map(v => (
                       <label key={v} className="flex items-center gap-2 cursor-pointer">
-                        <input {...register('isCompanyOwner')} type="radio" value={v} className="w-4 h-4" style={{ accentColor: '#185FA5' }} />
+                        <input {...register('isCompanyOwner')} type="radio" value={v} className="w-4 h-4" style={{ accentColor: '#b8895a' }} />
                         <span className="font-medium text-gray-700 capitalize">{v}</span>
                       </label>
                     ))}
@@ -166,7 +166,7 @@ export default function ScheduleSection() {
                 </Field>
                 {isCompanyOwner === 'no' && (
                   <div className="mt-4 p-4 rounded-xl border border-blue-100" style={{ background: '#EBF5FB' }}>
-                    <p className="text-sm font-medium mb-3" style={{ color: '#185FA5' }}>Billing contact:</p>
+                    <p className="text-sm font-medium mb-3" style={{ color: '#b8895a' }}>Billing contact:</p>
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                       <Field label="Billing Address"><input {...register('billingAddress')} placeholder="123 Billing St" className={INPUT} /></Field>
                       <Field label="Billing Phone"><input {...register('billingPhone')} type="tel" placeholder="(555) 555-5555" className={INPUT} /></Field>
@@ -203,7 +203,7 @@ export default function ScheduleSection() {
           {/* SMS Consent */}
           <div>
             <label className="flex items-start gap-3 cursor-pointer">
-              <input {...register('smsConsent')} type="checkbox" className="w-5 h-5 mt-0.5 rounded" style={{ accentColor: '#185FA5' }} />
+              <input {...register('smsConsent')} type="checkbox" className="w-5 h-5 mt-0.5 rounded" style={{ accentColor: '#b8895a' }} />
               <span className="text-sm text-gray-600">
                 I agree to receive appointment reminders and confirmations via text message at the phone number provided. Message and data rates may apply. Reply STOP to opt out at any time.
               </span>
@@ -214,7 +214,7 @@ export default function ScheduleSection() {
           {err && <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm">{err}</div>}
 
           <button type="submit" disabled={loading} className="w-full text-white font-bold py-4 rounded-xl text-lg transition-all shadow-md disabled:opacity-60 flex items-center justify-center gap-2"
-            style={{ background: '#185FA5' }}>
+            style={{ background: '#b8895a' }}>
             {loading ? <><Loader2 size={20} className="animate-spin" />Submitting...</> : <><Calendar size={20} />Submit Schedule Request</>}
           </button>
         </form>

@@ -20,27 +20,27 @@ export default function Contact() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="text-center mb-16">
           <span className="inline-block font-semibold px-4 py-1.5 rounded-full text-sm mb-4"
-            style={{ background: 'rgba(74,173,224,0.1)', color: '#185FA5' }}>Get In Touch</span>
+            style={{ background: 'rgba(184,137,90,0.1)', color: '#2f5a5e' }}>Get In Touch</span>
           <h2 className="text-3xl md:text-4xl font-extrabold text-gray-900 mb-4">
-            Contact <span style={{ color: '#185FA5' }}>Us</span>
+            Contact <span style={{ color: '#2f5a5e' }}>Us</span>
           </h2>
-          <p className="text-gray-500 text-lg max-w-xl mx-auto">Have a question or need a quote? We'd love to hear from you.</p>
+          <p className="text-gray-500 text-lg max-w-xl mx-auto">Have a question or need a consultation? We'd love to hear from you.</p>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-12">
-          <div className="rounded-2xl p-8" style={{ background: 'linear-gradient(135deg, #185FA5, #1a4a6b)' }}>
+          <div className="rounded-2xl p-8" style={{ background: 'linear-gradient(135deg, #2f5a5e, #1f2a2e)' }}>
             <h3 className="text-2xl font-bold text-white mb-6">Contact Information</h3>
             <div className="space-y-5">
               {[
-                { icon: Phone, label: 'Phone', value: '850-598-3336', href: 'tel:+18505983336' },
-                { icon: Mail, label: 'Email', value: 'office@thegasologist.com', href: 'mailto:office@thegasologist.com' },
-                { icon: MapPin, label: 'Service Area', value: 'Okaloosa, Santa Rosa & Walton Counties' },
-                { icon: Clock, label: 'Hours', value: 'Mon–Fri 8AM–5PM · Emergency Available' },
+                { icon: Phone, label: 'Phone', value: '850-598-9128', href: 'tel:+18505989128' },
+                { icon: Mail, label: 'Email', value: 'Lacey@LaceyNPrice.com', href: 'mailto:Lacey@LaceyNPrice.com' },
+                { icon: MapPin, label: 'Service Area', value: 'Emerald Coast, FL' },
+                { icon: Clock, label: 'Hours', value: 'Mon-Fri 8AM-5PM' },
               ].map(({ icon: Icon, label, value, href }) => (
                 <div key={label} className="flex items-start gap-4">
                   <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0"
                     style={{ background: 'rgba(255,255,255,0.2)' }}>
-                    <Icon size={18} style={{ color: '#4AADE0' }} />
+                    <Icon size={18} style={{ color: '#c9a870' }} />
                   </div>
                   <div>
                     <p className="text-xs uppercase tracking-wider font-medium" style={{ color: 'rgba(255,255,255,0.6)' }}>{label}</p>
@@ -79,7 +79,7 @@ export default function Contact() {
                     className="w-full px-4 py-3 rounded-xl border border-gray-200 text-gray-900 text-sm focus:outline-none focus:ring-2 focus:border-blue-400 resize-none" />
                 </div>
                 <button type="submit" disabled={loading} className="w-full text-white font-bold py-3.5 rounded-xl transition-all flex items-center justify-center gap-2"
-                  style={{ background: '#185FA5' }}>
+                  style={{ background: '#b8895a' }}>
                   {loading ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}
                   {loading ? 'Sending...' : 'Send Message'}
                 </button>

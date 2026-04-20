@@ -42,23 +42,23 @@ export async function GET(req: NextRequest) {
       .no-print { display: none !important; }
     }
     body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 40px; color: #1a1a1a; }
-    .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 40px; border-bottom: 3px solid #185FA5; padding-bottom: 20px; }
+    .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 40px; border-bottom: 3px solid #2f5a5e; padding-bottom: 20px; }
     .company-info { text-align: right; color: #666; font-size: 14px; }
-    .company-info strong { color: #185FA5; font-size: 18px; display: block; margin-bottom: 4px; }
-    .invoice-title { font-size: 32px; font-weight: bold; color: #185FA5; margin: 0; }
+    .company-info strong { color: #2f5a5e; font-size: 18px; display: block; margin-bottom: 4px; }
+    .invoice-title { font-size: 32px; font-weight: bold; color: #2f5a5e; margin: 0; }
     .invoice-number { color: #666; font-size: 16px; margin-top: 4px; }
     .details-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 30px; margin-bottom: 30px; }
     .detail-box h3 { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: #999; margin: 0 0 8px; }
     .detail-box p { margin: 2px 0; font-size: 14px; }
     .line-items { width: 100%; border-collapse: collapse; margin-bottom: 30px; }
-    .line-items th { background: #185FA5; color: white; padding: 12px 16px; text-align: left; font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px; }
+    .line-items th { background: #2f5a5e; color: white; padding: 12px 16px; text-align: left; font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px; }
     .line-items td { padding: 12px 16px; border-bottom: 1px solid #eee; font-size: 14px; }
-    .line-items tr:nth-child(even) { background: #f8fafc; }
-    .total-row { background: #185FA5 !important; }
+    .line-items tr:nth-child(even) { background: #faf7f2; }
+    .total-row { background: #2f5a5e !important; }
     .total-row td { color: white; font-weight: bold; font-size: 18px; padding: 14px 16px; }
     .footer { margin-top: 40px; padding-top: 20px; border-top: 1px solid #eee; text-align: center; color: #999; font-size: 12px; }
-    .print-btn { display: inline-block; background: #185FA5; color: white; padding: 12px 32px; border-radius: 8px; text-decoration: none; font-weight: bold; font-size: 16px; cursor: pointer; border: none; margin-bottom: 30px; }
-    .print-btn:hover { background: #134a80; }
+    .print-btn { display: inline-block; background: #b8895a; color: white; padding: 12px 32px; border-radius: 8px; text-decoration: none; font-weight: bold; font-size: 16px; cursor: pointer; border: none; margin-bottom: 30px; }
+    .print-btn:hover { background: #a07848; }
   </style>
 </head>
 <body>
@@ -72,10 +72,11 @@ export async function GET(req: NextRequest) {
       <p class="invoice-number">#${invoice.invoice_number}</p>
     </div>
     <div class="company-info">
-      <strong>The Gasologist</strong>
-      Daniel Price<br/>
-      850-598-3336<br/>
-      office@thegasologist.com
+      <strong>L. Price Building Company</strong>
+      Lacey Price<br/>
+      850-598-9128<br/>
+      Lacey@LaceyNPrice.com<br/>
+      Lic# RR282812182
     </div>
   </div>
 
@@ -117,11 +118,11 @@ export async function GET(req: NextRequest) {
     </tbody>
   </table>
 
-  ${invoice.notes ? `<div style="background:#f8fafc;padding:16px;border-radius:8px;margin-bottom:20px"><p style="margin:0 0 4px;font-weight:bold;color:#185FA5;font-size:13px">Notes</p><p style="margin:0;font-size:14px;color:#666">${invoice.notes}</p></div>` : ''}
+  ${invoice.notes ? `<div style="background:#faf7f2;padding:16px;border-radius:8px;margin-bottom:20px"><p style="margin:0 0 4px;font-weight:bold;color:#2f5a5e;font-size:13px">Notes</p><p style="margin:0;font-size:14px;color:#666">${invoice.notes}</p></div>` : ''}
 
   <div class="footer">
     <p>Thank you for your business!</p>
-    <p>The Gasologist &middot; Daniel Price &middot; 850-598-3336 &middot; office@thegasologist.com</p>
+    <p>L. Price Building Company &middot; Lacey Price &middot; 850-598-9128 &middot; Lacey@LaceyNPrice.com</p>
   </div>
 </body>
 </html>`

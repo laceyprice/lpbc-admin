@@ -28,6 +28,6 @@ DROP POLICY IF EXISTS "Admin full access" ON user_roles;
 CREATE POLICY "Admin full access" ON user_roles FOR ALL TO authenticated USING (true) WITH CHECK (true);
 
 -- Seed: make the primary admin the owner
--- After running, insert a row for office@thegasologist.com with role='admin'
+-- After running, insert a row for Lacey@LaceyNPrice.com with role='admin'
 -- You'll need to look up the user_id from Supabase Auth → Users
--- INSERT INTO user_roles (user_id, email, display_name, role) VALUES ('your-user-uuid', 'office@thegasologist.com', 'Daniel Price', 'admin');
+-- INSERT INTO user_roles (user_id, email, display_name, role) VALUES ('your-user-uuid', 'Lacey@LaceyNPrice.com', 'Lacey Price', 'admin');

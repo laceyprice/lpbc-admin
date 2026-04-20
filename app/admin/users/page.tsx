@@ -81,7 +81,7 @@ export default function UsersPage() {
           <p className="text-gray-500 text-sm mt-0.5">Add bookkeeper and invoicing logins</p>
         </div>
         <button onClick={() => setAdding(true)}
-          className="flex items-center gap-2 text-white font-semibold px-4 py-2.5 rounded-xl shadow-md" style={{ background: '#185FA5' }}>
+          className="flex items-center gap-2 text-white font-semibold px-4 py-2.5 rounded-xl shadow-md" style={{ background: '#b8895a' }}>
           <Plus size={14} /> Add User
         </button>
       </div>
@@ -100,7 +100,7 @@ export default function UsersPage() {
       </div>
 
       {loading ? (
-        <div className="flex justify-center py-20"><Loader2 size={28} className="animate-spin" style={{ color: '#185FA5' }} /></div>
+        <div className="flex justify-center py-20"><Loader2 size={28} className="animate-spin" style={{ color: '#b8895a' }} /></div>
       ) : users.length === 0 ? (
         <div className="text-center py-20 text-gray-400">
           <UserCog size={30} className="mx-auto mb-2 opacity-30" />
@@ -157,7 +157,7 @@ export default function UsersPage() {
               </div>
               <div>
                 <label className="block text-sm font-semibold text-gray-700 mb-1">Email</label>
-                <input name="email" type="email" required className={inputCls} placeholder="jane@thegasologist.com" />
+                <input name="email" type="email" required className={inputCls} placeholder="team@laceynprice.com" />
               </div>
               <div>
                 <label className="block text-sm font-semibold text-gray-700 mb-1">Password</label>
@@ -172,7 +172,7 @@ export default function UsersPage() {
                 </select>
               </div>
               <button type="submit" disabled={saving}
-                className="w-full text-white font-bold py-3 rounded-xl flex items-center justify-center gap-2" style={{ background: '#185FA5' }}>
+                className="w-full text-white font-bold py-3 rounded-xl flex items-center justify-center gap-2" style={{ background: '#b8895a' }}>
                 {saving && <Loader2 size={14} className="animate-spin" />}
                 Create User
               </button>

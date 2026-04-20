@@ -1,5 +1,5 @@
 -- ============================================================
--- THE GASOLOGIST — Supabase Database Schema
+-- L. PRICE BUILDING COMPANY — Supabase Database Schema
 -- Run this in Supabase SQL Editor: https://supabase.com/dashboard
 -- ============================================================
 
@@ -233,6 +233,6 @@ CREATE POLICY "Public can submit schedule requests" ON schedule_requests FOR INS
 -- SAMPLE ADMIN USER CREATION
 -- After running this schema, create your admin user at:
 -- Supabase Dashboard → Authentication → Users → Add User
--- Email: office@thegasologist.com
+-- Email: Lacey@LaceyNPrice.com
 -- Set a strong password
 -- ============================================================

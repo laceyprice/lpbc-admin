@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS chart_of_accounts (
   updated_at TIMESTAMPTZ DEFAULT NOW(),
   -- asset / liability / equity / revenue / expense / distribution
   account_type TEXT NOT NULL CHECK (account_type IN ('asset','liability','equity','revenue','expense','distribution')),
-  -- Display name (e.g. "Stock Material", "DPG Operating Account")
+  -- Display name (e.g. "Stock Material", "LPBC Operating Account")
   name TEXT NOT NULL UNIQUE,
   -- Optional sub-grouping for report layout ("SALES", "PURCHASES", "OWNER DISTRIBUTIONS", "ASSETS", etc.)
   report_group TEXT,
@@ -128,7 +128,7 @@ CREATE POLICY "Admin full access" ON transaction_images FOR ALL TO authenticated
 -- ============================================================
 INSERT INTO chart_of_accounts (account_type, name, report_group, sort_order) VALUES
   -- Assets
-  ('asset',        'DPG Operating Account', 'ASSETS',              10),
+  ('asset',        'LPBC Operating Account', 'ASSETS',              10),
   ('asset',        'Accounts Payable',      'ASSETS',              20),
   -- Liabilities
   ('liability',    'Loan',                  'LIABILITIES',         30),

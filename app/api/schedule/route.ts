@@ -84,7 +84,7 @@ export async function POST(req: NextRequest) {
       const phone = body.phone.replace(/\D/g, '')
       const formattedPhone = phone.startsWith('1') ? `+${phone}` : `+1${phone}`
       await sendSMS(formattedPhone,
-        `Hi ${body.firstName}! Thank you for reaching out to The Gasologist. We received your request and will be in touch soon. If this is an emergency gas call, please call us at 850-598-3336.`
+        `Hi ${body.firstName}! Thank you for reaching out to L. Price Building Company. We received your request and will be in touch soon. If this is an emergency gas call, please call us at 850-598-9128.`
       )
     } catch (e) { console.error('Auto-reply SMS failed:', e) }
   }

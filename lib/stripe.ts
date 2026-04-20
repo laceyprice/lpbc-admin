@@ -22,7 +22,7 @@ export async function createCheckoutSession({
     line_items: [{
       price_data: {
         currency: 'usd',
-        product_data: { name: 'The Gasologist — Service Invoice', description },
+        product_data: { name: 'L. Price Building Company — Service Invoice', description },
         unit_amount: Math.round(amountDue * 100),
       },
       quantity: 1,

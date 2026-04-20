@@ -22,17 +22,17 @@ export default function AdminLogin() {
 
   return (
     <div className="min-h-screen flex items-center justify-center"
-      style={{ background: 'linear-gradient(135deg, #1a4a6b, #185FA5)' }}>
+      style={{ background: 'linear-gradient(135deg, #1f2a2e, #b8895a)' }}>
       <div className="bg-white rounded-3xl shadow-2xl p-10 w-full max-w-md mx-4">
         <div className="flex flex-col items-center mb-8">
-          <div className="w-20 h-20 mb-4 relative"><Image src="/logo.png" alt="The Gasologist" fill className="object-contain" /></div>
+          <div className="w-20 h-20 mb-4 relative"><Image src="/logo.png" alt="L. Price Building Company" fill className="object-contain" /></div>
           <h1 className="text-2xl font-extrabold text-gray-900">Admin Portal</h1>
-          <p className="text-gray-500 text-sm mt-1">The Gasologist</p>
+          <p className="text-gray-500 text-sm mt-1">L. Price Building Company</p>
         </div>
         <form onSubmit={handleLogin} className="space-y-5">
           <div>
             <label className="block text-sm font-semibold text-gray-700 mb-1.5">Email Address</label>
-            <input type="email" value={email} onChange={e => setEmail(e.target.value)} required placeholder="office@thegasologist.com"
+            <input type="email" value={email} onChange={e => setEmail(e.target.value)} required placeholder="Lacey@LaceyNPrice.com"
               className="w-full px-4 py-3 rounded-xl border border-gray-200 text-gray-900 focus:outline-none focus:ring-2 focus:border-blue-400" />
           </div>
           <div>
@@ -49,7 +49,7 @@ export default function AdminLogin() {
           {error && <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm">{error}</div>}
           <button type="submit" disabled={loading}
             className="w-full text-white font-bold py-3.5 rounded-xl transition-all flex items-center justify-center gap-2 shadow-md disabled:opacity-60"
-            style={{ background: '#185FA5' }}>
+            style={{ background: '#b8895a' }}>
             {loading ? <Loader2 size={18} className="animate-spin" /> : <Lock size={18} />}
             {loading ? 'Signing In...' : 'Sign In'}
           </button>

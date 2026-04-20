@@ -199,13 +199,13 @@ export default function ScheduleRequestsPage() {
           {(['pending', 'scheduled', 'declined', 'all'] as const).map(f => (
             <button key={f} onClick={() => setFilter(f)}
               className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all capitalize ${filter === f ? 'bg-white shadow-sm' : 'text-gray-500'}`}
-              style={{ color: filter === f ? '#185FA5' : undefined }}>{f}</button>
+              style={{ color: filter === f ? '#b8895a' : undefined }}>{f}</button>
           ))}
         </div>
       </div>
 
       {loading ? (
-        <div className="flex items-center justify-center py-20"><Loader2 className="animate-spin" style={{ color: '#185FA5' }} size={28} /></div>
+        <div className="flex items-center justify-center py-20"><Loader2 className="animate-spin" style={{ color: '#b8895a' }} size={28} /></div>
       ) : filtered.length === 0 ? (
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 py-16 text-center text-gray-400">
           <ClipboardList size={32} className="mx-auto mb-2 opacity-30" />
@@ -219,7 +219,7 @@ export default function ScheduleRequestsPage() {
               <div className="px-5 py-4 flex items-center justify-between cursor-pointer hover:bg-gray-50 transition-colors"
                 onClick={() => setExpanded(expanded === req.id ? null : req.id)}>
                 <div className="flex items-center gap-4">
-                  <div className="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold text-sm" style={{ background: '#185FA5' }}>
+                  <div className="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold text-sm" style={{ background: '#b8895a' }}>
                     {req.first_name[0]}{req.last_name[0]}
                   </div>
                   <div>
@@ -294,7 +294,7 @@ export default function ScheduleRequestsPage() {
                   {req.status === 'pending' && (
                     <div className="flex flex-wrap gap-3 pt-3 border-t border-gray-100">
                       <button onClick={() => { setScheduling(req); setApptForm({ date: '', period: 'AM', service_type: req.service_type || '', notes: req.notes || '' }) }}
-                        className="flex items-center gap-2 text-white font-semibold px-4 py-2 rounded-xl text-sm" style={{ background: '#185FA5' }}>
+                        className="flex items-center gap-2 text-white font-semibold px-4 py-2 rounded-xl text-sm" style={{ background: '#b8895a' }}>
                         <Calendar size={14} />Schedule Appointment
                       </button>
                       <button onClick={() => convertTo(req, 'quote')}
@@ -394,12 +394,12 @@ export default function ScheduleRequestsPage() {
                   <div className="flex gap-2">
                     <button type="button" onClick={() => setApptForm(f => ({ ...f, period: 'AM' }))}
                       className={`flex-1 py-2.5 rounded-xl text-sm font-bold border-2 transition-all ${apptForm.period === 'AM' ? 'text-white border-transparent' : 'text-gray-500 border-gray-200 bg-white hover:bg-gray-50'}`}
-                      style={apptForm.period === 'AM' ? { background: '#185FA5', borderColor: '#185FA5' } : {}}>
+                      style={apptForm.period === 'AM' ? { background: '#b8895a', borderColor: '#b8895a' } : {}}>
                       AM
                     </button>
                     <button type="button" onClick={() => setApptForm(f => ({ ...f, period: 'PM' }))}
                       className={`flex-1 py-2.5 rounded-xl text-sm font-bold border-2 transition-all ${apptForm.period === 'PM' ? 'text-white border-transparent' : 'text-gray-500 border-gray-200 bg-white hover:bg-gray-50'}`}
-                      style={apptForm.period === 'PM' ? { background: '#185FA5', borderColor: '#185FA5' } : {}}>
+                      style={apptForm.period === 'PM' ? { background: '#b8895a', borderColor: '#b8895a' } : {}}>
                       PM
                     </button>
                   </div>
@@ -419,7 +419,7 @@ export default function ScheduleRequestsPage() {
                   className="w-full px-3 py-2.5 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:border-blue-400" />
               </div>
               <button onClick={scheduleAppointment} disabled={saving || !apptForm.date}
-                className="w-full text-white font-bold py-3 rounded-xl flex items-center justify-center gap-2 disabled:opacity-60" style={{ background: '#185FA5' }}>
+                className="w-full text-white font-bold py-3 rounded-xl flex items-center justify-center gap-2 disabled:opacity-60" style={{ background: '#b8895a' }}>
                 {saving ? <Loader2 size={16} className="animate-spin" /> : <Calendar size={16} />}
                 {saving ? 'Creating...' : 'Create Appointment'}
               </button>

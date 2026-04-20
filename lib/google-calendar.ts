@@ -19,7 +19,7 @@ export async function addEventToGoogleCalendar(appointment: {
     )
     auth.setCredentials({ refresh_token: process.env.GOOGLE_REFRESH_TOKEN })
     const calendar = google.calendar({ version: 'v3', auth })
-    const calendarId = process.env.GOOGLE_CALENDAR_ID || 'office@thegasologist.com'
+    const calendarId = process.env.GOOGLE_CALENDAR_ID || 'Lacey@LaceyNPrice.com'
 
     const descParts = [
       appointment.description,

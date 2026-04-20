@@ -4,7 +4,7 @@ export default function PrivacyPage() {
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="max-w-3xl mx-auto px-6 py-16">
-        <Link href="/" className="text-sm font-medium mb-8 inline-flex items-center gap-1 hover:underline" style={{ color: '#185FA5' }}>
+        <Link href="/" className="text-sm font-medium mb-8 inline-flex items-center gap-1 hover:underline" style={{ color: '#2f5a5e' }}>
           ← Back to Home
         </Link>
         <h1 className="text-3xl font-extrabold text-gray-900 mb-2">Privacy Policy</h1>
@@ -13,7 +13,7 @@ export default function PrivacyPage() {
         <div className="prose prose-gray max-w-none space-y-8 text-gray-700">
           <section>
             <h2 className="text-xl font-bold text-gray-900 mb-3">1. Information We Collect</h2>
-            <p>When you use The Gasologist website or request our services, we may collect the following information:</p>
+            <p>When you use L. Price Building Company website or request our services, we may collect the following information:</p>
             <ul className="list-disc pl-6 mt-2 space-y-1">
               <li>Contact information: name, email address, phone number</li>
               <li>Service address and property information</li>
@@ -27,7 +27,7 @@ export default function PrivacyPage() {
             <h2 className="text-xl font-bold text-gray-900 mb-3">2. How We Use Your Information</h2>
             <p>We use the information we collect to:</p>
             <ul className="list-disc pl-6 mt-2 space-y-1">
-              <li>Provide and manage gas fitting services</li>
+              <li>Provide and manage residential contracting services</li>
               <li>Schedule and confirm appointments</li>
               <li>Send invoices and process payments</li>
               <li>Communicate service updates, confirmations, and reminders</li>
@@ -69,8 +69,8 @@ export default function PrivacyPage() {
             <h2 className="text-xl font-bold text-gray-900 mb-3">8. Contact Us</h2>
             <p>If you have questions about this Privacy Policy, please contact us:</p>
             <div className="mt-2">
-              <p className="font-semibold">The Gasologist</p>
-              <p>Email: <a href="mailto:office@thegasologist.com" className="underline" style={{ color: '#185FA5' }}>office@thegasologist.com</a></p>
+              <p className="font-semibold">L. Price Building Company</p>
+              <p>Email: <a href="mailto:Lacey@LaceyNPrice.com" className="underline" style={{ color: '#2f5a5e' }}>Lacey@LaceyNPrice.com</a></p>
             </div>
           </section>
         </div>

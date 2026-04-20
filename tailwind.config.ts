@@ -10,9 +10,26 @@ const config: Config = {
     extend: {
       colors: {
         brand: {
-          light: '#4AADE0',
-          DEFAULT: '#185FA5',
-          dark: '#1a4a6b',
+          light: '#c9a870',
+          DEFAULT: '#b8895a',
+          dark: '#2f5a5e',
+        },
+        sand: {
+          50: '#faf7f2',
+          100: '#f3ede3',
+        },
+        ink: {
+          500: '#5a6a6e',
+          700: '#3a4a4e',
+          900: '#1f2a2e',
+        },
+        brass: {
+          500: '#c9a870',
+          600: '#b8895a',
+        },
+        teal: {
+          700: '#2f5a5e',
+          800: '#24494d',
         },
       },
     },

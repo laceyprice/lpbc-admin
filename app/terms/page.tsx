@@ -4,7 +4,7 @@ export default function TermsPage() {
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="max-w-3xl mx-auto px-6 py-16">
-        <Link href="/" className="text-sm font-medium mb-8 inline-flex items-center gap-1 hover:underline" style={{ color: '#185FA5' }}>
+        <Link href="/" className="text-sm font-medium mb-8 inline-flex items-center gap-1 hover:underline" style={{ color: '#2f5a5e' }}>
           ← Back to Home
         </Link>
         <h1 className="text-3xl font-extrabold text-gray-900 mb-2">Terms &amp; Conditions</h1>
@@ -13,12 +13,12 @@ export default function TermsPage() {
         <div className="prose prose-gray max-w-none space-y-8 text-gray-700">
           <section>
             <h2 className="text-xl font-bold text-gray-900 mb-3">1. Acceptance of Terms</h2>
-            <p>By accessing our website or engaging The Gasologist for services, you agree to be bound by these Terms and Conditions. If you do not agree, please do not use our services.</p>
+            <p>By accessing our website or engaging L. Price Building Company for services, you agree to be bound by these Terms and Conditions. If you do not agree, please do not use our services.</p>
           </section>
 
           <section>
             <h2 className="text-xl font-bold text-gray-900 mb-3">2. Services</h2>
-            <p>The Gasologist provides licensed gas fitting and related services including gas line installation, appliance connection, leak detection, emergency repairs, and compliance inspections. All work is performed by licensed gas fitters in accordance with applicable codes and standards.</p>
+            <p>L. Price Building Company provides licensed licensed residential contracting services including custom home building, remodeling, renovation, and design consultation. All work is performed by licensed contractors in accordance with applicable codes and standards.</p>
           </section>
 
           <section>
@@ -35,12 +35,12 @@ export default function TermsPage() {
 
           <section>
             <h2 className="text-xl font-bold text-gray-900 mb-3">5. Payment</h2>
-            <p>We accept payment via credit card through our secure Stripe payment portal. By submitting payment, you authorize The Gasologist to charge the stated amount. All payments are processed securely; we do not store credit card information.</p>
+            <p>We accept payment via credit card through our secure Stripe payment portal. By submitting payment, you authorize L. Price Building Company to charge the stated amount. All payments are processed securely; we do not store credit card information.</p>
           </section>
 
           <section>
             <h2 className="text-xl font-bold text-gray-900 mb-3">6. Access and Site Requirements</h2>
-            <p>The customer is responsible for ensuring safe access to the work site, including turning off relevant gas supplies where applicable. The Gasologist is not liable for delays or additional costs arising from inaccessible sites or failure to prepare the work area.</p>
+            <p>The customer is responsible for ensuring safe access to the work site, including turning off relevant gas supplies where applicable. L. Price Building Company is not liable for delays or additional costs arising from inaccessible sites or failure to prepare the work area.</p>
           </section>
 
           <section>
@@ -50,7 +50,7 @@ export default function TermsPage() {
 
           <section>
             <h2 className="text-xl font-bold text-gray-900 mb-3">8. Limitation of Liability</h2>
-            <p>To the maximum extent permitted by law, The Gasologist's liability for any claim arising from our services is limited to the amount paid for the specific service giving rise to the claim. We are not liable for indirect, consequential, or incidental damages.</p>
+            <p>To the maximum extent permitted by law, L. Price Building Company's liability for any claim arising from our services is limited to the amount paid for the specific service giving rise to the claim. We are not liable for indirect, consequential, or incidental damages.</p>
           </section>
 
           <section>
@@ -67,8 +67,8 @@ export default function TermsPage() {
             <h2 className="text-xl font-bold text-gray-900 mb-3">11. Contact</h2>
             <p>Questions about these Terms? Contact us:</p>
             <div className="mt-2">
-              <p className="font-semibold">The Gasologist</p>
-              <p>Email: <a href="mailto:office@thegasologist.com" className="underline" style={{ color: '#185FA5' }}>office@thegasologist.com</a></p>
+              <p className="font-semibold">L. Price Building Company</p>
+              <p>Email: <a href="mailto:Lacey@LaceyNPrice.com" className="underline" style={{ color: '#2f5a5e' }}>Lacey@LaceyNPrice.com</a></p>
             </div>
           </section>
         </div>

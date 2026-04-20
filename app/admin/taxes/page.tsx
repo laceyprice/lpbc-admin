@@ -133,7 +133,7 @@ export default function TaxesPage() {
             {TAX_YEARS.map(y => <option key={y} value={y}>{y} Tax Year</option>)}
           </select>
           <button onClick={() => { setCreating(true); setForm({ tax_year: yearFilter, document_type: 'w9', status: 'pending_w9' }) }}
-            className="flex items-center gap-2 text-white font-semibold px-4 py-2.5 rounded-xl shadow-md" style={{ background: '#185FA5' }}>
+            className="flex items-center gap-2 text-white font-semibold px-4 py-2.5 rounded-xl shadow-md" style={{ background: '#b8895a' }}>
             <Plus size={16} />Add Vendor
           </button>
         </div>
@@ -164,7 +164,7 @@ export default function TaxesPage() {
       )}
 
       {loading ? (
-        <div className="flex items-center justify-center py-20"><Loader2 className="animate-spin" style={{ color: '#185FA5' }} size={28} /></div>
+        <div className="flex items-center justify-center py-20"><Loader2 className="animate-spin" style={{ color: '#b8895a' }} size={28} /></div>
       ) : docs.length === 0 ? (
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 py-16 text-center text-gray-400">
           <FileText size={32} className="mx-auto mb-2 opacity-30" />
@@ -194,7 +194,7 @@ export default function TaxesPage() {
                   </td>
                   <td className="px-5 py-3">
                     {doc.file_url ? (
-                      <a href={doc.file_url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-xs font-medium underline" style={{ color: '#185FA5' }}>
+                      <a href={doc.file_url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-xs font-medium underline" style={{ color: '#b8895a' }}>
                         <Download size={12} />{doc.file_name || 'W-9'}
                       </a>
                     ) : (
@@ -218,7 +218,7 @@ export default function TaxesPage() {
                     )}
                   </td>
                   <td className="px-5 py-3">
-                    <button onClick={() => { setEditing(doc); setForm(doc) }} className="text-xs font-medium underline mr-3" style={{ color: '#185FA5' }}>Edit</button>
+                    <button onClick={() => { setEditing(doc); setForm(doc) }} className="text-xs font-medium underline mr-3" style={{ color: '#b8895a' }}>Edit</button>
                     <button onClick={() => deleteDoc(doc.id)} className="text-xs font-medium text-red-500 underline">Delete</button>
                   </td>
                 </tr>
@@ -270,7 +270,7 @@ export default function TaxesPage() {
                 <textarea value={form.notes || ''} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} rows={2} className={inputCls} />
               </div>
               <button onClick={save} disabled={saving || !form.vendor_name}
-                className="w-full text-white font-bold py-3 rounded-xl flex items-center justify-center gap-2 disabled:opacity-60" style={{ background: '#185FA5' }}>
+                className="w-full text-white font-bold py-3 rounded-xl flex items-center justify-center gap-2 disabled:opacity-60" style={{ background: '#b8895a' }}>
                 {saving ? <Loader2 size={16} className="animate-spin" /> : null}
                 {saving ? 'Saving...' : editing ? 'Save Changes' : 'Add Vendor'}
               </button>

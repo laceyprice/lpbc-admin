@@ -102,14 +102,14 @@ export default function AccountsPage() {
             Show inactive
           </label>
           <button onClick={() => { setAdding(true); setEditing({ id: '', name: '', account_type: 'expense', report_group: 'PURCHASES', sort_order: 100, is_active: true }) }}
-            className="flex items-center gap-2 text-white font-semibold px-4 py-2.5 rounded-xl shadow-md" style={{ background: '#185FA5' }}>
+            className="flex items-center gap-2 text-white font-semibold px-4 py-2.5 rounded-xl shadow-md" style={{ background: '#b8895a' }}>
             <Plus size={14} /> Add Account
           </button>
         </div>
       </div>
 
       {loading ? (
-        <div className="flex justify-center py-20"><Loader2 size={28} className="animate-spin" style={{ color: '#185FA5' }} /></div>
+        <div className="flex justify-center py-20"><Loader2 size={28} className="animate-spin" style={{ color: '#b8895a' }} /></div>
       ) : Object.keys(grouped).length === 0 ? (
         <div className="text-center py-20 text-gray-400">
           <FolderOpen size={30} className="mx-auto mb-2 opacity-30" />
@@ -193,7 +193,7 @@ export default function AccountsPage() {
                 <input name="sort_order" type="number" defaultValue={editing?.sort_order || 100} className={inputCls} />
               </div>
               <button type="submit" disabled={saving}
-                className="w-full text-white font-bold py-3 rounded-xl flex items-center justify-center gap-2" style={{ background: '#185FA5' }}>
+                className="w-full text-white font-bold py-3 rounded-xl flex items-center justify-center gap-2" style={{ background: '#b8895a' }}>
                 {saving && <Loader2 size={14} className="animate-spin" />}
                 {editing?.id ? 'Save Changes' : 'Add Account'}
               </button>

@@ -11,7 +11,7 @@ const links = [
   { label: 'Contact', href: '#contact' },
 ]
 
-const BLUE = '#4AADE0'
+const BLUE = '#b8895a'
 
 export default function Navbar() {
   const [open, setOpen] = useState(false)
@@ -30,11 +30,11 @@ export default function Navbar() {
         <div className="flex items-center justify-between h-20 md:h-24">
           <a href="#home" className="flex items-center gap-3">
             <div className="relative w-12 h-12 md:w-14 md:h-14">
-              <Image src="/logo.png" alt="D P Gas Company" fill className="object-contain" />
+              <Image src="/logo.png" alt="L. Price Building Company" fill className="object-contain" />
             </div>
             <div className="flex flex-col leading-tight">
-              <span className="font-bold text-lg md:text-xl" style={{ color: BLUE }}>D P Gas Company</span>
-              <span className="text-xs md:text-sm font-medium" style={{ color: BLUE }}>Natural Gas &amp; Propane Specialist</span>
+              <span className="font-bold text-lg md:text-xl" style={{ color: BLUE }}>L. Price Building Company</span>
+              <span className="text-xs md:text-sm font-medium" style={{ color: BLUE }}>Custom Home Design &amp; Building</span>
             </div>
           </a>
 
@@ -61,7 +61,7 @@ export default function Navbar() {
       </div>
 
       {open && (
-        <div className="md:hidden border-t" style={{ background: 'white', borderColor: 'rgba(74,173,224,0.2)' }}>
+        <div className="md:hidden border-t" style={{ background: 'white', borderColor: 'rgba(184,137,90,0.2)' }}>
           <div className="px-4 py-4 space-y-1">
             {links.map(l => (
               <a key={l.href} href={l.href} onClick={() => setOpen(false)}

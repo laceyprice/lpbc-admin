@@ -26,7 +26,7 @@ export async function sendAppointmentConfirmationSMS({
   to: string; customerName: string; serviceAddress: string
   appointmentDate: string; timeFrame: string; serviceType: string
 }) {
-  const body = `Hi ${customerName}! Your Gasologist appointment is confirmed.\n📅 ${appointmentDate}\n⏰ ${timeFrame}\n🔧 ${serviceType}\n📍 ${serviceAddress}\nYou'll receive reminders before your appointment. Questions? Call or text 850-598-3336.`
+  const body = `Hi ${customerName}! Your L. Price Building Company appointment is confirmed.\n📅 ${appointmentDate}\n⏰ ${timeFrame}\n🔧 ${serviceType}\n📍 ${serviceAddress}\nYou'll receive reminders before your appointment. Questions? Call or text 850-598-9128.`
   return sendSMS(formatPhone(to), body)
 }
 
@@ -37,6 +37,6 @@ export async function sendAppointmentReminderSMS({
   appointmentDate: string; appointmentTime: string; timeFrame: string; hoursUntil: 1 | 12
 }) {
   const urgency = hoursUntil === 1 ? 'in 1 hour' : 'tomorrow'
-  const body = `Hi ${customerName}! Reminder: Your Gasologist appointment is ${urgency}.\n📅 ${appointmentDate}\n⏰ ${timeFrame}\n📍 ${serviceAddress}\nQuestions? Call or text 850-598-3336.`
+  const body = `Hi ${customerName}! Reminder: Your L. Price Building Company appointment is ${urgency}.\n📅 ${appointmentDate}\n⏰ ${timeFrame}\n📍 ${serviceAddress}\nQuestions? Call or text 850-598-9128.`
   return sendSMS(formatPhone(to), body)
 }

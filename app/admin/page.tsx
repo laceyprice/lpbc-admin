@@ -9,9 +9,12 @@ export default function AdminDashboard() {
 
   useEffect(() => {
     Promise.all([fetch('/api/contacts'), fetch('/api/invoices'), fetch('/api/schedule?status=pending')]).then(async ([c, i, r]) => {
-      const contacts = await c.json()
-      const invoices = await i.json()
-      const requests = await r.json()
+      const contactsRaw = await c.json()
+      const invoicesRaw = await i.json()
+      const requestsRaw = await r.json()
+      const contacts = Array.isArray(contactsRaw) ? contactsRaw : []
+      const invoices = Array.isArray(invoicesRaw) ? invoicesRaw : []
+      const requests = Array.isArray(requestsRaw) ? requestsRaw : []
       const open = invoices.filter((x: any) => x.invoice_status !== 'paid' && x.invoice_status !== 'cancelled')
       const now = new Date()
       const paid = invoices.filter((x: any) => x.invoice_status === 'paid' && x.paid_at && new Date(x.paid_at).getMonth() === now.getMonth())
@@ -22,7 +25,7 @@ export default function AdminDashboard() {
   const statusColors: Record<string, string> = { draft: 'bg-gray-100 text-gray-600', sent: 'bg-blue-100 text-blue-700', paid: 'bg-green-100 text-green-700', overdue: 'bg-red-100 text-red-700' }
 
   const cards = data ? [
-    { label: 'Total Contacts', value: data.contacts.toString(), icon: Users, color: '#185FA5', href: '/admin/crm' },
+    { label: 'Total Contacts', value: data.contacts.toString(), icon: Users, color: '#b8895a', href: '/admin/crm' },
     { label: 'Outstanding Invoices', value: formatCurrency(data.openAmt), icon: FileText, color: '#d97706', href: '/admin/invoices' },
     { label: 'Collected This Month', value: formatCurrency(data.paidMonth), icon: DollarSign, color: '#16a34a', href: '/admin/invoices' },
     { label: 'Pending Requests', value: data.pending.toString(), icon: ClipboardList, color: '#7c3aed', href: '/admin/schedule-requests' },
@@ -34,7 +37,7 @@ export default function AdminDashboard() {
     <div className="p-6 md:p-8 pt-16 md:pt-8">
       <div className="mb-8">
         <h1 className="text-2xl font-extrabold text-gray-900">Dashboard</h1>
-        <p className="text-gray-500 mt-1">Welcome back to The Gasologist admin portal.</p>
+        <p className="text-gray-500 mt-1">Welcome back to L. Price Building Company admin portal.</p>
       </div>
       <div className="grid grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
         {data ? cards.map(({ label, value, icon: Icon, color, href }) => (
@@ -50,7 +53,7 @@ export default function AdminDashboard() {
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
           <div className="px-6 py-4 border-b border-gray-100 flex justify-between">
             <h2 className="font-bold text-gray-900">Recent Invoices</h2>
-            <Link href="/admin/invoices" className="text-sm font-medium" style={{ color: '#185FA5' }}>View All</Link>
+            <Link href="/admin/invoices" className="text-sm font-medium" style={{ color: '#b8895a' }}>View All</Link>
           </div>
           {data.invoices.length === 0 ? <div className="py-10 text-center text-gray-400 text-sm">No invoices yet</div> : data.invoices.map((inv: any) => (
             <div key={inv.id} className="flex items-center justify-between px-6 py-4 border-b border-gray-50 hover:bg-gray-50 transition-colors">

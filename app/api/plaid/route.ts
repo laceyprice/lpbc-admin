@@ -16,8 +16,8 @@ export async function POST(req: NextRequest) {
   if (action === 'create-link-token') {
     try {
       const response = await plaid.linkTokenCreate({
-        user: { client_user_id: 'gasologist-admin' },
-        client_name: 'The Gasologist',
+        user: { client_user_id: 'lpbc-admin' },
+        client_name: 'L. Price Building Company',
         products: [Products.Transactions],
         country_codes: [CountryCode.Us],
         language: 'en',
