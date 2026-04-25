@@ -1,0 +1,941 @@
+﻿'use client'
+import { useEffect, useState, useRef } from 'react'
+import { MapPin, Plus, Search, X, Loader2, Camera, Image as ImageIcon, ChevronRight, Trash2, Edit3, ClipboardList, Calendar, FileText, Home, Building2, Key, ChevronLeft, Upload, CheckCircle2, AlertCircle, Receipt, DollarSign, Link2, Users } from 'lucide-react'
+import { formatDateShort } from '@/lib/utils'
+
+const SERVICE_TYPES = [
+  'Gas Line Installation', 'Gas Line Repair', 'Gas Line Inspection',
+  'Appliance Install', 'Appliance Repair', 'Appliance Inspection',
+  'Meter Set', 'Pressure Test', 'Leak Detection', 'Annual Service', 'Other',
+]
+
+const PHOTO_TYPES = [
+  { value: 'before', label: 'Before' },
+  { value: 'after', label: 'After' },
+  { value: 'install', label: 'Install' },
+  { value: 'meter', label: 'Meter' },
+  { value: 'inspection', label: 'Inspection' },
+  { value: 'general', label: 'General' },
+]
+
+const PROPERTY_TYPES = [
+  { value: 'residential', label: 'Residential', icon: Home },
+  { value: 'commercial', label: 'Commercial', icon: Building2 },
+  { value: 'rental', label: 'Rental', icon: Key },
+]
+
+interface Worksite {
+  id: string
+  address: string
+  city: string
+  state: string
+  zip: string
+  property_type: string
+  notes: string
+  created_at: string
+  visit_count: number
+  photo_count: number
+  last_visit: string | null
+  last_service: string | null
+}
+
+interface Visit {
+  id: string
+  worksite_id: string
+  visit_date: string
+  service_type: string
+  work_performed: string
+  technician: string
+  customer_name: string
+  customer_phone: string
+  notes: string
+  invoice_id: string | null
+  appointment_id: string | null
+  created_at: string
+}
+
+interface Photo {
+  id: string
+  worksite_id: string
+  visit_id: string | null
+  file_url: string
+  file_name: string
+  caption: string
+  photo_type: string
+  created_at: string
+}
+
+const inputCls = 'w-full px-3 py-2.5 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:border-blue-400'
+
+export default function WorksitesPage() {
+  const [sites, setSites] = useState<Worksite[]>([])
+  const [loading, setLoading] = useState(true)
+  const [search, setSearch] = useState('')
+  const [selected, setSelected] = useState<Worksite & { visits: Visit[]; photos: Photo[] } | null>(null)
+  const [detailLoading, setDetailLoading] = useState(false)
+  const [view, setView] = useState<'list' | 'detail'>('list')
+  const [detailTab, setDetailTab] = useState<'history' | 'contacts' | 'photos'>('history')
+
+  // Import from invoices
+  const [importing, setImporting] = useState(false)
+  const [importResult, setImportResult] = useState<{ sitesCreated: number; visitsCreated: number; skipped: number } | null>(null)
+
+  // New site modal
+  const [showNewSite, setShowNewSite] = useState(false)
+  const [savingSite, setSavingSite] = useState(false)
+  const [siteForm, setSiteForm] = useState({ address: '', city: '', state: 'FL', zip: '', property_type: 'residential', notes: '' })
+
+  // New visit modal
+  const [showNewVisit, setShowNewVisit] = useState(false)
+  const [savingVisit, setSavingVisit] = useState(false)
+  const [visitForm, setVisitForm] = useState({
+    visit_date: new Date().toISOString().split('T')[0],
+    service_type: '', work_performed: '', technician: 'Daniel Price',
+    customer_name: '', customer_phone: '', notes: '',
+  })
+
+  // Photo upload
+  const [uploadingPhoto, setUploadingPhoto] = useState(false)
+  const [photoType, setPhotoType] = useState('general')
+  const [photoCaption, setPhotoCaption] = useState('')
+  const [pendingVisitId, setPendingVisitId] = useState<string | null>(null)
+  const photoRef = useRef<HTMLInputElement>(null)
+  const cameraRef = useRef<HTMLInputElement>(null)
+
+  // Edit site
+  const [editingSite, setEditingSite] = useState(false)
+  const [savingEdit, setSavingEdit] = useState(false)
+
+  // Lightbox
+  const [lightbox, setLightbox] = useState<Photo | null>(null)
+
+  useEffect(() => { loadSites() }, [])
+
+  async function loadSites() {
+    setLoading(true)
+    try {
+      const res = await fetch('/api/worksites' + (search ? `?search=${encodeURIComponent(search)}` : ''))
+      const d = await res.json()
+      setSites(Array.isArray(d) ? d : [])
+    } catch { setSites([]) }
+    setLoading(false)
+  }
+
+  async function importFromInvoices() {
+    if (!confirm('This will create worksites and visit records from all existing invoices with a job address. Already-imported invoices will be skipped. Continue?')) return
+    setImporting(true)
+    setImportResult(null)
+    try {
+      const res = await fetch('/api/worksites?action=import-from-invoices', { method: 'POST' })
+      const d = await res.json()
+      if (!res.ok) { alert(d.error || 'Import failed'); return }
+      setImportResult(d)
+      await loadSites()
+    } finally { setImporting(false) }
+  }
+
+  async function openSite(site: Worksite) {
+    setDetailLoading(true)
+    setView('detail')
+    try {
+      const res = await fetch(`/api/worksites?id=${site.id}`)
+      const d = await res.json()
+      setSelected(d)
+    } catch {}
+    setDetailLoading(false)
+  }
+
+  async function refreshDetail() {
+    if (!selected) return
+    const res = await fetch(`/api/worksites?id=${selected.id}`)
+    const d = await res.json()
+    setSelected(d)
+    // Update list too
+    setSites(prev => prev.map(s => s.id === d.id ? {
+      ...s, visit_count: d.visits?.length || 0, photo_count: d.photos?.length || 0,
+      last_visit: d.visits?.[0]?.visit_date || null, last_service: d.visits?.[0]?.service_type || null,
+    } : s))
+  }
+
+  async function createSite(e: React.FormEvent) {
+    e.preventDefault()
+    setSavingSite(true)
+    try {
+      const res = await fetch('/api/worksites?action=create-site', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(siteForm),
+      })
+      if (!res.ok) { const e = await res.json(); alert(e.error); return }
+      setShowNewSite(false)
+      setSiteForm({ address: '', city: '', state: 'FL', zip: '', property_type: 'residential', notes: '' })
+      await loadSites()
+    } finally { setSavingSite(false) }
+  }
+
+  async function saveSiteEdit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!selected) return
+    setSavingEdit(true)
+    try {
+      const fd = new FormData(e.currentTarget as HTMLFormElement)
+      const updates = {
+        address: fd.get('address') as string,
+        city: fd.get('city') as string,
+        state: fd.get('state') as string,
+        zip: fd.get('zip') as string,
+        property_type: fd.get('property_type') as string,
+        notes: fd.get('notes') as string,
+      }
+      await fetch('/api/worksites', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: selected.id, table: 'worksites', ...updates }) })
+      setEditingSite(false)
+      await refreshDetail()
+    } finally { setSavingEdit(false) }
+  }
+
+  async function createVisit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!selected) return
+    setSavingVisit(true)
+    try {
+      const res = await fetch('/api/worksites?action=create-visit', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...visitForm, worksite_id: selected.id }),
+      })
+      if (!res.ok) { const e = await res.json(); alert(e.error); return }
+      setShowNewVisit(false)
+      setVisitForm({ visit_date: new Date().toISOString().split('T')[0], service_type: '', work_performed: '', technician: 'Daniel Price', customer_name: '', customer_phone: '', notes: '' })
+      await refreshDetail()
+      setDetailTab('visits')
+    } finally { setSavingVisit(false) }
+  }
+
+  async function deleteVisit(id: string) {
+    if (!confirm('Delete this visit record?')) return
+    await fetch(`/api/worksites?id=${id}&table=worksite_visits`, { method: 'DELETE' })
+    await refreshDetail()
+  }
+
+  async function deletePhoto(id: string) {
+    if (!confirm('Delete this photo?')) return
+    await fetch(`/api/worksites?id=${id}&table=worksite_photos`, { method: 'DELETE' })
+    await refreshDetail()
+    if (lightbox?.id === id) setLightbox(null)
+  }
+
+  async function deleteSite() {
+    if (!selected) return
+    if (!confirm(`Delete worksite at ${selected.address}? This will also delete all visits and photos.`)) return
+    await fetch(`/api/worksites?id=${selected.id}&table=worksites`, { method: 'DELETE' })
+    setSelected(null)
+    setView('list')
+    await loadSites()
+  }
+
+  async function uploadPhoto(file: File, visitId?: string | null) {
+    if (!selected) return
+    setUploadingPhoto(true)
+    try {
+      const fd = new FormData()
+      fd.append('file', file)
+      fd.append('worksite_id', selected.id)
+      if (visitId) fd.append('visit_id', visitId)
+      fd.append('photo_type', photoType)
+      if (photoCaption) fd.append('caption', photoCaption)
+      const res = await fetch('/api/worksites?action=upload-photo', { method: 'POST', body: fd })
+      if (!res.ok) { const e = await res.json(); alert(e.error || 'Upload failed'); return }
+      setPhotoCaption('')
+      await refreshDetail()
+      setDetailTab('photos')
+    } finally {
+      setUploadingPhoto(false)
+      if (photoRef.current) photoRef.current.value = ''
+      if (cameraRef.current) cameraRef.current.value = ''
+    }
+  }
+
+  const propIcon = (type: string) => {
+    if (type === 'commercial') return Building2
+    if (type === 'rental') return Key
+    return Home
+  }
+
+  const filtered = sites.filter(s =>
+    !search || `${s.address} ${s.city} ${s.zip}`.toLowerCase().includes(search.toLowerCase())
+  )
+
+  // â”€â”€ Detail view â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  if (view === 'detail' && selected) {
+    const PropIcon = propIcon(selected.property_type)
+    const visitsByDate = [...(selected.visits || [])].sort((a, b) => b.visit_date.localeCompare(a.visit_date))
+    const photosByVisit: Record<string, Photo[]> = {}
+    const unlinkedPhotos: Photo[] = []
+    for (const p of selected.photos || []) {
+      if (p.visit_id) {
+        if (!photosByVisit[p.visit_id]) photosByVisit[p.visit_id] = []
+        photosByVisit[p.visit_id].push(p)
+      } else {
+        unlinkedPhotos.push(p)
+      }
+    }
+
+    return (
+      <div className="p-6 md:p-8 pt-16 md:pt-8 max-w-5xl">
+        {/* Back + header */}
+        <div className="flex items-start gap-3 mb-6">
+          <button onClick={() => { setView('list'); setSelected(null); setEditingSite(false) }}
+            className="flex items-center gap-1 text-sm font-semibold text-gray-500 hover:text-gray-800 mt-0.5">
+            <ChevronLeft size={16} />Back
+          </button>
+          <div className="flex-1">
+            <div className="flex items-center gap-3 flex-wrap">
+              <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: '#EBF3FC' }}>
+                <PropIcon size={18} style={{ color: '#185FA5' }} />
+              </div>
+              <div>
+                <h1 className="text-xl font-extrabold text-gray-900">{selected.address}</h1>
+                <p className="text-sm text-gray-500">{[selected.city, selected.state, selected.zip].filter(Boolean).join(', ')} Â· <span className="capitalize">{selected.property_type}</span></p>
+              </div>
+              <div className="ml-auto flex gap-2">
+                <button onClick={() => setEditingSite(!editingSite)}
+                  className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg border border-gray-200 hover:bg-gray-50">
+                  <Edit3 size={12} />Edit
+                </button>
+                <button onClick={deleteSite}
+                  className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg border border-red-200 text-red-600 hover:bg-red-50">
+                  <Trash2 size={12} />Delete
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {detailLoading ? (
+          <div className="flex justify-center py-20"><Loader2 size={28} className="animate-spin" style={{ color: '#185FA5' }} /></div>
+        ) : (
+          <>
+            {/* Edit form */}
+            {editingSite && (
+              <form onSubmit={saveSiteEdit} className="bg-blue-50 border border-blue-100 rounded-2xl p-5 mb-5 space-y-3">
+                <h3 className="font-bold text-sm text-gray-800">Edit Property</h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="sm:col-span-2">
+                    <label className="block text-xs font-semibold text-gray-600 mb-1">Address</label>
+                    <input name="address" defaultValue={selected.address} required className={inputCls} />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-600 mb-1">City</label>
+                    <input name="city" defaultValue={selected.city} className={inputCls} />
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-600 mb-1">State</label>
+                      <input name="state" defaultValue={selected.state || 'FL'} className={inputCls} />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-600 mb-1">ZIP</label>
+                      <input name="zip" defaultValue={selected.zip} className={inputCls} />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-600 mb-1">Property Type</label>
+                    <select name="property_type" defaultValue={selected.property_type} className={inputCls}>
+                      {PROPERTY_TYPES.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
+                    </select>
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label className="block text-xs font-semibold text-gray-600 mb-1">Notes</label>
+                    <textarea name="notes" defaultValue={selected.notes} rows={2} className={inputCls} />
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <button type="submit" disabled={savingEdit}
+                    className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-white text-sm font-bold disabled:opacity-60"
+                    style={{ background: '#185FA5' }}>
+                    {savingEdit ? <Loader2 size={13} className="animate-spin" /> : <CheckCircle2 size={13} />}Save
+                  </button>
+                  <button type="button" onClick={() => setEditingSite(false)} className="px-4 py-2 rounded-xl border border-gray-200 text-sm font-semibold">Cancel</button>
+                </div>
+              </form>
+            )}
+
+            {/* Notes */}
+            {selected.notes && !editingSite && (
+              <div className="bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 mb-5 text-sm text-gray-700">{selected.notes}</div>
+            )}
+
+            {/* Stats */}
+            {(() => {
+              const s = selected as any
+              const totalInvoices = (s.allInvoices || []).length
+              const totalContacts = (s.contacts || []).length
+              const allDates = [
+                ...(s.allInvoices || []).map((i: any) => i.service_date || i.created_at?.split('T')[0]),
+                ...(s.appointments || []).map((a: any) => a.start_time?.split('T')[0]),
+                ...(s.visits || []).map((v: any) => v.visit_date),
+              ].filter(Boolean).sort((a: string, b: string) => b.localeCompare(a))
+              const lastActivity = allDates[0] || null
+              return (
+                <div className="grid grid-cols-4 gap-3 mb-5">
+                  <div className="bg-white rounded-2xl border border-gray-100 p-4 shadow-sm">
+                    <div className="text-2xl font-extrabold" style={{ color: '#185FA5' }}>{totalInvoices}</div>
+                    <div className="text-xs text-gray-500 mt-0.5">Invoices</div>
+                  </div>
+                  <div className="bg-white rounded-2xl border border-gray-100 p-4 shadow-sm">
+                    <div className="text-2xl font-extrabold text-gray-800">{(s.appointments || []).length}</div>
+                    <div className="text-xs text-gray-500 mt-0.5">Appointments</div>
+                  </div>
+                  <div className="bg-white rounded-2xl border border-gray-100 p-4 shadow-sm">
+                    <div className="text-2xl font-extrabold text-gray-800">{totalContacts}</div>
+                    <div className="text-xs text-gray-500 mt-0.5">Contacts</div>
+                  </div>
+                  <div className="bg-white rounded-2xl border border-gray-100 p-4 shadow-sm">
+                    <div className="text-sm font-extrabold text-gray-800">{lastActivity ? formatDateShort(lastActivity) : 'â€”'}</div>
+                    <div className="text-xs text-gray-500 mt-0.5">Last Activity</div>
+                  </div>
+                </div>
+              )
+            })()}
+
+            {/* Tabs */}
+            <div className="flex gap-1 bg-gray-100 rounded-xl p-1 w-fit mb-5">
+              {([
+                ['history', 'History'],
+                ['contacts', 'Contacts / Owners'],
+                ['photos', 'Photos'],
+              ] as const).map(([k, l]) => {
+                const s = selected as any
+                const count = k === 'history'
+                  ? ((s.allInvoices||[]).length + (s.appointments||[]).length + (s.scheduleRequests||[]).length + (s.visits||[]).length)
+                  : k === 'contacts' ? (s.contacts||[]).length
+                  : (s.photos||[]).length
+                return (
+                  <button key={k} onClick={() => setDetailTab(k)}
+                    className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${detailTab === k ? 'bg-white shadow-sm' : 'text-gray-500'}`}
+                    style={{ color: detailTab === k ? '#185FA5' : undefined }}>
+                    {l}
+                    {count > 0 && <span className="ml-1.5 text-xs bg-blue-100 text-blue-700 rounded-full px-1.5 py-0.5">{count}</span>}
+                  </button>
+                )
+              })}
+            </div>
+
+            {/* â”€â”€ HISTORY TAB â”€â”€ */}
+            {detailTab === 'history' && (() => {
+              const s = selected as any
+              type TLEvent = { id: string; date: string; type: 'invoice'|'appointment'|'schedule_request'|'visit'; data: any }
+              const events: TLEvent[] = [
+                ...(s.allInvoices||[]).map((inv: any) => ({ id: `inv-${inv.id}`, date: inv.service_date || inv.created_at?.split('T')[0] || '', type: 'invoice' as const, data: inv })),
+                ...(s.appointments||[]).map((a: any) => ({ id: `appt-${a.id}`, date: a.start_time?.split('T')[0] || '', type: 'appointment' as const, data: a })),
+                ...(s.scheduleRequests||[]).map((sr: any) => ({ id: `sr-${sr.id}`, date: sr.preferred_date || sr.created_at?.split('T')[0] || '', type: 'schedule_request' as const, data: sr })),
+                ...(s.visits||[]).filter((v: any) => !v.invoice_id).map((v: any) => ({ id: `visit-${v.id}`, date: v.visit_date || '', type: 'visit' as const, data: v })),
+              ].sort((a, b) => b.date.localeCompare(a.date))
+              const typeStyle: Record<string, { bg: string; border: string; label: string; icon: any }> = {
+                invoice:          { bg: '#EBF3FC', border: '#185FA5', label: 'Invoice',          icon: Receipt },
+                appointment:      { bg: '#F0FDF4', border: '#16A34A', label: 'Appointment',      icon: Calendar },
+                schedule_request: { bg: '#FFFBEB', border: '#D97706', label: 'Schedule Request', icon: ClipboardList },
+                visit:            { bg: '#F5F3FF', border: '#7C3AED', label: 'Work Visit',        icon: FileText },
+              }
+              return (
+                <div className="space-y-4">
+                  <button onClick={() => setShowNewVisit(true)}
+                    className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-white text-sm font-bold shadow-sm"
+                    style={{ background: '#185FA5' }}>
+                    <Plus size={14} />Log Visit / Work
+                  </button>
+                  {events.length === 0 ? (
+                    <div className="text-center py-16 text-gray-400">
+                      <ClipboardList size={30} className="mx-auto mb-2 opacity-30" />
+                      <p className="text-sm">No history yet</p>
+                      <p className="text-xs mt-1">History auto-populates from invoices, appointments &amp; schedule requests</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {events.map(ev => {
+                        const ts = typeStyle[ev.type]
+                        const Icon = ts.icon
+                        if (ev.type === 'invoice') {
+                          const inv = ev.data
+                          return (
+                            <div key={ev.id} className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4">
+                              <div className="flex items-start gap-3">
+                                <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: ts.bg }}>
+                                  <Icon size={14} style={{ color: ts.border }} />
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center gap-2 flex-wrap mb-1">
+                                    <span className="text-xs font-bold uppercase tracking-wider" style={{ color: ts.border }}>{ts.label}</span>
+                                    <span className="text-xs text-gray-400">{ev.date ? formatDateShort(ev.date) : 'â€”'}</span>
+                                    <span className={`text-xs px-1.5 py-0.5 rounded-full font-semibold capitalize ${inv.invoice_status==='paid'?'bg-green-100 text-green-700':inv.invoice_status==='sent'?'bg-blue-100 text-blue-700':inv.invoice_status==='overdue'?'bg-red-100 text-red-600':'bg-gray-100 text-gray-600'}`}>{inv.invoice_status}</span>
+                                  </div>
+                                  <div className="flex items-start justify-between gap-3">
+                                    <div>
+                                      <div className="font-bold text-gray-900 text-sm">{inv.invoice_number}</div>
+                                      <div className="text-xs text-gray-500">{inv.customer_name}{inv.service_type ? ` Â· ${inv.service_type}` : ''}</div>
+                                      {inv.service_description && <div className="text-xs text-gray-600 mt-1 line-clamp-2">{inv.service_description}</div>}
+                                    </div>
+                                    <div className="text-right flex-shrink-0">
+                                      <div className="font-bold text-gray-900 text-sm">${Number(inv.amount_due||0).toLocaleString('en-US',{minimumFractionDigits:2})}</div>
+                                      {inv.invoice_status==='paid'&&<div className="text-xs text-green-600">Paid ${Number(inv.amount_paid||0).toLocaleString('en-US',{minimumFractionDigits:2})}</div>}
+                                    </div>
+                                  </div>
+                                </div>
+                                <a href={`/admin/invoices?id=${inv.id}`} target="_blank" rel="noopener noreferrer" className="text-gray-300 hover:text-blue-500 flex-shrink-0 mt-1"><ChevronRight size={16} /></a>
+                              </div>
+                            </div>
+                          )
+                        }
+                        if (ev.type === 'appointment') {
+                          const appt = ev.data
+                          return (
+                            <div key={ev.id} className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4">
+                              <div className="flex items-start gap-3">
+                                <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: ts.bg }}>
+                                  <Icon size={14} style={{ color: ts.border }} />
+                                </div>
+                                <div className="flex-1">
+                                  <div className="flex items-center gap-2 flex-wrap mb-1">
+                                    <span className="text-xs font-bold uppercase tracking-wider" style={{ color: ts.border }}>{ts.label}</span>
+                                    <span className="text-xs text-gray-400">{appt.start_time ? formatDateShort(appt.start_time.split('T')[0]) : 'â€”'}</span>
+                                    <span className={`text-xs px-1.5 py-0.5 rounded-full font-semibold capitalize ${appt.status==='completed'?'bg-green-100 text-green-700':appt.status==='cancelled'?'bg-red-100 text-red-600':'bg-blue-100 text-blue-700'}`}>{appt.status}</span>
+                                  </div>
+                                  <div className="font-bold text-gray-900 text-sm">{appt.title||appt.service_type}</div>
+                                  <div className="text-xs text-gray-500">{appt.customer_name}{appt.customer_phone?` Â· ${appt.customer_phone}`:''}{appt.customer_email?` Â· ${appt.customer_email}`:''}</div>
+                                  {appt.notes && <div className="text-xs text-gray-600 mt-1 bg-gray-50 rounded-lg px-3 py-2">{appt.notes}</div>}
+                                </div>
+                              </div>
+                            </div>
+                          )
+                        }
+                        if (ev.type === 'schedule_request') {
+                          const sr = ev.data
+                          const name = [sr.first_name, sr.last_name].filter(Boolean).join(' ')
+                          return (
+                            <div key={ev.id} className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4">
+                              <div className="flex items-start gap-3">
+                                <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: ts.bg }}>
+                                  <Icon size={14} style={{ color: ts.border }} />
+                                </div>
+                                <div className="flex-1">
+                                  <div className="flex items-center gap-2 flex-wrap mb-1">
+                                    <span className="text-xs font-bold uppercase tracking-wider" style={{ color: ts.border }}>{ts.label}</span>
+                                    <span className="text-xs text-gray-400">{sr.created_at ? formatDateShort(sr.created_at.split('T')[0]) : 'â€”'}</span>
+                                    <span className={`text-xs px-1.5 py-0.5 rounded-full font-semibold capitalize ${sr.status==='approved'?'bg-green-100 text-green-700':sr.status==='declined'?'bg-red-100 text-red-600':'bg-amber-100 text-amber-700'}`}>{sr.status}</span>
+                                  </div>
+                                  <div className="font-bold text-gray-900 text-sm">{name}</div>
+                                  <div className="text-xs text-gray-500">{sr.phone}{sr.email?` Â· ${sr.email}`:''}{sr.service_type?` Â· ${sr.service_type}`:''}</div>
+                                  {sr.preferred_date && <div className="text-xs text-gray-400">Requested: {formatDateShort(sr.preferred_date)}{sr.preferred_time?` ${sr.preferred_time}`:''}</div>}
+                                  {sr.notes && <div className="text-xs text-gray-600 mt-1 bg-gray-50 rounded-lg px-3 py-2">{sr.notes}</div>}
+                                  {sr.owner_name && sr.owner_name !== name && <div className="text-xs text-gray-500 mt-1">Owner: {sr.owner_name}{sr.owner_phone?` Â· ${sr.owner_phone}`:''}</div>}
+                                  {sr.company_name && <div className="text-xs text-gray-500">Company: {sr.company_name}</div>}
+                                </div>
+                              </div>
+                            </div>
+                          )
+                        }
+                        // visit (no invoice)
+                        const v = ev.data
+                        return (
+                          <div key={ev.id} className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4">
+                            <div className="flex items-start gap-3">
+                              <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: ts.bg }}>
+                                <Icon size={14} style={{ color: ts.border }} />
+                              </div>
+                              <div className="flex-1">
+                                <div className="flex items-center gap-2 flex-wrap mb-1">
+                                  <span className="text-xs font-bold uppercase tracking-wider" style={{ color: ts.border }}>{ts.label}</span>
+                                  <span className="text-xs text-gray-400">{formatDateShort(v.visit_date)}</span>
+                                  {v.service_type && <span className="text-xs px-1.5 py-0.5 rounded-full font-semibold" style={{ background: '#EBF3FC', color: '#185FA5' }}>{v.service_type}</span>}
+                                </div>
+                                {v.customer_name && <div className="text-xs text-gray-500">{v.customer_name}{v.customer_phone?` Â· ${v.customer_phone}`:''}</div>}
+                                {v.technician && <div className="text-xs text-gray-500">Tech: {v.technician}</div>}
+                                {v.work_performed && <div className="text-xs text-gray-700 mt-1 bg-gray-50 rounded-lg px-3 py-2 whitespace-pre-wrap">{v.work_performed}</div>}
+                                {v.notes && <div className="text-xs text-gray-500 italic mt-1">{v.notes}</div>}
+                                {photosByVisit[v.id]?.length > 0 && (
+                                  <div className="flex flex-wrap gap-1.5 mt-2">
+                                    {photosByVisit[v.id].map((p: Photo) => (
+                                      <div key={p.id} className="relative group">
+                                        <img src={p.file_url} alt={p.caption||p.photo_type} onClick={()=>setLightbox(p)} className="w-14 h-14 object-cover rounded-lg cursor-pointer hover:opacity-90 border border-gray-100" />
+                                        <button onClick={()=>deletePhoto(p.id)} className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-red-500 text-white flex items-center justify-center opacity-0 group-hover:opacity-100"><X size={8}/></button>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                                <div className="flex items-center gap-2 mt-2">
+                                  <label className={`flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded-lg border border-gray-200 cursor-pointer hover:bg-gray-50 ${uploadingPhoto?'opacity-50':''}`}>
+                                    {uploadingPhoto?<Loader2 size={10} className="animate-spin"/>:<Camera size={10}/>} Photo
+                                    <input type="file" accept="image/*" capture="environment" className="hidden" disabled={uploadingPhoto} onChange={e=>{const f=e.target.files?.[0];if(f)uploadPhoto(f,v.id)}} />
+                                  </label>
+                                  <label className={`flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded-lg border border-gray-200 cursor-pointer hover:bg-gray-50 ${uploadingPhoto?'opacity-50':''}`}>
+                                    {uploadingPhoto?<Loader2 size={10} className="animate-spin"/>:<Upload size={10}/>} Upload
+                                    <input type="file" accept="image/*" className="hidden" disabled={uploadingPhoto} onChange={e=>{const f=e.target.files?.[0];if(f)uploadPhoto(f,v.id)}} />
+                                  </label>
+                                  <button onClick={()=>deleteVisit(v.id)} className="text-gray-300 hover:text-red-500 ml-auto"><Trash2 size={13}/></button>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+              )
+            })()}
+
+            {/* â”€â”€ CONTACTS TAB â”€â”€ */}
+            {detailTab === 'contacts' && (() => {
+              const s = selected as any
+              const contacts: any[] = s.contacts || []
+              return (
+                <div className="space-y-3">
+                  {contacts.length === 0 ? (
+                    <div className="text-center py-16 text-gray-400">
+                      <Users size={30} className="mx-auto mb-2 opacity-30" />
+                      <p className="text-sm">No contacts found</p>
+                      <p className="text-xs mt-1">Contacts appear automatically from invoices, appointments &amp; schedule requests</p>
+                    </div>
+                  ) : contacts.map((c: any, i: number) => (
+                    <div key={i} className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+                      <div className="flex items-start gap-3">
+                        <div className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 font-bold text-sm text-white" style={{ background: '#185FA5' }}>
+                          {c.name.split(' ').map((n: string) => n[0]).slice(0,2).join('').toUpperCase()}
+                        </div>
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2 flex-wrap mb-1">
+                            <span className="font-bold text-gray-900">{c.name}</span>
+                            {c.sources.map((src: string) => (
+                              <span key={src} className="text-xs px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500 capitalize">{src.replace(/_/g,' ')}</span>
+                            ))}
+                          </div>
+                          {c.phone && <div className="text-xs text-gray-600">ðŸ“ž {c.phone}</div>}
+                          {c.email && <div className="text-xs text-gray-600">âœ‰ï¸ {c.email}</div>}
+                          {(c.firstSeen||c.lastSeen) && (
+                            <div className="text-xs text-gray-400 mt-1">
+                              {c.firstSeen&&c.lastSeen&&c.firstSeen!==c.lastSeen
+                                ? `${formatDateShort(c.firstSeen)} â€” ${formatDateShort(c.lastSeen)}`
+                                : `Active: ${formatDateShort(c.firstSeen||c.lastSeen)}`}
+                            </div>
+                          )}
+                        </div>
+                        {c.contact_id && (
+                          <a href={`/admin/crm?id=${c.contact_id}`} target="_blank" rel="noopener noreferrer" className="text-gray-300 hover:text-blue-500 flex-shrink-0" title="Open CRM record">
+                            <ChevronRight size={16} />
+                          </a>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )
+            })()}
+
+            {/* â”€â”€ PHOTOS TAB â”€â”€ */}
+            {detailTab === 'photos' && (
+              <div>
+                <div className="flex flex-wrap items-center gap-3 mb-5 p-4 bg-white rounded-2xl border border-gray-100 shadow-sm">
+                  <select value={photoType} onChange={e => setPhotoType(e.target.value)} className="text-sm px-3 py-2 rounded-xl border border-gray-200 focus:outline-none">
+                    {PHOTO_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+                  </select>
+                  <input value={photoCaption} onChange={e => setPhotoCaption(e.target.value)} placeholder="Caption (optional)" className="flex-1 min-w-32 px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none" />
+                  <label className={`flex items-center gap-2 px-3 py-2 rounded-xl text-white text-sm font-bold cursor-pointer ${uploadingPhoto?'opacity-50 cursor-not-allowed':''}`} style={{ background: '#185FA5' }}>
+                    {uploadingPhoto?<Loader2 size={14} className="animate-spin"/>:<Camera size={14}/>} Take Photo
+                    <input type="file" accept="image/*" capture="environment" className="hidden" disabled={uploadingPhoto} onChange={e=>{const f=e.target.files?.[0];if(f)uploadPhoto(f,null)}} />
+                  </label>
+                  <label className={`flex items-center gap-2 px-3 py-2 rounded-xl border-2 text-sm font-bold cursor-pointer hover:bg-blue-50 ${uploadingPhoto?'opacity-50 cursor-not-allowed':''}`} style={{ borderColor:'#185FA5', color:'#185FA5' }}>
+                    {uploadingPhoto?<Loader2 size={14} className="animate-spin"/>:<Upload size={14}/>} Upload
+                    <input type="file" accept="image/*" className="hidden" disabled={uploadingPhoto} onChange={e=>{const f=e.target.files?.[0];if(f)uploadPhoto(f,null)}} />
+                  </label>
+                </div>
+                {selected.photos?.length === 0 ? (
+                  <div className="text-center py-16 text-gray-400">
+                    <ImageIcon size={30} className="mx-auto mb-2 opacity-30" />
+                    <p className="text-sm">No photos yet</p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2">
+                    {selected.photos.map((p: Photo) => (
+                      <PhotoTile key={p.id} photo={p} onView={() => setLightbox(p)} onDelete={() => deletePhoto(p.id)} />
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </>
+        )}
+
+        {/* New Visit Modal */}
+        {showNewVisit && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+              <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between sticky top-0 bg-white">
+                <h2 className="font-bold text-gray-900">Log Visit / Work</h2>
+                <button onClick={() => setShowNewVisit(false)}><X size={18} className="text-gray-400" /></button>
+              </div>
+              <form onSubmit={createVisit} className="p-6 space-y-4">
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-700 mb-1">Date</label>
+                    <input type="date" value={visitForm.visit_date} onChange={e => setVisitForm(f => ({ ...f, visit_date: e.target.value }))} required className={inputCls} />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-700 mb-1">Service Type</label>
+                    <select value={visitForm.service_type} onChange={e => setVisitForm(f => ({ ...f, service_type: e.target.value }))} className={inputCls}>
+                      <option value="">Select...</option>
+                      {SERVICE_TYPES.map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-700 mb-1">Work Performed</label>
+                  <textarea value={visitForm.work_performed} onChange={e => setVisitForm(f => ({ ...f, work_performed: e.target.value }))}
+                    rows={4} placeholder="Describe all work performed, materials used, pressures tested..." className={inputCls} />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-700 mb-1">Customer Name</label>
+                    <input value={visitForm.customer_name} onChange={e => setVisitForm(f => ({ ...f, customer_name: e.target.value }))} placeholder="Homeowner at time of visit" className={inputCls} />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-700 mb-1">Customer Phone</label>
+                    <input value={visitForm.customer_phone} onChange={e => setVisitForm(f => ({ ...f, customer_phone: e.target.value }))} placeholder="555-000-0000" className={inputCls} />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-700 mb-1">Technician</label>
+                  <input value={visitForm.technician} onChange={e => setVisitForm(f => ({ ...f, technician: e.target.value }))} className={inputCls} />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-700 mb-1">Internal Notes</label>
+                  <textarea value={visitForm.notes} onChange={e => setVisitForm(f => ({ ...f, notes: e.target.value }))} rows={2} placeholder="Any additional notes..." className={inputCls} />
+                </div>
+                <div className="flex gap-3 pt-2">
+                  <button type="submit" disabled={savingVisit}
+                    className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl text-white font-bold disabled:opacity-60"
+                    style={{ background: '#185FA5' }}>
+                    {savingVisit ? <Loader2 size={15} className="animate-spin" /> : <CheckCircle2 size={15} />}Save Visit
+                  </button>
+                  <button type="button" onClick={() => setShowNewVisit(false)} className="px-5 py-3 rounded-xl border border-gray-200 font-semibold text-sm">Cancel</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* Lightbox */}
+        {lightbox && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4" onClick={() => setLightbox(null)}>
+            <div className="relative max-w-4xl max-h-full" onClick={e => e.stopPropagation()}>
+              <img src={lightbox.file_url} alt={lightbox.caption || ''} className="max-w-full max-h-[80vh] rounded-xl object-contain" />
+              {(lightbox.caption || lightbox.photo_type !== 'general') && (
+                <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-white px-4 py-2 rounded-b-xl text-sm">
+                  {lightbox.photo_type !== 'general' && <span className="capitalize font-semibold mr-2">{lightbox.photo_type}</span>}
+                  {lightbox.caption}
+                </div>
+              )}
+              <button onClick={() => setLightbox(null)} className="absolute top-2 right-2 w-8 h-8 rounded-full bg-black/50 text-white flex items-center justify-center hover:bg-black/80">
+                <X size={16} />
+              </button>
+              <button onClick={() => deletePhoto(lightbox.id)} className="absolute top-2 left-2 w-8 h-8 rounded-full bg-red-500/80 text-white flex items-center justify-center hover:bg-red-600">
+                <Trash2 size={14} />
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  // â”€â”€ List view â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  return (
+    <div className="p-6 md:p-8 pt-16 md:pt-8">
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h1 className="text-2xl font-extrabold text-gray-900">Worksites</h1>
+          <p className="text-gray-500 text-sm mt-0.5">Property history Â· work records Â· photos â€” independent of homeowner</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <button onClick={importFromInvoices} disabled={importing}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-sm border border-gray-200 hover:bg-gray-50 disabled:opacity-60 transition-all"
+            style={{ color: '#185FA5' }}>
+            {importing ? <Loader2 size={14} className="animate-spin" /> : <FileText size={14} />}
+            {importing ? 'Importingâ€¦' : 'Import from Invoices'}
+          </button>
+          <button onClick={() => setShowNewSite(true)}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-white font-bold shadow-md text-sm"
+            style={{ background: '#185FA5' }}>
+            <Plus size={14} />Add Property
+          </button>
+        </div>
+      </div>
+
+      {/* Import result banner */}
+      {importResult && (
+        <div className="mb-4 flex items-center gap-3 px-4 py-3 bg-green-50 border border-green-200 rounded-xl text-sm">
+          <CheckCircle2 size={16} className="text-green-600 flex-shrink-0" />
+          <span className="text-green-800 font-semibold">
+            Import complete â€” {importResult.sitesCreated} new properties, {importResult.visitsCreated} visit records created
+            {importResult.skipped > 0 ? `, ${importResult.skipped} already existed (skipped)` : ''}
+          </span>
+          <button onClick={() => setImportResult(null)} className="ml-auto text-green-600 hover:text-green-800"><X size={14} /></button>
+        </div>
+      )}
+
+      {/* Search */}
+      <div className="relative mb-5">
+        <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+        <input value={search} onChange={e => setSearch(e.target.value)} onKeyDown={e => e.key === 'Enter' && loadSites()}
+          placeholder="Search by address..." className="w-full max-w-sm pl-9 pr-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:border-blue-400" />
+      </div>
+
+      {/* List */}
+      {loading ? (
+        <div className="flex justify-center py-20"><Loader2 size={28} className="animate-spin" style={{ color: '#185FA5' }} /></div>
+      ) : filtered.length === 0 ? (
+        <div className="text-center py-20 text-gray-400">
+          <MapPin size={32} className="mx-auto mb-3 opacity-30" />
+          <p className="text-sm font-medium">No worksites yet</p>
+          <p className="text-xs mt-1 mb-5">Import from your existing invoices or add a property manually</p>
+          <div className="flex items-center justify-center gap-3">
+            <button onClick={importFromInvoices} disabled={importing}
+              className="flex items-center gap-2 px-5 py-2.5 rounded-xl font-bold text-sm border-2 disabled:opacity-60"
+              style={{ borderColor: '#185FA5', color: '#185FA5' }}>
+              {importing ? <Loader2 size={14} className="animate-spin" /> : <FileText size={14} />}
+              {importing ? 'Importingâ€¦' : 'Import from Invoices'}
+            </button>
+            <button onClick={() => setShowNewSite(true)}
+              className="text-white font-bold px-6 py-2.5 rounded-xl shadow-md text-sm"
+              style={{ background: '#185FA5' }}>Add First Property</button>
+          </div>
+        </div>
+      ) : (
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-gray-50 border-b border-gray-100">
+                  {['', 'Address', 'Type', 'Visits', 'Photos', 'Last Visit', 'Last Service', ''].map((h, i) => (
+                    <th key={i} className="text-left px-5 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {filtered.map(site => {
+                  const PropIcon = propIcon(site.property_type)
+                  return (
+                    <tr key={site.id} onClick={() => openSite(site)} className="hover:bg-gray-50 cursor-pointer transition-colors">
+                      <td className="px-5 py-3">
+                        <div className="w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: '#EBF3FC' }}>
+                          <PropIcon size={15} style={{ color: '#185FA5' }} />
+                        </div>
+                      </td>
+                      <td className="px-5 py-3">
+                        <div className="font-semibold text-gray-900">{site.address}</div>
+                        <div className="text-xs text-gray-500">{[site.city, site.state, site.zip].filter(Boolean).join(', ')}</div>
+                      </td>
+                      <td className="px-5 py-3">
+                        <span className="text-xs capitalize text-gray-500">{site.property_type}</span>
+                      </td>
+                      <td className="px-5 py-3">
+                        <span className={`text-sm font-bold ${site.visit_count > 0 ? '' : 'text-gray-400'}`} style={{ color: site.visit_count > 0 ? '#185FA5' : undefined }}>{site.visit_count}</span>
+                      </td>
+                      <td className="px-5 py-3">
+                        <span className="text-sm font-bold text-gray-700">{site.photo_count || 'â€”'}</span>
+                      </td>
+                      <td className="px-5 py-3 text-xs text-gray-500 whitespace-nowrap">
+                        {site.last_visit ? formatDateShort(site.last_visit) : <span className="text-gray-300">Never</span>}
+                      </td>
+                      <td className="px-5 py-3 text-xs text-gray-500">{site.last_service || 'â€”'}</td>
+                      <td className="px-5 py-3">
+                        <ChevronRight size={16} className="text-gray-300" />
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* New Site Modal */}
+      {showNewSite && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg">
+            <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+              <h2 className="font-bold text-gray-900">Add Property</h2>
+              <button onClick={() => setShowNewSite(false)}><X size={18} className="text-gray-400" /></button>
+            </div>
+            <form onSubmit={createSite} className="p-6 space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 mb-1">Street Address <span className="text-red-500">*</span></label>
+                <input value={siteForm.address} onChange={e => setSiteForm(f => ({ ...f, address: e.target.value }))}
+                  placeholder="123 Main St" required className={inputCls} autoFocus />
+              </div>
+              <div className="grid grid-cols-3 gap-3">
+                <div className="col-span-3 sm:col-span-1">
+                  <label className="block text-xs font-semibold text-gray-700 mb-1">City</label>
+                  <input value={siteForm.city} onChange={e => setSiteForm(f => ({ ...f, city: e.target.value }))} placeholder="Crestview" className={inputCls} />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-700 mb-1">State</label>
+                  <input value={siteForm.state} onChange={e => setSiteForm(f => ({ ...f, state: e.target.value }))} className={inputCls} />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-700 mb-1">ZIP</label>
+                  <input value={siteForm.zip} onChange={e => setSiteForm(f => ({ ...f, zip: e.target.value }))} className={inputCls} />
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 mb-1">Property Type</label>
+                <div className="flex gap-2">
+                  {PROPERTY_TYPES.map(({ value, label, icon: Icon }) => (
+                    <button key={value} type="button"
+                      onClick={() => setSiteForm(f => ({ ...f, property_type: value }))}
+                      className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl border-2 text-sm font-semibold transition-all ${siteForm.property_type === value ? 'text-white border-transparent' : 'border-gray-200 text-gray-500 hover:border-gray-300'}`}
+                      style={{ background: siteForm.property_type === value ? '#185FA5' : undefined }}>
+                      <Icon size={14} />{label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 mb-1">Notes</label>
+                <textarea value={siteForm.notes} onChange={e => setSiteForm(f => ({ ...f, notes: e.target.value }))}
+                  rows={2} placeholder="Gate code, access notes, special instructions..." className={inputCls} />
+              </div>
+              <div className="flex gap-3 pt-1">
+                <button type="submit" disabled={savingSite}
+                  className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl text-white font-bold disabled:opacity-60"
+                  style={{ background: '#185FA5' }}>
+                  {savingSite ? <Loader2 size={15} className="animate-spin" /> : <MapPin size={15} />}Add Property
+                </button>
+                <button type="button" onClick={() => setShowNewSite(false)} className="px-5 py-3 rounded-xl border border-gray-200 font-semibold text-sm">Cancel</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function PhotoTile({ photo, onView, onDelete }: { photo: Photo; onView: () => void; onDelete: () => void }) {
+  return (
+    <div className="relative group aspect-square">
+      <img src={photo.file_url} alt={photo.caption || photo.photo_type}
+        onClick={onView}
+        className="w-full h-full object-cover rounded-xl cursor-pointer hover:opacity-90 transition-opacity border border-gray-100" />
+      {photo.photo_type !== 'general' && (
+        <span className="absolute bottom-1 left-1 text-xs bg-black/60 text-white px-1.5 py-0.5 rounded font-medium capitalize">{photo.photo_type}</span>
+      )}
+      {photo.caption && (
+        <span className="absolute bottom-1 right-1 w-4 h-4 rounded-full bg-black/60 flex items-center justify-center" title={photo.caption}>
+          <span className="text-white text-xs">i</span>
+        </span>
+      )}
+      <button onClick={onDelete}
+        className="absolute top-1 right-1 w-5 h-5 rounded-full bg-red-500 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+        <X size={10} />
+      </button>
+    </div>
+  )
+}

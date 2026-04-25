@@ -3,7 +3,7 @@ import { useState } from 'react'
 import Image from 'next/image'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { LayoutDashboard, Users, FileText, BookOpen, Calendar, ClipboardList, LogOut, Menu, X, Receipt, BarChart3, ListTree, UserCog } from 'lucide-react'
+import { LayoutDashboard, Users, FileText, BookOpen, Calendar, ClipboardList, LogOut, Menu, X, Receipt, BarChart3, ListTree, UserCog, Sparkles, MapPin, ShieldCheck, Package } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/components/admin/AdminAuthGuard'
 
@@ -12,9 +12,13 @@ const nav = [
   { href: '/admin/crm', label: 'CRM / Contacts', icon: Users, roles: ['admin', 'bookkeeper', 'invoicing'] },
   { href: '/admin/invoices', label: 'Invoices & Quotes', icon: FileText, roles: ['admin', 'bookkeeper', 'invoicing'] },
   { href: '/admin/calendar', label: 'Calendar', icon: Calendar, roles: ['admin', 'bookkeeper'] },
+  { href: '/admin/todo', label: 'AI Todo List', icon: Sparkles, roles: ['admin', 'bookkeeper', 'invoicing'] },
   { href: '/admin/schedule-requests', label: 'Schedule Requests', icon: ClipboardList, roles: ['admin', 'bookkeeper'] },
+  { href: '/admin/worksites', label: 'Worksites', icon: MapPin, roles: ['admin', 'bookkeeper'] },
+  { href: '/admin/inventory', label: 'Materials & Inventory', icon: Package, roles: ['admin', 'bookkeeper'] },
   { href: '/admin/bookkeeping', label: 'Bookkeeping', icon: BookOpen, roles: ['admin', 'bookkeeper'] },
   { href: '/admin/reports', label: 'Reports', icon: BarChart3, roles: ['admin', 'bookkeeper'] },
+  { href: '/admin/documents', label: 'Documents / COIs', icon: ShieldCheck, roles: ['admin', 'bookkeeper'] },
   { href: '/admin/taxes', label: 'W9 / 1099', icon: Receipt, roles: ['admin', 'bookkeeper'] },
   { href: '/admin/users', label: 'User Management', icon: UserCog, roles: ['admin'] },
 ]
