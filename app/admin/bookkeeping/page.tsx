@@ -245,10 +245,23 @@ interface BankStatement {
   created_at: string
 }
 
+interface FinancialAccount {
+  id: string
+  name: string
+  color: string
+  description: string | null
+  is_active: boolean
+}
+
 export default function BookkeepingPage() {
   const [tab, setTab] = useState<'bank'|'accounting'|'statements'|'uploads'|'accounts'>('bank')
   const [txs, setTxs] = useState<Tx[]>([])
   const [accounts, setAccounts] = useState<Account[]>([])
+  const [financialAccounts, setFinancialAccounts] = useState<FinancialAccount[]>([])
+  const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null)
+  const [showManageAccounts, setShowManageAccounts] = useState(false)
+  const [addingAccount, setAddingAccount] = useState(false)
+  const [accountSaving, setAccountSaving] = useState(false)
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(false)
   const [search, setSearch] = useState('')
@@ -273,8 +286,8 @@ export default function BookkeepingPage() {
   const receiptRef = useRef<HTMLInputElement>(null)
   const checkRef = useRef<HTMLInputElement>(null)
 
-  useEffect(() => { loadAccounts(); loadBankConnections() }, [])
-  useEffect(() => { load() }, [tab])
+  useEffect(() => { loadAccounts(); loadBankConnections(); loadFinancialAccounts() }, [])
+  useEffect(() => { load() }, [tab, selectedAccountId])
 
   async function loadAccounts() {
     try {
@@ -282,6 +295,39 @@ export default function BookkeepingPage() {
       const d = await res.json()
       setAccounts(Array.isArray(d) ? d : [])
     } catch {}
+  }
+
+  async function loadFinancialAccounts() {
+    try {
+      const res = await fetch('/api/financial-accounts')
+      const d = await res.json()
+      setFinancialAccounts(Array.isArray(d) ? d : [])
+    } catch {}
+  }
+
+  async function addFinancialAccount(e: React.FormEvent) {
+    e.preventDefault()
+    setAccountSaving(true)
+    const fd = new FormData(e.currentTarget as HTMLFormElement)
+    try {
+      const res = await fetch('/api/financial-accounts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: fd.get('acct_name'), description: fd.get('acct_desc') }),
+      })
+      const d = await res.json()
+      if (d.error) { alert(d.error); return }
+      await loadFinancialAccounts()
+      setAddingAccount(false)
+    } catch { alert('Failed to create account') }
+    finally { setAccountSaving(false) }
+  }
+
+  async function deleteFinancialAccount(id: string, name: string) {
+    if (!confirm(`Archive account "${name}"?`)) return
+    await fetch(`/api/financial-accounts?id=${id}`, { method: 'DELETE' })
+    if (selectedAccountId === id) setSelectedAccountId(null)
+    await loadFinancialAccounts()
   }
 
   async function load() {
@@ -296,7 +342,9 @@ export default function BookkeepingPage() {
       setUploads(Array.isArray(d) ? d : [])
     } else {
       const table = tab === 'bank' ? 'bank_transactions' : 'accounting_entries'
-      const res = await fetch(`/api/bookkeeping?table=${table}`)
+      const params = new URLSearchParams({ table })
+      if (selectedAccountId) params.append('account_id', selectedAccountId)
+      const res = await fetch(`/api/bookkeeping?${params}`)
       const d = await res.json()
       setTxs(Array.isArray(d) ? d : [])
     }
@@ -310,7 +358,7 @@ export default function BookkeepingPage() {
       const text = await file.text()
       const { default: Papa } = await import('papaparse')
       const result = Papa.parse(text, { header:true, skipEmptyLines:true })
-      const res = await fetch('/api/bookkeeping?action=csv-import', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ transactions:result.data, importBatchId:`csv_${Date.now()}` }) })
+      const res = await fetch('/api/bookkeeping?action=csv-import', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ transactions:result.data, importBatchId:`csv_${Date.now()}`, financial_account_id: selectedAccountId }) })
       const d = await res.json()
       alert(`✅ Imported ${d.imported||0} transactions (duplicates skipped)`)
       await load()
@@ -600,6 +648,69 @@ export default function BookkeepingPage() {
           </button>
         </div>
       </div>
+
+      {/* Account Selector */}
+      <div className="flex items-center gap-2 mb-4 flex-wrap">
+        <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider mr-1">Account:</span>
+        <button
+          onClick={() => setSelectedAccountId(null)}
+          className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all border ${!selectedAccountId ? 'text-white shadow-sm' : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'}`}
+          style={!selectedAccountId ? { background: '#b8895a', borderColor: '#b8895a' } : {}}>
+          All Accounts
+        </button>
+        {financialAccounts.filter(a => a.is_active).map(a => (
+          <button
+            key={a.id}
+            onClick={() => setSelectedAccountId(a.id)}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all border ${selectedAccountId === a.id ? 'text-white shadow-sm' : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'}`}
+            style={selectedAccountId === a.id ? { background: a.color || '#b8895a', borderColor: a.color || '#b8895a' } : {}}>
+            {a.name}
+          </button>
+        ))}
+        <button
+          onClick={() => setShowManageAccounts(!showManageAccounts)}
+          className="px-3 py-1.5 rounded-lg text-xs font-semibold border border-dashed border-gray-300 text-gray-400 hover:border-gray-400 hover:text-gray-600 transition-all">
+          + Manage Accounts
+        </button>
+      </div>
+
+      {/* Manage Accounts Panel */}
+      {showManageAccounts && (
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5 mb-4">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="font-bold text-gray-900 text-sm">Financial Accounts</h3>
+            <button onClick={() => setAddingAccount(!addingAccount)}
+              className="text-xs font-semibold px-3 py-1.5 rounded-lg text-white" style={{ background: '#b8895a' }}>
+              + New Account
+            </button>
+          </div>
+          {addingAccount && (
+            <form onSubmit={addFinancialAccount} className="flex gap-2 mb-3">
+              <input name="acct_name" required placeholder="Account name (e.g. Chase Checking)" className="flex-1 px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:border-blue-400" />
+              <input name="acct_desc" placeholder="Description (optional)" className="flex-1 px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:border-blue-400" />
+              <button type="submit" disabled={accountSaving} className="px-4 py-2 rounded-xl text-white text-sm font-semibold" style={{ background: '#b8895a' }}>
+                {accountSaving ? <Loader2 size={14} className="animate-spin" /> : 'Add'}
+              </button>
+              <button type="button" onClick={() => setAddingAccount(false)} className="px-3 py-2 rounded-xl border border-gray-200 text-sm text-gray-500">Cancel</button>
+            </form>
+          )}
+          {financialAccounts.length === 0 ? (
+            <p className="text-xs text-gray-400 italic">No accounts yet. Create one to start organizing transactions.</p>
+          ) : (
+            <div className="divide-y divide-gray-50">
+              {financialAccounts.map(a => (
+                <div key={a.id} className={`flex items-center justify-between py-2 ${!a.is_active ? 'opacity-40' : ''}`}>
+                  <span className="text-sm font-medium text-gray-800">{a.name}</span>
+                  {a.description && <span className="text-xs text-gray-400 ml-2">{a.description}</span>}
+                  <button onClick={() => deleteFinancialAccount(a.id, a.name)} className="text-gray-300 hover:text-red-500 ml-auto">
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Connected Banks */}
       {bankConnections.length > 0 && (

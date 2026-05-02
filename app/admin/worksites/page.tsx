@@ -1,6 +1,6 @@
-﻿'use client'
+'use client'
 import { useEffect, useState, useRef } from 'react'
-import { MapPin, Plus, Search, X, Loader2, Camera, Image as ImageIcon, ChevronRight, Trash2, Edit3, ClipboardList, Calendar, FileText, Home, Building2, Key, ChevronLeft, Upload, CheckCircle2, AlertCircle, Receipt, DollarSign, Link2, Users } from 'lucide-react'
+import { MapPin, Plus, Search, X, Loader2, Camera, Image as ImageIcon, ChevronRight, Trash2, Edit3, ClipboardList, Calendar, FileText, Home, Building2, Key, ChevronLeft, Upload, CheckCircle2, AlertCircle, Receipt, DollarSign, Link2, Users, FileCheck, Clock, ExternalLink } from 'lucide-react'
 import { formatDateShort } from '@/lib/utils'
 
 const SERVICE_TYPES = [
@@ -72,9 +72,18 @@ export default function WorksitesPage() {
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState<Worksite & { visits: Visit[]; photos: Photo[] } | null>(null)
+  // Open permit counts per address
+  const [openPermitsByAddress, setOpenPermitsByAddress] = useState<Record<string, number>>({})
   const [detailLoading, setDetailLoading] = useState(false)
   const [view, setView] = useState<'list' | 'detail'>('list')
-  const [detailTab, setDetailTab] = useState<'history' | 'contacts' | 'photos'>('history')
+  const [detailTab, setDetailTab] = useState<'history' | 'contacts' | 'photos' | 'permits'>('history')
+
+  // Permits for this worksite
+  const [sitePermits, setSitePermits] = useState<any[]>([])
+  const [permitsLoading, setPermitsLoading] = useState(false)
+  const [showAddPermit, setShowAddPermit] = useState(false)
+  const [permitForm, setPermitForm] = useState<any>({})
+  const [savingPermit, setSavingPermit] = useState(false)
 
   // Import from invoices
   const [importing, setImporting] = useState(false)
@@ -90,7 +99,7 @@ export default function WorksitesPage() {
   const [savingVisit, setSavingVisit] = useState(false)
   const [visitForm, setVisitForm] = useState({
     visit_date: new Date().toISOString().split('T')[0],
-    service_type: '', work_performed: '', technician: 'Daniel Price',
+    service_type: '', work_performed: '', technician: 'Lacey Price',
     customer_name: '', customer_phone: '', notes: '',
   })
 
@@ -114,9 +123,25 @@ export default function WorksitesPage() {
   async function loadSites() {
     setLoading(true)
     try {
-      const res = await fetch('/api/worksites' + (search ? `?search=${encodeURIComponent(search)}` : ''))
-      const d = await res.json()
-      setSites(Array.isArray(d) ? d : [])
+      const [sitesRes, permitsRes] = await Promise.all([
+        fetch('/api/worksites' + (search ? `?search=${encodeURIComponent(search)}` : '')),
+        fetch('/api/permits'),
+      ])
+      const sitesData = await sitesRes.json()
+      const permitsData = await permitsRes.json()
+      setSites(Array.isArray(sitesData) ? sitesData : [])
+      // Build address → open permit count map
+      const CLOSED_STATUSES = ['passed', 'closed', 'not_required']
+      const countMap: Record<string, number> = {}
+      if (Array.isArray(permitsData)) {
+        for (const p of permitsData) {
+          if (!CLOSED_STATUSES.includes(p.status) && p.job_address) {
+            const key = p.job_address.toLowerCase().trim()
+            countMap[key] = (countMap[key] || 0) + 1
+          }
+        }
+      }
+      setOpenPermitsByAddress(countMap)
     } catch { setSites([]) }
     setLoading(false)
   }
@@ -202,9 +227,9 @@ export default function WorksitesPage() {
       })
       if (!res.ok) { const e = await res.json(); alert(e.error); return }
       setShowNewVisit(false)
-      setVisitForm({ visit_date: new Date().toISOString().split('T')[0], service_type: '', work_performed: '', technician: 'Daniel Price', customer_name: '', customer_phone: '', notes: '' })
+      setVisitForm({ visit_date: new Date().toISOString().split('T')[0], service_type: '', work_performed: '', technician: 'Lacey Price', customer_name: '', customer_phone: '', notes: '' })
       await refreshDetail()
-      setDetailTab('visits')
+      setDetailTab('history')
     } finally { setSavingVisit(false) }
   }
 
@@ -212,6 +237,56 @@ export default function WorksitesPage() {
     if (!confirm('Delete this visit record?')) return
     await fetch(`/api/worksites?id=${id}&table=worksite_visits`, { method: 'DELETE' })
     await refreshDetail()
+  }
+
+  async function loadSitePermits(address: string) {
+    setPermitsLoading(true)
+    try {
+      const res = await fetch(`/api/permits?search=${encodeURIComponent(address)}`)
+      const d = await res.json()
+      setSitePermits(Array.isArray(d) ? d : [])
+    } catch { setSitePermits([]) }
+    setPermitsLoading(false)
+  }
+
+  async function savePermit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!selected) return
+    setSavingPermit(true)
+    try {
+      const res = await fetch('/api/permits', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          job_address: selected.address,
+          city: selected.city,
+          state: selected.state,
+          permit_type: 'gas',
+          status: 'pending_application',
+          source: 'manual',
+          ...permitForm,
+        }),
+      })
+      if (!res.ok) { const e = await res.json(); alert(e.error || 'Failed to save permit'); return }
+      setShowAddPermit(false)
+      setPermitForm({})
+      await loadSitePermits(selected.address)
+    } finally { setSavingPermit(false) }
+  }
+
+  async function updatePermitStatus(id: string, status: string) {
+    await fetch('/api/permits', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, status }),
+    })
+    if (selected) await loadSitePermits(selected.address)
+  }
+
+  async function deletePermit(id: string) {
+    if (!confirm('Delete this permit?')) return
+    await fetch(`/api/permits?id=${id}`, { method: 'DELETE' })
+    if (selected) await loadSitePermits(selected.address)
   }
 
   async function deletePhoto(id: string) {
@@ -262,7 +337,7 @@ export default function WorksitesPage() {
     !search || `${s.address} ${s.city} ${s.zip}`.toLowerCase().includes(search.toLowerCase())
   )
 
-  // â”€â”€ Detail view â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // â"€â"€ Detail view â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
   if (view === 'detail' && selected) {
     const PropIcon = propIcon(selected.property_type)
     const visitsByDate = [...(selected.visits || [])].sort((a, b) => b.visit_date.localeCompare(a.visit_date))
@@ -292,7 +367,7 @@ export default function WorksitesPage() {
               </div>
               <div>
                 <h1 className="text-xl font-extrabold text-gray-900">{selected.address}</h1>
-                <p className="text-sm text-gray-500">{[selected.city, selected.state, selected.zip].filter(Boolean).join(', ')} Â· <span className="capitalize">{selected.property_type}</span></p>
+                <p className="text-sm text-gray-500">{[selected.city, selected.state, selected.zip].filter(Boolean).join(', ')} · <span className="capitalize">{selected.property_type}</span></p>
               </div>
               <div className="ml-auto flex gap-2">
                 <button onClick={() => setEditingSite(!editingSite)}
@@ -388,7 +463,7 @@ export default function WorksitesPage() {
                     <div className="text-xs text-gray-500 mt-0.5">Contacts</div>
                   </div>
                   <div className="bg-white rounded-2xl border border-gray-100 p-4 shadow-sm">
-                    <div className="text-sm font-extrabold text-gray-800">{lastActivity ? formatDateShort(lastActivity) : 'â€”'}</div>
+                    <div className="text-sm font-extrabold text-gray-800">{lastActivity ? formatDateShort(lastActivity) : 'â€"'}</div>
                     <div className="text-xs text-gray-500 mt-0.5">Last Activity</div>
                   </div>
                 </div>
@@ -396,19 +471,24 @@ export default function WorksitesPage() {
             })()}
 
             {/* Tabs */}
-            <div className="flex gap-1 bg-gray-100 rounded-xl p-1 w-fit mb-5">
+            <div className="flex gap-1 bg-gray-100 rounded-xl p-1 w-fit mb-5 flex-wrap">
               {([
                 ['history', 'History'],
                 ['contacts', 'Contacts / Owners'],
                 ['photos', 'Photos'],
+                ['permits', 'Permits'],
               ] as const).map(([k, l]) => {
                 const s = selected as any
                 const count = k === 'history'
                   ? ((s.allInvoices||[]).length + (s.appointments||[]).length + (s.scheduleRequests||[]).length + (s.visits||[]).length)
                   : k === 'contacts' ? (s.contacts||[]).length
-                  : (s.photos||[]).length
+                  : k === 'photos' ? (s.photos||[]).length
+                  : sitePermits.length
                 return (
-                  <button key={k} onClick={() => setDetailTab(k)}
+                  <button key={k} onClick={() => {
+                    setDetailTab(k)
+                    if (k === 'permits' && selected) loadSitePermits(selected.address)
+                  }}
                     className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${detailTab === k ? 'bg-white shadow-sm' : 'text-gray-500'}`}
                     style={{ color: detailTab === k ? '#185FA5' : undefined }}>
                     {l}
@@ -418,7 +498,7 @@ export default function WorksitesPage() {
               })}
             </div>
 
-            {/* â”€â”€ HISTORY TAB â”€â”€ */}
+            {/* â"€â"€ HISTORY TAB â"€â"€ */}
             {detailTab === 'history' && (() => {
               const s = selected as any
               type TLEvent = { id: string; date: string; type: 'invoice'|'appointment'|'schedule_request'|'visit'; data: any }
@@ -463,13 +543,13 @@ export default function WorksitesPage() {
                                 <div className="flex-1 min-w-0">
                                   <div className="flex items-center gap-2 flex-wrap mb-1">
                                     <span className="text-xs font-bold uppercase tracking-wider" style={{ color: ts.border }}>{ts.label}</span>
-                                    <span className="text-xs text-gray-400">{ev.date ? formatDateShort(ev.date) : 'â€”'}</span>
+                                    <span className="text-xs text-gray-400">{ev.date ? formatDateShort(ev.date) : 'â€"'}</span>
                                     <span className={`text-xs px-1.5 py-0.5 rounded-full font-semibold capitalize ${inv.invoice_status==='paid'?'bg-green-100 text-green-700':inv.invoice_status==='sent'?'bg-blue-100 text-blue-700':inv.invoice_status==='overdue'?'bg-red-100 text-red-600':'bg-gray-100 text-gray-600'}`}>{inv.invoice_status}</span>
                                   </div>
                                   <div className="flex items-start justify-between gap-3">
                                     <div>
                                       <div className="font-bold text-gray-900 text-sm">{inv.invoice_number}</div>
-                                      <div className="text-xs text-gray-500">{inv.customer_name}{inv.service_type ? ` Â· ${inv.service_type}` : ''}</div>
+                                      <div className="text-xs text-gray-500">{inv.customer_name}{inv.service_type ? ` · ${inv.service_type}` : ''}</div>
                                       {inv.service_description && <div className="text-xs text-gray-600 mt-1 line-clamp-2">{inv.service_description}</div>}
                                     </div>
                                     <div className="text-right flex-shrink-0">
@@ -494,11 +574,11 @@ export default function WorksitesPage() {
                                 <div className="flex-1">
                                   <div className="flex items-center gap-2 flex-wrap mb-1">
                                     <span className="text-xs font-bold uppercase tracking-wider" style={{ color: ts.border }}>{ts.label}</span>
-                                    <span className="text-xs text-gray-400">{appt.start_time ? formatDateShort(appt.start_time.split('T')[0]) : 'â€”'}</span>
+                                    <span className="text-xs text-gray-400">{appt.start_time ? formatDateShort(appt.start_time.split('T')[0]) : 'â€"'}</span>
                                     <span className={`text-xs px-1.5 py-0.5 rounded-full font-semibold capitalize ${appt.status==='completed'?'bg-green-100 text-green-700':appt.status==='cancelled'?'bg-red-100 text-red-600':'bg-blue-100 text-blue-700'}`}>{appt.status}</span>
                                   </div>
                                   <div className="font-bold text-gray-900 text-sm">{appt.title||appt.service_type}</div>
-                                  <div className="text-xs text-gray-500">{appt.customer_name}{appt.customer_phone?` Â· ${appt.customer_phone}`:''}{appt.customer_email?` Â· ${appt.customer_email}`:''}</div>
+                                  <div className="text-xs text-gray-500">{appt.customer_name}{appt.customer_phone?` · ${appt.customer_phone}`:''}{appt.customer_email?` · ${appt.customer_email}`:''}</div>
                                   {appt.notes && <div className="text-xs text-gray-600 mt-1 bg-gray-50 rounded-lg px-3 py-2">{appt.notes}</div>}
                                 </div>
                               </div>
@@ -517,14 +597,14 @@ export default function WorksitesPage() {
                                 <div className="flex-1">
                                   <div className="flex items-center gap-2 flex-wrap mb-1">
                                     <span className="text-xs font-bold uppercase tracking-wider" style={{ color: ts.border }}>{ts.label}</span>
-                                    <span className="text-xs text-gray-400">{sr.created_at ? formatDateShort(sr.created_at.split('T')[0]) : 'â€”'}</span>
+                                    <span className="text-xs text-gray-400">{sr.created_at ? formatDateShort(sr.created_at.split('T')[0]) : 'â€"'}</span>
                                     <span className={`text-xs px-1.5 py-0.5 rounded-full font-semibold capitalize ${sr.status==='approved'?'bg-green-100 text-green-700':sr.status==='declined'?'bg-red-100 text-red-600':'bg-amber-100 text-amber-700'}`}>{sr.status}</span>
                                   </div>
                                   <div className="font-bold text-gray-900 text-sm">{name}</div>
-                                  <div className="text-xs text-gray-500">{sr.phone}{sr.email?` Â· ${sr.email}`:''}{sr.service_type?` Â· ${sr.service_type}`:''}</div>
+                                  <div className="text-xs text-gray-500">{sr.phone}{sr.email?` · ${sr.email}`:''}{sr.service_type?` · ${sr.service_type}`:''}</div>
                                   {sr.preferred_date && <div className="text-xs text-gray-400">Requested: {formatDateShort(sr.preferred_date)}{sr.preferred_time?` ${sr.preferred_time}`:''}</div>}
                                   {sr.notes && <div className="text-xs text-gray-600 mt-1 bg-gray-50 rounded-lg px-3 py-2">{sr.notes}</div>}
-                                  {sr.owner_name && sr.owner_name !== name && <div className="text-xs text-gray-500 mt-1">Owner: {sr.owner_name}{sr.owner_phone?` Â· ${sr.owner_phone}`:''}</div>}
+                                  {sr.owner_name && sr.owner_name !== name && <div className="text-xs text-gray-500 mt-1">Owner: {sr.owner_name}{sr.owner_phone?` · ${sr.owner_phone}`:''}</div>}
                                   {sr.company_name && <div className="text-xs text-gray-500">Company: {sr.company_name}</div>}
                                 </div>
                               </div>
@@ -545,7 +625,7 @@ export default function WorksitesPage() {
                                   <span className="text-xs text-gray-400">{formatDateShort(v.visit_date)}</span>
                                   {v.service_type && <span className="text-xs px-1.5 py-0.5 rounded-full font-semibold" style={{ background: '#EBF3FC', color: '#185FA5' }}>{v.service_type}</span>}
                                 </div>
-                                {v.customer_name && <div className="text-xs text-gray-500">{v.customer_name}{v.customer_phone?` Â· ${v.customer_phone}`:''}</div>}
+                                {v.customer_name && <div className="text-xs text-gray-500">{v.customer_name}{v.customer_phone?` · ${v.customer_phone}`:''}</div>}
                                 {v.technician && <div className="text-xs text-gray-500">Tech: {v.technician}</div>}
                                 {v.work_performed && <div className="text-xs text-gray-700 mt-1 bg-gray-50 rounded-lg px-3 py-2 whitespace-pre-wrap">{v.work_performed}</div>}
                                 {v.notes && <div className="text-xs text-gray-500 italic mt-1">{v.notes}</div>}
@@ -581,7 +661,7 @@ export default function WorksitesPage() {
               )
             })()}
 
-            {/* â”€â”€ CONTACTS TAB â”€â”€ */}
+            {/* â"€â"€ CONTACTS TAB â"€â"€ */}
             {detailTab === 'contacts' && (() => {
               const s = selected as any
               const contacts: any[] = s.contacts || []
@@ -606,12 +686,12 @@ export default function WorksitesPage() {
                               <span key={src} className="text-xs px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500 capitalize">{src.replace(/_/g,' ')}</span>
                             ))}
                           </div>
-                          {c.phone && <div className="text-xs text-gray-600">ðŸ“ž {c.phone}</div>}
+                          {c.phone && <div className="text-xs text-gray-600">ðŸ"ž {c.phone}</div>}
                           {c.email && <div className="text-xs text-gray-600">âœ‰ï¸ {c.email}</div>}
                           {(c.firstSeen||c.lastSeen) && (
                             <div className="text-xs text-gray-400 mt-1">
                               {c.firstSeen&&c.lastSeen&&c.firstSeen!==c.lastSeen
-                                ? `${formatDateShort(c.firstSeen)} â€” ${formatDateShort(c.lastSeen)}`
+                                ? `${formatDateShort(c.firstSeen)} â€" ${formatDateShort(c.lastSeen)}`
                                 : `Active: ${formatDateShort(c.firstSeen||c.lastSeen)}`}
                             </div>
                           )}
@@ -628,7 +708,193 @@ export default function WorksitesPage() {
               )
             })()}
 
-            {/* â”€â”€ PHOTOS TAB â”€â”€ */}
+            {/* ── PERMITS TAB ── */}
+            {detailTab === 'permits' && (() => {
+              const PERMIT_STATUS_CFG: Record<string, { label: string; color: string; bg: string }> = {
+                inquiry:              { label: 'Inquiry',          color: '#6b7280', bg: '#f3f4f6' },
+                not_required:         { label: 'Not Required',     color: '#059669', bg: '#d1fae5' },
+                pending_application:  { label: 'Pending App',      color: '#d97706', bg: '#fef3c7' },
+                applied:              { label: 'Applied',          color: '#2563eb', bg: '#dbeafe' },
+                approved:             { label: 'Approved',         color: '#7c3aed', bg: '#ede9fe' },
+                issued:               { label: 'Issued',           color: '#059669', bg: '#d1fae5' },
+                inspection_scheduled: { label: 'Inspection',       color: '#0891b2', bg: '#cffafe' },
+                passed:               { label: 'Passed',           color: '#16a34a', bg: '#dcfce7' },
+                closed:               { label: 'Closed',           color: '#374151', bg: '#e5e7eb' },
+              }
+              const activePermits = sitePermits.filter(p => !['passed','closed','not_required'].includes(p.status))
+              const closedPermits = sitePermits.filter(p => ['passed','closed','not_required'].includes(p.status))
+              const fmtDate = (d: string | null) => d ? new Date(d + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : null
+
+              return (
+                <div className="space-y-4">
+                  <div className="flex items-center gap-3">
+                    <button onClick={() => { setPermitForm({ permit_type: 'gas', status: 'pending_application' }); setShowAddPermit(true) }}
+                      className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-white text-sm font-bold shadow-sm"
+                      style={{ background: '#185FA5' }}>
+                      <Plus size={14} />Add Permit
+                    </button>
+                    <a href="/admin/permits" className="flex items-center gap-1 text-xs text-blue-600 hover:underline">
+                      <ExternalLink size={11} />View all permits
+                    </a>
+                  </div>
+
+                  {permitsLoading ? (
+                    <div className="flex justify-center py-12"><Loader2 size={24} className="animate-spin" style={{ color: '#185FA5' }} /></div>
+                  ) : sitePermits.length === 0 ? (
+                    <div className="text-center py-12 text-gray-400">
+                      <FileCheck size={30} className="mx-auto mb-2 opacity-30" />
+                      <p className="text-sm">No permits found for this address</p>
+                      <p className="text-xs mt-1">Add one manually or use Sync Invoices in the Permits section</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-5">
+                      {activePermits.length > 0 && (
+                        <div>
+                          <div className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Active ({activePermits.length})</div>
+                          <div className="space-y-2">
+                            {activePermits.map((p: any) => {
+                              const cfg = PERMIT_STATUS_CFG[p.status] || { label: p.status, color: '#6b7280', bg: '#f3f4f6' }
+                              const today = new Date()
+                              const expiry = p.expiry_date ? new Date(p.expiry_date + 'T00:00:00') : null
+                              const daysToExpiry = expiry ? Math.ceil((expiry.getTime() - today.getTime()) / 86400000) : null
+                              return (
+                                <div key={p.id} className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4">
+                                  <div className="flex items-start justify-between gap-3">
+                                    <div className="flex-1 min-w-0">
+                                      <div className="flex flex-wrap items-center gap-2 mb-1.5">
+                                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold"
+                                          style={{ color: cfg.color, background: cfg.bg }}>{cfg.label}</span>
+                                        <span className="text-xs bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded font-semibold uppercase">{p.permit_type}</span>
+                                        {p.permit_number && <span className="text-xs font-bold text-gray-700">#{p.permit_number}</span>}
+                                        {daysToExpiry !== null && daysToExpiry <= 30 && daysToExpiry > 0 && (
+                                          <span className="text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded font-semibold">Expires in {daysToExpiry}d</span>
+                                        )}
+                                      </div>
+                                      <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-gray-500">
+                                        {p.jurisdiction_name && <span>📍 {p.jurisdiction_name}</span>}
+                                        {p.application_date && <span>Applied {fmtDate(p.application_date)}</span>}
+                                        {p.issued_date && <span>Issued {fmtDate(p.issued_date)}</span>}
+                                        {p.inspection_date && <span>Inspection {fmtDate(p.inspection_date)}</span>}
+                                        {p.permit_fee != null && (
+                                          <span className={p.fee_paid ? 'text-green-600 font-semibold' : 'text-red-500 font-semibold'}>
+                                            ${Number(p.permit_fee).toFixed(2)} {p.fee_paid ? '✓ Paid' : '— Unpaid'}
+                                          </span>
+                                        )}
+                                      </div>
+                                      {p.inspector_notes && <p className="text-xs text-gray-500 mt-1 italic">{p.inspector_notes}</p>}
+                                    </div>
+                                    <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
+                                      <select value={p.status}
+                                        onChange={e => updatePermitStatus(p.id, e.target.value)}
+                                        className="text-xs border border-gray-200 rounded-lg px-2 py-1 focus:outline-none">
+                                        {Object.entries(PERMIT_STATUS_CFG).map(([val, c]) => (
+                                          <option key={val} value={val}>{c.label}</option>
+                                        ))}
+                                      </select>
+                                      <button onClick={() => deletePermit(p.id)} className="text-gray-300 hover:text-red-500 transition-colors">
+                                        <Trash2 size={13} />
+                                      </button>
+                                    </div>
+                                  </div>
+                                </div>
+                              )
+                            })}
+                          </div>
+                        </div>
+                      )}
+                      {closedPermits.length > 0 && (
+                        <div>
+                          <div className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Closed / Complete ({closedPermits.length})</div>
+                          <div className="space-y-2">
+                            {closedPermits.map((p: any) => {
+                              const cfg = PERMIT_STATUS_CFG[p.status] || { label: p.status, color: '#6b7280', bg: '#f3f4f6' }
+                              return (
+                                <div key={p.id} className="bg-gray-50 rounded-2xl border border-gray-100 p-4">
+                                  <div className="flex items-center justify-between gap-3">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold"
+                                        style={{ color: cfg.color, background: cfg.bg }}>{cfg.label}</span>
+                                      <span className="text-xs bg-white text-gray-500 px-1.5 py-0.5 rounded font-semibold uppercase border">{p.permit_type}</span>
+                                      {p.permit_number && <span className="text-xs font-bold text-gray-600">#{p.permit_number}</span>}
+                                      {p.final_date && <span className="text-xs text-gray-400">Closed {fmtDate(p.final_date)}</span>}
+                                    </div>
+                                    <button onClick={() => deletePermit(p.id)} className="text-gray-300 hover:text-red-500"><Trash2 size={13} /></button>
+                                  </div>
+                                </div>
+                              )
+                            })}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Add Permit Modal */}
+                  {showAddPermit && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+                      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+                        <div className="px-6 py-4 border-b flex items-center justify-between sticky top-0 bg-white">
+                          <h2 className="font-bold text-gray-900">Add Permit</h2>
+                          <button onClick={() => setShowAddPermit(false)}><X size={18} className="text-gray-400" /></button>
+                        </div>
+                        <form onSubmit={savePermit} className="p-6 space-y-4">
+                          <div className="bg-blue-50 rounded-xl px-4 py-2.5 text-sm text-blue-800 font-medium flex items-center gap-2">
+                            <MapPin size={13} />{selected?.address}
+                          </div>
+                          <div className="grid grid-cols-2 gap-3">
+                            <div>
+                              <label className="block text-xs font-semibold text-gray-700 mb-1">Permit Number</label>
+                              <input value={permitForm.permit_number || ''} onChange={e => setPermitForm((f: any) => ({ ...f, permit_number: e.target.value }))}
+                                placeholder="e.g. BP-2024-1234" className={inputCls} />
+                            </div>
+                            <div>
+                              <label className="block text-xs font-semibold text-gray-700 mb-1">Type</label>
+                              <select value={permitForm.permit_type || 'gas'} onChange={e => setPermitForm((f: any) => ({ ...f, permit_type: e.target.value }))} className={inputCls}>
+                                {['gas','lp','hvac','electrical','mechanical','plumbing','other'].map(t => <option key={t} value={t}>{t.toUpperCase()}</option>)}
+                              </select>
+                            </div>
+                          </div>
+                          <div>
+                            <label className="block text-xs font-semibold text-gray-700 mb-1">Status</label>
+                            <select value={permitForm.status || 'pending_application'} onChange={e => setPermitForm((f: any) => ({ ...f, status: e.target.value }))} className={inputCls}>
+                              {Object.entries(PERMIT_STATUS_CFG).map(([val, c]) => <option key={val} value={val}>{c.label}</option>)}
+                            </select>
+                          </div>
+                          <div className="grid grid-cols-2 gap-3">
+                            <div>
+                              <label className="block text-xs font-semibold text-gray-700 mb-1">Application Date</label>
+                              <input type="date" value={permitForm.application_date || ''} onChange={e => setPermitForm((f: any) => ({ ...f, application_date: e.target.value || null }))} className={inputCls} />
+                            </div>
+                            <div>
+                              <label className="block text-xs font-semibold text-gray-700 mb-1">Permit Fee</label>
+                              <input type="number" step="0.01" value={permitForm.permit_fee || ''} onChange={e => setPermitForm((f: any) => ({ ...f, permit_fee: e.target.value ? parseFloat(e.target.value) : null }))} placeholder="0.00" className={inputCls} />
+                            </div>
+                          </div>
+                          <div>
+                            <label className="block text-xs font-semibold text-gray-700 mb-1">Jurisdiction</label>
+                            <input value={permitForm.jurisdiction_name || ''} onChange={e => setPermitForm((f: any) => ({ ...f, jurisdiction_name: e.target.value }))} placeholder="e.g. City of Crestview" className={inputCls} />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-semibold text-gray-700 mb-1">Notes</label>
+                            <textarea value={permitForm.notes || ''} onChange={e => setPermitForm((f: any) => ({ ...f, notes: e.target.value }))} rows={2} className={inputCls} />
+                          </div>
+                          <div className="flex gap-3 pt-1">
+                            <button type="submit" disabled={savingPermit}
+                              className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl text-white font-bold disabled:opacity-60"
+                              style={{ background: '#185FA5' }}>
+                              {savingPermit ? <Loader2 size={15} className="animate-spin" /> : <FileCheck size={15} />}Add Permit
+                            </button>
+                            <button type="button" onClick={() => setShowAddPermit(false)} className="px-5 py-3 rounded-xl border border-gray-200 font-semibold text-sm">Cancel</button>
+                          </div>
+                        </form>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )
+            })()}
+
+            {/* ── PHOTOS TAB ── */}
             {detailTab === 'photos' && (
               <div>
                 <div className="flex flex-wrap items-center gap-3 mb-5 p-4 bg-white rounded-2xl border border-gray-100 shadow-sm">
@@ -744,13 +1010,13 @@ export default function WorksitesPage() {
     )
   }
 
-  // â”€â”€ List view â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // â"€â"€ List view â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
   return (
     <div className="p-6 md:p-8 pt-16 md:pt-8">
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-extrabold text-gray-900">Worksites</h1>
-          <p className="text-gray-500 text-sm mt-0.5">Property history Â· work records Â· photos â€” independent of homeowner</p>
+          <p className="text-gray-500 text-sm mt-0.5">Property history</p>
         </div>
         <div className="flex items-center gap-2">
           <button onClick={importFromInvoices} disabled={importing}
@@ -772,7 +1038,7 @@ export default function WorksitesPage() {
         <div className="mb-4 flex items-center gap-3 px-4 py-3 bg-green-50 border border-green-200 rounded-xl text-sm">
           <CheckCircle2 size={16} className="text-green-600 flex-shrink-0" />
           <span className="text-green-800 font-semibold">
-            Import complete â€” {importResult.sitesCreated} new properties, {importResult.visitsCreated} visit records created
+            Import complete â€" {importResult.sitesCreated} new properties, {importResult.visitsCreated} visit records created
             {importResult.skipped > 0 ? `, ${importResult.skipped} already existed (skipped)` : ''}
           </span>
           <button onClick={() => setImportResult(null)} className="ml-auto text-green-600 hover:text-green-800"><X size={14} /></button>
@@ -812,7 +1078,7 @@ export default function WorksitesPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-gray-50 border-b border-gray-100">
-                  {['', 'Address', 'Type', 'Visits', 'Photos', 'Last Visit', 'Last Service', ''].map((h, i) => (
+                  {['', 'Address', 'Type', 'Visits', 'Open Tasks', ''].map((h, i) => (
                     <th key={i} className="text-left px-5 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider">{h}</th>
                   ))}
                 </tr>
@@ -838,12 +1104,15 @@ export default function WorksitesPage() {
                         <span className={`text-sm font-bold ${site.visit_count > 0 ? '' : 'text-gray-400'}`} style={{ color: site.visit_count > 0 ? '#185FA5' : undefined }}>{site.visit_count}</span>
                       </td>
                       <td className="px-5 py-3">
-                        <span className="text-sm font-bold text-gray-700">{site.photo_count || 'â€”'}</span>
+                        {(() => {
+                          const count = openPermitsByAddress[site.address.toLowerCase().trim()] || 0
+                          return count > 0 ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold bg-amber-100 text-amber-700">
+                              <FileCheck size={10} />{count} open
+                            </span>
+                          ) : <span className="text-gray-300 text-xs">—</span>
+                        })()}
                       </td>
-                      <td className="px-5 py-3 text-xs text-gray-500 whitespace-nowrap">
-                        {site.last_visit ? formatDateShort(site.last_visit) : <span className="text-gray-300">Never</span>}
-                      </td>
-                      <td className="px-5 py-3 text-xs text-gray-500">{site.last_service || 'â€”'}</td>
                       <td className="px-5 py-3">
                         <ChevronRight size={16} className="text-gray-300" />
                       </td>

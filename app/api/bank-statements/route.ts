@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 export const dynamic = 'force-dynamic'
 import { createServerClient } from '@/lib/supabase'
+import { attachSignedUrls, signedUrlFor } from '@/lib/signed-url'
 
 const BUCKET = 'bank-statements'
 
@@ -12,6 +13,8 @@ export async function GET() {
     .select('*')
     .order('statement_date', { ascending: false })
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  // bank_statements uses storage_path instead of file_path
+  await attachSignedUrls(supabase, BUCKET, data, 'storage_path' as any)
   return NextResponse.json(data)
 }
 
@@ -36,11 +39,12 @@ export async function POST(req: NextRequest) {
     .upload(filePath, buf, { contentType: file.type || 'application/pdf' })
   if (upErr) return NextResponse.json({ error: upErr.message }, { status: 500 })
 
-  const { data: urlData } = supabase.storage.from(BUCKET).getPublicUrl(filePath)
+  // Bucket is private; signed URLs regenerate on every read.
+  const signedNow = await signedUrlFor(supabase, BUCKET, filePath)
 
   const { data, error } = await supabase.from('bank_statements').insert({
     file_name: file.name,
-    file_url: urlData.publicUrl,
+    file_url: signedNow || '',
     storage_path: filePath,
     label: label || file.name.replace(/\.[^.]+$/, ''),
     statement_date,

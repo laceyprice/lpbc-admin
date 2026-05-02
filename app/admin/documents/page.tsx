@@ -47,7 +47,7 @@ export default function DocumentsPage() {
   const [scanError, setScanError] = useState<string | null>(null)
   const [needsAuth, setNeedsAuth] = useState(false)
   const [authUrl, setAuthUrl] = useState<string | null>(null)
-  const [daysBack, setDaysBack] = useState(30)
+  const [daysBack, setDaysBack] = useState(7)
 
   useEffect(() => { load() }, [typeFilter])
 
@@ -62,7 +62,20 @@ export default function DocumentsPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ days_back: daysBack }),
       })
-      const d = await res.json()
+      const ct = res.headers.get('content-type') || ''
+      const raw = await res.text()
+      // Server returned HTML — likely an ingress timeout (504) or 404 page
+      if (!ct.includes('application/json')) {
+        if (res.status === 504) {
+          setScanError(`Scan timed out at the gateway (504). Try a shorter window — pick "Last 7 days" first, then expand if it works.`)
+        } else if (res.status === 404) {
+          setScanError(`Scan endpoint not found (404). The new image may not be deployed yet.`)
+        } else {
+          setScanError(`Server returned ${res.status}. ${raw.slice(0, 200)}`)
+        }
+        return
+      }
+      const d = JSON.parse(raw)
       if (!res.ok) {
         if (d.needsAuth) {
           setNeedsAuth(true)
@@ -166,7 +179,7 @@ export default function DocumentsPage() {
               <Mail size={16} style={{ color: '#185FA5' }} />
             </div>
             <div>
-              <p className="font-bold text-gray-900 text-sm">Scan office@thegasologist.com</p>
+              <p className="font-bold text-gray-900 text-sm">Scan Lacey@LaceyNPrice.com</p>
               <p className="text-xs text-gray-500 mt-0.5">Finds W-9s, COIs, and receipts — imports them automatically</p>
             </div>
           </div>
@@ -326,9 +339,20 @@ export default function DocumentsPage() {
                 return (
                   <tr key={doc.id} className="hover:bg-gray-50">
                     <td className="px-4 py-3">
-                      <span className={`text-xs px-2.5 py-1 rounded-full font-semibold ${ts.bg} ${ts.text}`}>
-                        {ts.label}
-                      </span>
+                      {isEditing ? (
+                        <select value={editForm.doc_type || doc.doc_type} onChange={e => setEditForm((f: any) => ({ ...f, doc_type: e.target.value }))}
+                          className="px-2 py-1 rounded-lg border border-gray-200 text-xs focus:outline-none focus:ring-2 focus:border-blue-400">
+                          <option value="coi">COI</option>
+                          <option value="w9">W-9</option>
+                          <option value="contract">Contract</option>
+                          <option value="license">License</option>
+                          <option value="other">Other</option>
+                        </select>
+                      ) : (
+                        <span className={`text-xs px-2.5 py-1 rounded-full font-semibold ${ts.bg} ${ts.text}`}>
+                          {ts.label}
+                        </span>
+                      )}
                     </td>
                     <td className="px-4 py-3">
                       {isEditing ? (
@@ -350,7 +374,12 @@ export default function DocumentsPage() {
                       </a>
                     </td>
                     <td className="px-4 py-3 text-xs text-gray-500">
-                      {doc.issued_date ? formatDateShort(doc.issued_date) : '—'}
+                      {isEditing ? (
+                        <input type="date" value={editForm.issued_date || ''} onChange={e => setEditForm((f: any) => ({ ...f, issued_date: e.target.value }))}
+                          className="px-2 py-1 rounded-lg border border-gray-200 text-xs focus:outline-none" />
+                      ) : (
+                        doc.issued_date ? formatDateShort(doc.issued_date) : '—'
+                      )}
                     </td>
                     <td className="px-4 py-3">
                       {isEditing ? (
@@ -384,7 +413,7 @@ export default function DocumentsPage() {
                           </>
                         ) : (
                           <>
-                            <button onClick={() => { setEditingId(doc.id); setEditForm({ vendor_name: doc.vendor_name || '', expiry_date: doc.expiry_date || '' }) }}
+                            <button onClick={() => { setEditingId(doc.id); setEditForm({ vendor_name: doc.vendor_name || '', expiry_date: doc.expiry_date || '', issued_date: doc.issued_date || '', doc_type: doc.doc_type || 'other' }) }}
                               className="text-gray-400 hover:text-blue-600 text-xs font-semibold">Edit</button>
                             <button onClick={() => deleteDoc(doc.id, doc.vendor_name || doc.file_name || 'this document')}
                               className="text-gray-400 hover:text-red-500">

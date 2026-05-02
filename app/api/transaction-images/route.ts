@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 export const dynamic = 'force-dynamic'
 import { createServerClient } from '@/lib/supabase'
+import { attachSignedUrls, signedUrlFor } from '@/lib/signed-url'
 
 const BUCKET = 'bookkeeping-images'
 
@@ -20,6 +21,7 @@ export async function GET(req: NextRequest) {
   if (matched === 'false') query = query.is('matched_bank_transaction_id', null)
   const { data, error } = await query
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  await attachSignedUrls(supabase, BUCKET, data)
   return NextResponse.json(data)
 }
 
@@ -53,7 +55,8 @@ export async function POST(req: NextRequest) {
       .upload(filePath, buf, { contentType: file.type || undefined, upsert: false })
     if (upErr) return NextResponse.json({ error: `Storage upload failed: ${upErr.message}` }, { status: 500 })
 
-    const { data: urlData } = supabase.storage.from(BUCKET).getPublicUrl(filePath)
+    // Buckets are private; signed URLs are regenerated on every read in GET.
+    const signedNow = await signedUrlFor(supabase, BUCKET, filePath)
 
     const check_number = (form.get('check_number') as string) || null
     const vendor = (form.get('vendor') as string) || null
@@ -66,7 +69,7 @@ export async function POST(req: NextRequest) {
       .from('transaction_images')
       .insert({
         image_type,
-        file_url: urlData.publicUrl,
+        file_url: signedNow || '',
         file_path: filePath,
         file_name: file.name,
         mime_type: file.type || null,

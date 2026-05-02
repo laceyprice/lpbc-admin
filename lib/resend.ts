@@ -37,22 +37,29 @@ function invoiceHtml(content: string) {
   </div>`
 }
 
-export async function sendInvoiceEmail({ to, customerName, invoiceNumber, invoiceType, amountDue, dueDate, serviceDescription, jobAddress, jobsiteCity, companyName, paymentUrl }: {
+export async function sendInvoiceEmail({ to, customerName, invoiceNumber, invoiceType, amountDue, dueDate, serviceDescription, jobAddress, jobsiteCity, companyName, paymentUrl, isPaid }: {
   to: string; customerName: string; invoiceNumber: string; invoiceType?: string
   amountDue: number; dueDate?: string; serviceDescription?: string; jobAddress?: string
-  jobsiteCity?: string; companyName?: string; paymentUrl?: string
+  jobsiteCity?: string; companyName?: string; paymentUrl?: string; isPaid?: boolean
 }) {
   const isQuote = invoiceType === 'quote'
   const label = isQuote ? 'Quote' : 'Invoice'
   const subject = isQuote
     ? `LPBC Quote ${invoiceNumber} ${jobAddress || ''}`
     : `LPBC Invoice ${invoiceNumber} ${jobAddress || ''}`
-  const bodyText = isQuote
-    ? 'Attached is a quote for future services. Please let us know if you have any questions or if we can do anything else to serve you.'
-    : 'Attached is an invoice for completed services. Please let us know if you have any questions or if we can do anything else to serve you.'
+  const bodyText = isPaid
+    ? 'Thank you for your payment! This is a paid receipt for your records. Please let us know if you have any questions.'
+    : isQuote
+      ? 'Attached is a quote for future services. Please let us know if you have any questions or if we can do anything else to serve you.'
+      : 'Attached is an invoice for completed services. Please let us know if you have any questions or if we can do anything else to serve you.'
 
   const fullAddress = [jobAddress, jobsiteCity].filter(Boolean).join(', ')
   const pdfUrl = `${APP}/api/invoice-pdf?id=${invoiceNumber}`
+
+  // Amount row: green PAID badge when paid, brand-colored Amount Due when unpaid
+  const amountRow = isPaid
+    ? `<tr style="background:#16a34a"><td style="padding:14px;font-weight:bold;color:white;font-size:16px">Amount Paid</td><td style="padding:14px;font-size:20px;font-weight:bold;color:white">$${amountDue.toFixed(2)} &nbsp;&#10003; PAID</td></tr>`
+    : `<tr style="background:#2f5a5e"><td style="padding:14px;font-weight:bold;color:white;font-size:16px">Amount${isQuote ? '' : ' Due'}</td><td style="padding:14px;font-size:20px;font-weight:bold;color:white">$${amountDue.toFixed(2)}</td></tr>`
 
   return getResend().emails.send({
     from: `L. Price Building Company <${FROM}>`,
@@ -67,14 +74,21 @@ export async function sendInvoiceEmail({ to, customerName, invoiceNumber, invoic
         <tr><td style="padding:12px;font-weight:bold;color:#2f5a5e">Customer</td><td style="padding:12px">${customerName}${companyName ? ` &middot; ${companyName}` : ''}</td></tr>
         ${fullAddress ? `<tr style="background:#f3ede3"><td style="padding:12px;font-weight:bold;color:#2f5a5e">Job Address</td><td style="padding:12px">${fullAddress}</td></tr>` : ''}
         ${serviceDescription ? `<tr><td style="padding:12px;font-weight:bold;color:#2f5a5e">Description</td><td style="padding:12px">${serviceDescription}</td></tr>` : ''}
-        <tr style="background:#2f5a5e"><td style="padding:14px;font-weight:bold;color:white;font-size:16px">Amount${isQuote ? '' : ' Due'}</td><td style="padding:14px;font-size:20px;font-weight:bold;color:white">$${amountDue.toFixed(2)}</td></tr>
+        ${amountRow}
       </table>
 
-      ${isQuote ? `
+      ${isPaid ? `
+      <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:16px;margin:20px 0;text-align:center">
+        <p style="margin:0;font-weight:bold;color:#15803d;font-size:16px">&#10003; Payment Received — Thank You!</p>
+        <p style="margin:6px 0 0;font-size:13px;color:#166534">Please keep this email as your receipt.</p>
+      </div>
+      ` : ''}
+
+      ${isQuote && !isPaid ? `
       <div style="text-align:center;margin:24px 0"><a href="${APP}/api/approve-quote?id=${encodeURIComponent(invoiceNumber)}" style="background:#16a34a;color:white;padding:14px 32px;border-radius:8px;text-decoration:none;font-size:16px;font-weight:bold;display:inline-block">Approve Quote</a></div>
       ` : ''}
 
-      ${!isQuote && paymentUrl ? `
+      ${!isQuote && !isPaid && paymentUrl ? `
       <div style="text-align:center;margin:24px 0"><a href="${paymentUrl}" style="background:#b8895a;color:white;padding:14px 32px;border-radius:8px;text-decoration:none;font-size:16px;font-weight:bold;display:inline-block">Pay Now &mdash; $${amountDue.toFixed(2)}</a></div>
       ` : ''}
 

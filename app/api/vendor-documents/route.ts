@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 export const dynamic = 'force-dynamic'
 import { createServerClient } from '@/lib/supabase'
+import { attachSignedUrl, attachSignedUrls, signedUrlFor } from '@/lib/signed-url'
 
 const BUCKET = 'vendor-documents'
 
@@ -20,6 +21,7 @@ export async function GET(req: NextRequest) {
   if (id) {
     const { data, error } = await supabase.from('vendor_documents').select('*').eq('id', id).single()
     if (error) return NextResponse.json({ error: error.message }, { status: 404 })
+    await attachSignedUrl(supabase, BUCKET, data)
     return NextResponse.json(data)
   }
 
@@ -42,6 +44,7 @@ export async function GET(req: NextRequest) {
 
   const { data, error } = await query
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  await attachSignedUrls(supabase, BUCKET, data)
   return NextResponse.json(data || [])
 }
 
@@ -70,12 +73,14 @@ export async function POST(req: NextRequest) {
       .upload(filePath, buf, { contentType: file.type || 'application/octet-stream', upsert: false })
     if (upErr) return NextResponse.json({ error: `Upload failed: ${upErr.message}` }, { status: 500 })
 
-    const { data: urlData } = supabase.storage.from(BUCKET).getPublicUrl(filePath)
+    // Generate a signed URL for immediate use; the GET endpoints regenerate
+    // fresh signed URLs on each read so the stored value is just a placeholder.
+    const signedNow = await signedUrlFor(supabase, BUCKET, filePath)
 
     const { data, error } = await supabase.from('vendor_documents').insert({
       doc_type,
       vendor_name,
-      file_url: urlData.publicUrl,
+      file_url: signedNow || '',
       file_path: filePath,
       file_name: file.name,
       mime_type: file.type || null,

@@ -5,6 +5,8 @@ import { formatCurrency, formatDateShort } from '@/lib/utils'
 
 type Tab = 'pnl' | 'balance-sheet' | 'cash-flow' | 'reconciliation'
 
+interface FinancialAccount { id: string; name: string; color: string }
+
 export default function ReportsPage() {
   const [tab, setTab] = useState<Tab>('pnl')
   const [loading, setLoading] = useState(true)
@@ -14,13 +16,20 @@ export default function ReportsPage() {
     return d.toISOString().split('T')[0]
   })
   const [to, setTo] = useState(() => new Date().toISOString().split('T')[0])
+  const [financialAccounts, setFinancialAccounts] = useState<FinancialAccount[]>([])
+  const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null)
 
-  useEffect(() => { load() }, [tab, from, to])
+  useEffect(() => {
+    fetch('/api/financial-accounts').then(r => r.json()).then(d => setFinancialAccounts(Array.isArray(d) ? d : []))
+  }, [])
+
+  useEffect(() => { load() }, [tab, from, to, selectedAccountId])
 
   async function load() {
     setLoading(true)
     try {
       const params = new URLSearchParams({ type: tab, from, to, year: from.substring(0, 4) })
+      if (selectedAccountId) params.append('account_id', selectedAccountId)
       const res = await fetch(`/api/reports?${params}`)
       setData(await res.json())
     } catch { setData(null) }
@@ -267,6 +276,28 @@ export default function ReportsPage() {
           </button>
         )}
       </div>
+
+      {/* Account Selector */}
+      {financialAccounts.length > 0 && (
+        <div className="flex items-center gap-2 mb-4 flex-wrap">
+          <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider mr-1">Account:</span>
+          <button
+            onClick={() => setSelectedAccountId(null)}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all border ${!selectedAccountId ? 'text-white shadow-sm' : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'}`}
+            style={!selectedAccountId ? { background: '#b8895a', borderColor: '#b8895a' } : {}}>
+            All Accounts
+          </button>
+          {financialAccounts.map(a => (
+            <button
+              key={a.id}
+              onClick={() => setSelectedAccountId(a.id)}
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all border ${selectedAccountId === a.id ? 'text-white shadow-sm' : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'}`}
+              style={selectedAccountId === a.id ? { background: a.color || '#b8895a', borderColor: a.color || '#b8895a' } : {}}>
+              {a.name}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Date Range */}
       <div className="flex flex-wrap items-center gap-3 mb-5">

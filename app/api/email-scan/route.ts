@@ -30,6 +30,9 @@ export async function GET(req: NextRequest) {
       scope: [
         'https://www.googleapis.com/auth/calendar',
         'https://www.googleapis.com/auth/gmail.readonly',
+        'https://www.googleapis.com/auth/gmail.send',
+        'https://www.googleapis.com/auth/gmail.modify',
+        'https://www.googleapis.com/auth/gmail.compose',
       ],
     })
     return NextResponse.json({ authUrl })
@@ -217,7 +220,8 @@ export async function POST(req: NextRequest) {
                 continue
               }
 
-              const { data: urlData } = supabase.storage.from(vendorBucket).getPublicUrl(filePath)
+              // Bucket is private; the GET endpoint regenerates signed URLs
+              // on every read. file_url is just a placeholder.
               const vendorName = extractVendorFromFrom(fromHeader)
 
               const { data: docRec, error: docErr } = await supabase
@@ -225,7 +229,7 @@ export async function POST(req: NextRequest) {
                 .insert({
                   doc_type: fileDocType,
                   vendor_name: vendorName,
-                  file_url: urlData.publicUrl,
+                  file_url: '',
                   file_path: filePath,
                   file_name: fileName,
                   mime_type: mimeType,
@@ -260,13 +264,11 @@ export async function POST(req: NextRequest) {
                 continue
               }
 
-              const { data: urlData } = supabase.storage.from(BUCKET).getPublicUrl(filePath)
-
               const { data: imgRec, error: imgErr } = await supabase
                 .from('transaction_images')
                 .insert({
                   image_type: 'receipt',
-                  file_url: urlData.publicUrl,
+                  file_url: '',
                   file_path: filePath,
                   file_name: fileName,
                   mime_type: mimeType,

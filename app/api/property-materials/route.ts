@@ -22,6 +22,11 @@ export async function GET(req: NextRequest) {
     return syncAllInvoices(supabase)
   }
 
+  // ── Sync from calendar (appointment notes) ─────────────────
+  if (action === 'sync-calendar') {
+    return syncAllAppointments(supabase)
+  }
+
   let query = supabase
     .from('property_materials')
     .select(`
@@ -216,6 +221,154 @@ function findInventoryMatch(desc: string, items: any[]): any | null {
   }
 
   return bestItem
+}
+
+// ══════════════════════════════════════════════════════════════
+// Calendar / appointment sync — extract materials from appointment notes
+// ══════════════════════════════════════════════════════════════
+
+async function syncAllAppointments(supabase: any) {
+  // Pull appointments with notes (last 12 months) — that's where techs jot
+  // down what materials were used on the job.
+  const cutoff = new Date()
+  cutoff.setMonth(cutoff.getMonth() - 12)
+
+  const { data: appointments } = await supabase
+    .from('appointments')
+    .select('id, customer_name, service_address, service_type, notes, start_time, contact_id')
+    .not('notes', 'is', null)
+    .gte('start_time', cutoff.toISOString())
+    .order('start_time', { ascending: false })
+    .limit(500)
+
+  if (!appointments || appointments.length === 0) {
+    return NextResponse.json({ imported: 0, scanned: 0 })
+  }
+
+  // Inventory catalog for keyword matching
+  const { data: inventoryItems } = await supabase
+    .from('inventory_items')
+    .select('id, name, category, unit, unit_cost')
+    .eq('is_active', true)
+
+  let totalImported = 0
+  let totalScanned = 0
+
+  for (const appt of appointments) {
+    totalScanned++
+    if (!appt.notes || appt.notes.length < 5) continue
+    const count = await extractFromAppointmentNotes(supabase, appt, inventoryItems || [])
+    totalImported += count
+  }
+
+  return NextResponse.json({ imported: totalImported, scanned: totalScanned, source: 'calendar' })
+}
+
+async function extractFromAppointmentNotes(supabase: any, appt: any, inventoryItems: any[]): Promise<number> {
+  // Find any inventory items mentioned in the notes (case-insensitive substring).
+  const notes: string = appt.notes
+  const notesLower = notes.toLowerCase()
+  const dateUsed = appt.start_time?.split('T')[0] || new Date().toISOString().split('T')[0]
+
+  // Don't double-import — check what's already linked to this appointment
+  const { data: existing } = await supabase
+    .from('property_materials')
+    .select('item_name, inventory_item_id')
+    .eq('calendar_event_id', appt.id)
+  const existingNames = new Set((existing || []).map((r: any) => (r.item_name || '').toLowerCase()))
+  const existingItemIds = new Set((existing || []).map((r: any) => r.inventory_item_id).filter(Boolean))
+
+  let imported = 0
+
+  // Strategy 1: scan for each inventory item name in the notes
+  for (const item of inventoryItems) {
+    const nameLower = item.name.toLowerCase()
+    // Only match if the item name (minimum 4 chars) appears as a whole word/phrase
+    if (nameLower.length < 4) continue
+    if (!notesLower.includes(nameLower)) continue
+    if (existingItemIds.has(item.id)) continue
+
+    // Try to extract a quantity nearby — e.g. "2 ball valve" or "ball valve x 3"
+    const quantity = extractQuantityNear(notesLower, nameLower)
+
+    const { error } = await supabase.from('property_materials').insert({
+      contact_id: appt.contact_id || null,
+      property_address: appt.service_address || null,
+      inventory_item_id: item.id,
+      item_name: item.name,
+      category: item.category,
+      quantity,
+      unit: item.unit,
+      unit_cost: item.unit_cost || null,
+      source: 'calendar',
+      calendar_event_id: appt.id,
+      date_used: dateUsed,
+      notes: `From appointment: ${appt.customer_name} — ${appt.service_type || 'service'}`,
+    })
+
+    if (!error) {
+      imported++
+      existingItemIds.add(item.id)
+    }
+  }
+
+  // Strategy 2: line-style notes ("Used: 2 ball valves, 1 regulator")
+  // Look for lines starting with materials/used/parts/installed
+  const materialLineRe = /(?:used|installed|materials?|parts?|supplies?)\s*[:=-]\s*([^\n]+)/gi
+  let match: RegExpExecArray | null
+  while ((match = materialLineRe.exec(notes)) !== null) {
+    const line = match[1].trim()
+    const items = line.split(/[,;]/).map(s => s.trim()).filter(Boolean)
+    for (const it of items) {
+      const itLower = it.toLowerCase()
+      if (existingNames.has(itLower)) continue
+      if (isLaborItem(itLower)) continue
+
+      // Strip leading quantity if present, e.g. "2 ball valves"
+      const qm = itLower.match(/^(\d+(?:\.\d+)?)\s+(.+)/)
+      const quantity = qm ? Number(qm[1]) : 1
+      const desc = qm ? qm[2] : itLower
+      if (desc.length < 3) continue
+
+      const matched = findInventoryMatch(desc, inventoryItems)
+      // If we already imported this inventory match in strategy 1, skip
+      if (matched && existingItemIds.has(matched.id)) continue
+
+      await supabase.from('property_materials').insert({
+        contact_id: appt.contact_id || null,
+        property_address: appt.service_address || null,
+        inventory_item_id: matched?.id || null,
+        item_name: matched?.name || desc,
+        category: matched?.category || categorizeByKeyword(desc),
+        quantity,
+        unit: matched?.unit || 'each',
+        unit_cost: matched?.unit_cost || null,
+        source: 'calendar',
+        calendar_event_id: appt.id,
+        date_used: dateUsed,
+        notes: `From appointment notes: ${appt.customer_name}`,
+      })
+
+      imported++
+      existingNames.add(itLower)
+      if (matched) existingItemIds.add(matched.id)
+    }
+  }
+
+  return imported
+}
+
+/** Heuristic — look 0-30 chars before/after the item name for a quantity number */
+function extractQuantityNear(notesLower: string, nameLower: string): number {
+  const idx = notesLower.indexOf(nameLower)
+  if (idx < 0) return 1
+  const window = notesLower.slice(Math.max(0, idx - 20), Math.min(notesLower.length, idx + nameLower.length + 20))
+  const m = window.match(/(\d+(?:\.\d+)?)\s*(?:x\s*)?/)
+  if (!m) return 1
+  const q = Number(m[1])
+  // Sanity: avoid grabbing zip codes / years
+  if (q > 100 || q < 1) return 1
+  return q
 }
 
 /** Fallback category detection from description keywords */

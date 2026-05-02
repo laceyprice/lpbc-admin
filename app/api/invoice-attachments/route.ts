@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 export const dynamic = 'force-dynamic'
 import { createServerClient } from '@/lib/supabase'
+import { signedUrlFor } from '@/lib/signed-url'
 
 const BUCKET = 'bookkeeping-images'
 
@@ -17,22 +18,22 @@ export async function GET(req: NextRequest) {
   const { data, error } = await supabase.storage.from(BUCKET).list(folder, { sortBy: { column: 'created_at', order: 'desc' } })
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-  const files = (data || [])
+  const files = await Promise.all((data || [])
     .filter(f => f.name !== '.emptyFolderPlaceholder')
-    .map(f => {
+    .map(async f => {
       const filePath = `${folder}/${f.name}`
-      const { data: urlData } = supabase.storage.from(BUCKET).getPublicUrl(filePath)
+      const url = await signedUrlFor(supabase, BUCKET, filePath)
       // Extract the type prefix from filename: "check_..." or "receipt_..."
       const docType = f.name.startsWith('check_') ? 'check' : 'receipt'
       return {
         name: f.name,
         path: filePath,
-        url: urlData.publicUrl,
+        url: url || '',
         doc_type: docType,
         created_at: f.created_at,
         size: (f.metadata as any)?.size || null,
       }
-    })
+    }))
 
   return NextResponse.json(files)
 }
@@ -65,12 +66,12 @@ export async function POST(req: NextRequest) {
     .upload(filePath, buf, { contentType: file.type || undefined, upsert: false })
   if (upErr) return NextResponse.json({ error: `Upload failed: ${upErr.message}` }, { status: 500 })
 
-  const { data: urlData } = supabase.storage.from(BUCKET).getPublicUrl(filePath)
+  const signedNow = await signedUrlFor(supabase, BUCKET, filePath)
 
   return NextResponse.json({
     name: `${docType}_${stamp}_${rand}.${ext}`,
     path: filePath,
-    url: urlData.publicUrl,
+    url: signedNow || '',
     doc_type: docType,
   }, { status: 201 })
 }

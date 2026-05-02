@@ -3,19 +3,20 @@ import { useState } from 'react'
 import Image from 'next/image'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { LayoutDashboard, Users, FileText, BookOpen, Calendar, ClipboardList, LogOut, Menu, X, Receipt, BarChart3, ListTree, UserCog, Sparkles, MapPin, ShieldCheck, Package } from 'lucide-react'
+import { LayoutDashboard, Users, FileText, BookOpen, Calendar, ClipboardList, LogOut, Menu, X, Receipt, BarChart3, ListTree, UserCog, Sparkles, MapPin, ShieldCheck, Package, FileCheck } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/components/admin/AdminAuthGuard'
 
 const nav = [
   { href: '/admin', label: 'Dashboard', icon: LayoutDashboard, exact: true, roles: ['admin', 'bookkeeper', 'invoicing'] },
-  { href: '/admin/crm', label: 'CRM / Contacts', icon: Users, roles: ['admin', 'bookkeeper', 'invoicing'] },
+  { href: '/admin/crm', label: 'CRM / Email', icon: Users, roles: ['admin', 'bookkeeper', 'invoicing'] },
   { href: '/admin/invoices', label: 'Invoices & Quotes', icon: FileText, roles: ['admin', 'bookkeeper', 'invoicing'] },
   { href: '/admin/calendar', label: 'Calendar', icon: Calendar, roles: ['admin', 'bookkeeper'] },
-  { href: '/admin/todo', label: 'AI Todo List', icon: Sparkles, roles: ['admin', 'bookkeeper', 'invoicing'] },
+  { href: '/admin/todo', label: 'Todo List', icon: Sparkles, roles: ['admin', 'bookkeeper', 'invoicing'] },
   { href: '/admin/schedule-requests', label: 'Schedule Requests', icon: ClipboardList, roles: ['admin', 'bookkeeper'] },
   { href: '/admin/worksites', label: 'Worksites', icon: MapPin, roles: ['admin', 'bookkeeper'] },
   { href: '/admin/inventory', label: 'Materials & Inventory', icon: Package, roles: ['admin', 'bookkeeper'] },
+  { href: '/admin/permits', label: 'Permits / Licensing', icon: FileCheck, roles: ['admin', 'bookkeeper'], matches: ['/admin/permits', '/admin/licensing'] },
   { href: '/admin/bookkeeping', label: 'Bookkeeping', icon: BookOpen, roles: ['admin', 'bookkeeper'] },
   { href: '/admin/reports', label: 'Reports', icon: BarChart3, roles: ['admin', 'bookkeeper'] },
   { href: '/admin/documents', label: 'Documents / COIs', icon: ShieldCheck, roles: ['admin', 'bookkeeper'] },
@@ -36,19 +37,23 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const visibleNav = nav.filter(n => !role || n.roles.includes(role))
 
   return (
-    <div className="flex flex-col h-full" style={{ background: 'linear-gradient(180deg, #1f2a2e 0%, #2f5a5e 100%)' }}>
+    <div className="flex flex-col h-full" style={{ background: 'linear-gradient(180deg, #1a4a6b 0%, #185FA5 100%)' }}>
       <div className="flex items-center gap-3 px-5 py-5 border-b border-white/10">
         <div className="w-10 h-10 bg-white rounded-full flex items-center justify-center flex-shrink-0">
-          <Image src="/logo.png" alt="LPBC Admin" width={28} height={28} className="object-contain" />
+          <Image src="/logo.png" alt="The Gasologist" width={28} height={28} className="object-contain" />
         </div>
         <div>
-          <div className="text-white font-bold text-sm">LPBC Admin</div>
+          <div className="text-white font-bold text-sm">The Gasologist</div>
           <div className="text-xs" style={{ color: 'rgba(255,255,255,0.45)' }}>Admin Portal</div>
         </div>
       </div>
       <nav className="flex-1 px-2 py-4 space-y-0.5 overflow-y-auto">
-        {visibleNav.map(({ href, label, icon: Icon, exact }) => {
-          const active = exact ? pathname === href : pathname.startsWith(href)
+        {visibleNav.map(({ href, label, icon: Icon, exact, matches }: any) => {
+          const active = exact
+            ? pathname === href
+            : matches
+              ? matches.some((m: string) => pathname.startsWith(m))
+              : pathname.startsWith(href)
           return (
             <Link key={href} href={href} onClick={onNavigate}
               className={`flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all text-sm font-medium ${active ? 'text-white' : 'hover:text-white hover:bg-white/10'}`}
@@ -78,7 +83,7 @@ export default function AdminSidebar() {
       <aside className="hidden md:flex flex-col w-60 flex-shrink-0">
         <SidebarContent />
       </aside>
-      <div className="md:hidden fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-4 py-3 shadow-md" style={{ background: '#1f2a2e' }}>
+      <div className="md:hidden fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-4 py-3 shadow-md" style={{ background: '#1a4a6b' }}>
         <div className="flex items-center gap-2">
           <div className="w-8 h-8 bg-white rounded-full flex items-center justify-center flex-shrink-0">
             <Image src="/logo.png" alt="" width={22} height={22} className="object-contain" />

@@ -14,11 +14,11 @@ export async function GET(req: NextRequest) {
     ? '*, receipt_image:transaction_images!bank_transactions_receipt_image_id_fkey(id, file_url, file_name, image_type), check_image:transaction_images!bank_transactions_check_image_id_fkey(id, file_url, file_name, image_type)'
     : '*'
 
-  const { data, error } = await supabase
-    .from(table)
-    .select(selectExpr)
-    .order('transaction_date', { ascending: false })
+  const accountId = req.nextUrl.searchParams.get('account_id')
+  let query = supabase.from(table).select(selectExpr).order('transaction_date', { ascending: false })
+  if (accountId) query = query.eq('financial_account_id', accountId)
 
+  const { data, error } = await query
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json(data)
 }
@@ -29,7 +29,7 @@ export async function POST(req: NextRequest) {
 
   if (action === 'csv-import') {
     const body = await req.json()
-    const { transactions, importBatchId } = body
+    const { transactions, importBatchId, financial_account_id } = body
 
     if (!Array.isArray(transactions)) return NextResponse.json({ error: 'Invalid transactions' }, { status: 400 })
 
@@ -57,6 +57,7 @@ export async function POST(req: NextRequest) {
           check_number: t.Check || t.check || t['Check Number'] || t['Check #'] || null,
           notes: t.Notes || t.notes || null,
           source: importBatchId || 'csv_import',
+          financial_account_id: financial_account_id || null,
         }
       })
       .filter((r: any) => r.description)

@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useState, useRef } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { Plus, Search, Send, CheckCircle, FileText, Loader2, X, Save, Edit3, Trash2, Upload, Camera, Receipt, FileImage, BarChart2, TrendingUp, DollarSign, Clock, AlertCircle } from 'lucide-react'
+import { Plus, Search, Send, CheckCircle, FileText, Loader2, X, Save, Edit3, Trash2, Upload, Camera, Receipt, FileImage, BarChart2, TrendingUp, DollarSign, Clock, AlertCircle, ExternalLink } from 'lucide-react'
 import { formatCurrency, formatDateShort, formatPhone, generateDocNumber } from '@/lib/utils'
 
 interface InvoiceAttachment {
@@ -14,13 +14,14 @@ interface InvoiceAttachment {
 }
 
 interface Contact { id: string; first_name: string; last_name: string; email: string; phone: string; address: string }
-interface Invoice { id: string; invoice_number: string; invoice_type: string; customer_name: string; customer_email: string; customer_phone: string; job_address: string; service_date: string; service_type: string; service_description: string; amount_due: number; amount_paid: number; invoice_status: string; payment_type: string; stripe_payment_link: string; contact_id: string; created_at: string; paid_at: string }
+interface Invoice { id: string; invoice_number: string; invoice_type: string; customer_name: string; customer_email: string; customer_phone: string; job_address: string; service_date: string; service_type: string; service_description: string; amount_due: number; amount_paid: number; invoice_status: string; payment_type: string; stripe_payment_link: string; contact_id: string; created_at: string; paid_at: string; sent_at?: string; last_sent_at?: string }
 
 const SC: Record<string, string> = { draft:'bg-gray-100 text-gray-600', sent:'bg-blue-100 text-blue-700', paid:'bg-green-100 text-green-700', overdue:'bg-red-100 text-red-700', approved:'bg-emerald-100 text-emerald-700' }
 const SERVICES = ['Service Call','Gas Line Installation','Gas Appliance Connection','Gas Leak Detection','Emergency Repair','Rough-In','Trim-Out','Retrofit','Appliance Installation','Appliance Repair','Pool/Spa Heater','Outdoor Kitchen','Generator Connection','Safety Inspection','Pressure Testing','Inspection & Compliance','Other']
 
 export default function InvoicesPage() {
   const [invoices, setInvoices] = useState<Invoice[]>([])
+  const [allInvoices, setAllInvoices] = useState<Invoice[]>([]) // unfiltered — for header totals
   const [contacts, setContacts] = useState<Contact[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
@@ -41,6 +42,8 @@ export default function InvoicesPage() {
   const attachCameraRef = useRef<HTMLInputElement>(null)
   const attachFileRef = useRef<HTMLInputElement>(null)
   const [showReport, setShowReport] = useState(false)
+  const [sortCol, setSortCol] = useState<'invoice_number' | 'service_date'>('invoice_number')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
 
   const searchParams = useSearchParams()
 
@@ -74,9 +77,16 @@ export default function InvoicesPage() {
 
   async function loadInvoices() {
     setLoading(true)
-    const res = await fetch(`/api/invoices?type=${typeFilter}`)
-    const d = await res.json()
+    // Load both type-filtered list (for the table) and the full unfiltered list
+    // (for the header totals — they should never change as you toggle filters).
+    const [resTyped, resAll] = await Promise.all([
+      fetch(`/api/invoices?type=${typeFilter}`),
+      fetch('/api/invoices'),
+    ])
+    const d = await resTyped.json()
+    const dAll = await resAll.json()
     setInvoices(Array.isArray(d) ? d : [])
+    setAllInvoices(Array.isArray(dAll) ? dAll : [])
     setLoading(false)
   }
   async function loadContacts() {
@@ -114,19 +124,29 @@ export default function InvoicesPage() {
     return ''
   }
 
-  async function saveForm() {
+  async function saveForm(forceDraft = false) {
     const err = validateForm()
-    if (err) { setFormError(err); return }
-    setFormError('')
+    const isDraft = forceDraft || !!err
+    if (isDraft) {
+      // Missing required fields — save as draft with a notice
+      setFormError(err ? `Saved as draft — ${err}` : '')
+    } else {
+      setFormError('')
+    }
     setSaving(true)
     try {
-      const method = (form as any).id ? 'PATCH' : 'POST'
-      const body = (form as any).id ? { id:(form as any).id, ...form } : form
+      const payload = {
+        ...form,
+        ...(isDraft ? { invoice_status: 'draft' } : {}),
+      }
+      const method = (payload as any).id ? 'PATCH' : 'POST'
+      const body = (payload as any).id ? { id:(payload as any).id, ...payload } : payload
       const res = await fetch('/api/invoices', { method, headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) })
       if (res.ok) {
         await loadInvoices()
         setShowForm(false)
         setForm({ invoice_type: typeFilter })
+        setFormError('')
       } else {
         const j = await res.json().catch(() => ({}))
         setFormError(j.error || 'Failed to save. Please try again.')
@@ -134,7 +154,14 @@ export default function InvoicesPage() {
     } finally { setSaving(false) }
   }
 
-  async function sendInvoice(id: string) {
+  async function sendInvoice(id: string, skipConfirm = false) {
+    const inv = invoices.find(i => i.id === id)
+    if (!skipConfirm && inv && (inv.invoice_status === 'sent' || inv.invoice_status === 'paid' || inv.last_sent_at || inv.sent_at)) {
+      const label = inv.invoice_type === 'quote' ? 'quote' : 'invoice'
+      const lastSent = inv.last_sent_at || inv.sent_at
+      const sentDate = lastSent ? ` on ${formatDateShort(lastSent)}` : ''
+      if (!confirm(`This ${label} has already been sent${sentDate}. Are you sure you want to resend it?`)) return
+    }
     setSending(id)
     try { const res = await fetch('/api/send-invoice', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({invoiceId:id}) }); if (res.ok) await loadInvoices() }
     finally { setSending(null) }
@@ -155,6 +182,22 @@ export default function InvoicesPage() {
       id: inv.id,
       invoice_status: 'approved',
     })})
+    await loadInvoices(); setSelected(null)
+  }
+
+  async function markSent(inv: Invoice) {
+    const now = new Date().toISOString()
+    // Don't downgrade paid/approved invoices — just stamp the sent timestamps so
+    // the "Sent" badge appears alongside the existing status.
+    const payload: Record<string, any> = {
+      id: inv.id,
+      sent_at: inv.sent_at || now,
+      last_sent_at: now,
+    }
+    if (inv.invoice_status !== 'paid' && inv.invoice_status !== 'approved') {
+      payload.invoice_status = 'sent'
+    }
+    await fetch('/api/invoices', { method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)})
     await loadInvoices(); setSelected(null)
   }
 
@@ -236,9 +279,43 @@ export default function InvoicesPage() {
     loadAttachments(inv.id)
   }
 
-  const filtered = invoices.filter(i => (filter === 'all' || i.invoice_status === filter) && (!search || `${i.invoice_number} ${i.customer_name} ${i.job_address}`.toLowerCase().includes(search.toLowerCase())))
-  const totalDue = filtered.filter(i => i.invoice_status !== 'paid').reduce((s, i) => s + Math.max(0, (i.amount_due||0) - (i.amount_paid||0)), 0)
-  const totalPaid = filtered.reduce((s, i) => s + (i.amount_paid||0), 0)
+  function toggleSort(col: 'invoice_number' | 'service_date') {
+    if (sortCol === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+    else { setSortCol(col); setSortDir('desc') }
+  }
+
+  function extractInvNum(n: string): number {
+    const m = n.match(/(\d+)\s*$/)
+    return m ? parseInt(m[1], 10) : 0
+  }
+
+  const filtered = invoices
+    .filter(i => {
+      const matchesFilter =
+        filter === 'all' ? true :
+        filter === 'unpaid' ? (i.invoice_status !== 'paid' && i.invoice_status !== 'draft') :
+        i.invoice_status === filter
+      const matchesSearch = !search || `${i.invoice_number} ${i.customer_name} ${i.job_address}`.toLowerCase().includes(search.toLowerCase())
+      return matchesFilter && matchesSearch
+    })
+    .sort((a, b) => {
+      let cmp = 0
+      if (sortCol === 'invoice_number') {
+        cmp = extractInvNum(a.invoice_number) - extractInvNum(b.invoice_number)
+      } else {
+        const ad = a.service_date || a.created_at || ''
+        const bd = b.service_date || b.created_at || ''
+        cmp = ad < bd ? -1 : ad > bd ? 1 : 0
+      }
+      return sortDir === 'asc' ? cmp : -cmp
+    })
+  // Header totals are computed from the FULL unfiltered set so they remain
+  // stable as you switch between Invoices/Quotes and All/Draft/Unpaid filters.
+  // Quotes are excluded since they aren't "billed" until converted to invoices.
+  const headerSet = allInvoices.filter(i => i.invoice_type !== 'quote')
+  const totalBilled = headerSet.reduce((s, i) => s + (i.amount_due||0), 0)
+  const totalDue = headerSet.filter(i => i.invoice_status !== 'paid' && i.invoice_status !== 'cancelled').reduce((s, i) => s + Math.max(0, (i.amount_due||0) - (i.amount_paid||0)), 0)
+  const totalPaid = headerSet.reduce((s, i) => s + (i.amount_paid||0), 0)
 
   const inputCls = 'w-full px-3 py-2.5 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:border-blue-400'
 
@@ -247,7 +324,7 @@ export default function InvoicesPage() {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-extrabold text-gray-900">Invoices & Quotes</h1>
-          <p className="text-gray-500 text-sm mt-0.5">Outstanding: {formatCurrency(totalDue)} · Collected: {formatCurrency(totalPaid)}</p>
+          <p className="text-gray-500 text-sm mt-0.5">Total Billed: {formatCurrency(totalBilled)} · Outstanding: {formatCurrency(totalDue)} · Collected: {formatCurrency(totalPaid)}</p>
         </div>
         <div className="flex gap-2">
           <button onClick={() => setShowReport(true)}
@@ -264,7 +341,7 @@ export default function InvoicesPage() {
               setShowContactDropdown(false)
               setShowForm(true)
             }}
-            className="flex items-center gap-2 text-white font-semibold px-4 py-2.5 rounded-xl shadow-md" style={{ background:'#b8895a' }}>
+            className="flex items-center gap-2 text-white font-semibold px-4 py-2.5 rounded-xl shadow-md" style={{ background:'#185FA5' }}>
             <Plus size={15} /> New {typeFilter === 'quote' ? 'Quote' : 'Invoice'}
           </button>
         </div>
@@ -275,14 +352,14 @@ export default function InvoicesPage() {
           {['invoice','quote'].map(t => (
             <button key={t} onClick={() => setTypeFilter(t)}
               className={`px-4 py-2 rounded-lg text-sm font-semibold capitalize transition-all ${typeFilter===t ? 'bg-white shadow-sm' : 'text-gray-500'}`}
-              style={{ color: typeFilter===t ? '#b8895a' : undefined }}>{t}s</button>
+              style={{ color: typeFilter===t ? '#185FA5' : undefined }}>{t}s</button>
           ))}
         </div>
-        <div className="flex bg-gray-100 rounded-xl p-1 gap-1 flex-wrap">
-          {['all','draft','sent','approved','paid','overdue'].map(s => (
+        <div className="flex bg-gray-100 rounded-xl p-1 gap-1">
+          {['all','draft','unpaid'].map(s => (
             <button key={s} onClick={() => setFilter(s)}
               className={`px-3 py-1.5 rounded-lg text-xs font-semibold capitalize transition-all ${filter===s ? 'bg-white shadow-sm' : 'text-gray-500'}`}
-              style={{ color: filter===s ? '#b8895a' : undefined }}>{s}</button>
+              style={{ color: filter===s ? '#185FA5' : undefined }}>{s}</button>
           ))}
         </div>
         <div className="relative flex-1 min-w-44">
@@ -296,22 +373,42 @@ export default function InvoicesPage() {
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead><tr className="bg-gray-50 border-b border-gray-100">
-              {['#','Date','Customer','Address','Service','Amount','Status','Actions'].map(h => (
+              <th className="text-left px-5 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider">
+                <button onClick={() => toggleSort('invoice_number')} className="flex items-center gap-1 hover:text-gray-900 transition-colors">
+                  # {sortCol === 'invoice_number' ? (sortDir === 'desc' ? '↓' : '↑') : <span className="opacity-30">↕</span>}
+                </button>
+              </th>
+              <th className="text-left px-5 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider">
+                <button onClick={() => toggleSort('service_date')} className="flex items-center gap-1 hover:text-gray-900 transition-colors">
+                  Date {sortCol === 'service_date' ? (sortDir === 'desc' ? '↓' : '↑') : <span className="opacity-30">↕</span>}
+                </button>
+              </th>
+              {['Customer','Address','Service','Amount','Status','Actions'].map(h => (
                 <th key={h} className="text-left px-5 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider">{h}</th>
               ))}
             </tr></thead>
             <tbody className="divide-y divide-gray-50">
-              {loading ? <tr><td colSpan={8} className="text-center py-12"><Loader2 size={22} className="animate-spin mx-auto" style={{ color:'#b8895a' }} /></td></tr>
+              {loading ? <tr><td colSpan={8} className="text-center py-12"><Loader2 size={22} className="animate-spin mx-auto" style={{ color:'#185FA5' }} /></td></tr>
                 : filtered.length === 0 ? <tr><td colSpan={8} className="text-center py-12 text-gray-400 text-sm">No invoices found</td></tr>
                 : filtered.map(inv => (
                   <tr key={inv.id} onClick={() => openDetail(inv)} className="hover:bg-gray-50 cursor-pointer transition-colors">
                     <td className="px-5 py-3.5 font-mono text-xs text-gray-600">{inv.invoice_number}</td>
-                    <td className="px-5 py-3.5 text-gray-500 text-xs whitespace-nowrap">{formatDateShort(inv.created_at)}</td>
+                    <td className="px-5 py-3.5 text-gray-500 text-xs whitespace-nowrap">{formatDateShort(inv.service_date || inv.created_at)}</td>
                     <td className="px-5 py-3.5"><div className="font-semibold text-gray-900">{inv.customer_name}</div><div className="text-gray-500 text-xs">{inv.customer_email}</div></td>
                     <td className="px-5 py-3.5 text-gray-600 text-xs truncate max-w-40">{inv.job_address || '—'}</td>
                     <td className="px-5 py-3.5 text-gray-600 text-xs">{inv.service_type || '—'}</td>
                     <td className="px-5 py-3.5 font-bold text-gray-900">{formatCurrency(inv.amount_due)}</td>
-                    <td className="px-5 py-3.5"><span className={`text-xs font-semibold px-2 py-1 rounded-full capitalize ${SC[inv.invoice_status]||'bg-gray-100 text-gray-600'}`}>{inv.invoice_status}</span></td>
+                    <td className="px-5 py-3.5">
+                      <div className="flex items-center gap-1 flex-wrap">
+                        <span className={`text-xs font-semibold px-2 py-1 rounded-full capitalize ${SC[inv.invoice_status]||'bg-gray-100 text-gray-600'}`}>{inv.invoice_status}</span>
+                        {inv.invoice_status === 'paid' && (inv.last_sent_at || inv.sent_at) && (
+                          <span className="text-xs font-semibold px-2 py-1 rounded-full bg-blue-100 text-blue-700">Sent</span>
+                        )}
+                        {inv.invoice_status === 'sent' && inv.paid_at && (
+                          <span className="text-xs font-semibold px-2 py-1 rounded-full bg-green-100 text-green-700">Paid</span>
+                        )}
+                      </div>
+                    </td>
                     <td className="px-5 py-3.5">
                       <div className="flex gap-1.5" onClick={e => e.stopPropagation()}>
                         <button onClick={() => sendInvoice(inv.id)} disabled={!!sending} title={inv.invoice_status === 'sent' ? 'Resend' : 'Send'}
@@ -324,6 +421,12 @@ export default function InvoicesPage() {
                             <CheckCircle size={13} />
                           </button>
                         )}
+                        {!inv.sent_at && !inv.last_sent_at && inv.invoice_status !== 'sent' && inv.invoice_type !== 'quote' && (
+                          <button onClick={() => markSent(inv)} title="Mark as sent"
+                            className="p-1.5 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-100 transition-colors">
+                            <Send size={13} />
+                          </button>
+                        )}
                         {inv.invoice_status !== 'paid' && inv.invoice_type !== 'quote' && (
                           <button onClick={() => markPaid(inv)} title="Mark paid"
                             className="p-1.5 rounded-lg bg-green-50 text-green-600 hover:bg-green-100 transition-colors">
@@ -331,6 +434,10 @@ export default function InvoicesPage() {
                           </button>
                         )}
                         <button onClick={() => { setForm({...inv}); loadAttachments(inv.id); setShowForm(true) }} className="p-1.5 rounded-lg bg-gray-50 text-gray-600 hover:bg-gray-100 transition-colors"><FileText size={13} /></button>
+                        <a href={`/api/invoice-pdf?id=${inv.invoice_number}`} target="_blank" rel="noreferrer" title="View PDF"
+                          className="p-1.5 rounded-lg bg-orange-50 text-orange-600 hover:bg-orange-100 transition-colors">
+                          <ExternalLink size={13} />
+                        </a>
                       </div>
                     </td>
                   </tr>
@@ -346,7 +453,15 @@ export default function InvoicesPage() {
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl max-h-[90vh] overflow-y-auto">
             <div className="sticky top-0 bg-white px-6 py-4 border-b border-gray-100 flex items-center justify-between">
               <div><h2 className="text-lg font-bold text-gray-900">{selected.invoice_type === 'quote' ? 'Quote' : 'Invoice'} #{selected.invoice_number}</h2>
-                <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${SC[selected.invoice_status]||''}`}>{selected.invoice_status}</span></div>
+                <div className="flex items-center gap-1 mt-1">
+                  <span className={`text-xs font-semibold px-2 py-0.5 rounded-full capitalize ${SC[selected.invoice_status]||''}`}>{selected.invoice_status}</span>
+                  {selected.invoice_status === 'paid' && (selected.last_sent_at || selected.sent_at) && (
+                    <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">Sent</span>
+                  )}
+                  {selected.invoice_status === 'sent' && selected.paid_at && (
+                    <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-green-100 text-green-700">Paid</span>
+                  )}
+                </div></div>
               <button onClick={() => setSelected(null)}><X size={18} className="text-gray-400" /></button>
             </div>
             <div className="p-6 space-y-3 text-sm">
@@ -356,10 +471,10 @@ export default function InvoicesPage() {
                 ))}
               </div>
               {selected.service_description && <div className="bg-gray-50 rounded-xl p-3"><div className="text-xs text-gray-500 mb-1">Description</div><div className="text-gray-700">{selected.service_description}</div></div>}
-              {selected.stripe_payment_link && <a href={selected.stripe_payment_link} target="_blank" className="block text-center text-white py-2.5 rounded-xl font-semibold" style={{ background:'#b8895a' }}>View Payment Link ↗</a>}
+              {selected.stripe_payment_link && <a href={selected.stripe_payment_link} target="_blank" className="block text-center text-white py-2.5 rounded-xl font-semibold" style={{ background:'#185FA5' }}>View Payment Link ↗</a>}
               <div className="flex gap-3 pt-2">
-                <button onClick={() => { sendInvoice(selected.id); setSelected(null) }} className="flex-1 flex items-center justify-center gap-2 text-white py-2.5 rounded-xl font-semibold" style={{ background:'#2563eb' }}>
-                  <Send size={14} />{selected.invoice_status === 'sent' || selected.invoice_status === 'approved' ? 'Resend' : 'Send'} {selected.invoice_type === 'quote' ? 'Quote' : 'Invoice'}
+                <button onClick={async () => { await sendInvoice(selected.id); setSelected(null) }} className="flex-1 flex items-center justify-center gap-2 text-white py-2.5 rounded-xl font-semibold" style={{ background:'#2563eb' }}>
+                  <Send size={14} />{selected.invoice_status === 'sent' || selected.invoice_status === 'approved' || selected.last_sent_at || selected.sent_at ? 'Resend' : 'Send'} {selected.invoice_type === 'quote' ? 'Quote' : 'Invoice'}
                 </button>
                 {selected.invoice_status !== 'paid' && selected.invoice_status !== 'approved' && (
                   selected.invoice_type === 'quote' ? (
@@ -367,6 +482,9 @@ export default function InvoicesPage() {
                   ) : (
                     <button onClick={() => markPaid(selected)} className="flex-1 flex items-center justify-center gap-2 text-white py-2.5 rounded-xl font-semibold" style={{ background:'#16a34a' }}><CheckCircle size={14} />Mark Paid</button>
                   )
+                )}
+                {!selected.sent_at && !selected.last_sent_at && selected.invoice_status !== 'sent' && selected.invoice_type !== 'quote' && (
+                  <button onClick={() => markSent(selected)} className="flex-1 flex items-center justify-center gap-2 text-white py-2.5 rounded-xl font-semibold" style={{ background:'#2563eb' }}><Send size={14} />Mark as Sent</button>
                 )}
               </div>
               {selected.invoice_type === 'quote' && (
@@ -401,7 +519,7 @@ export default function InvoicesPage() {
 
                 {/* Uploaded files list */}
                 {attachLoading ? (
-                  <div className="flex justify-center py-4"><Loader2 size={16} className="animate-spin" style={{ color:'#b8895a' }} /></div>
+                  <div className="flex justify-center py-4"><Loader2 size={16} className="animate-spin" style={{ color:'#185FA5' }} /></div>
                 ) : attachments.length === 0 ? (
                   <p className="text-xs text-gray-400 text-center py-3">No attachments yet</p>
                 ) : (
@@ -411,7 +529,7 @@ export default function InvoicesPage() {
                         <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${att.doc_type === 'receipt' ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'}`}>
                           {att.doc_type === 'receipt' ? 'Receipt' : 'Check'}
                         </span>
-                        <a href={att.url} target="_blank" rel="noreferrer" className="flex-1 flex items-center gap-1.5 text-xs font-medium truncate hover:underline" style={{ color:'#b8895a' }}>
+                        <a href={att.url} target="_blank" rel="noreferrer" className="flex-1 flex items-center gap-1.5 text-xs font-medium truncate hover:underline" style={{ color:'#185FA5' }}>
                           {att.doc_type === 'receipt' ? <Receipt size={13} /> : <FileImage size={13} />}
                           {att.name}
                         </a>
@@ -422,8 +540,12 @@ export default function InvoicesPage() {
                 )}
               </div>
 
+              <a href={`/api/invoice-pdf?id=${selected.invoice_number}`} target="_blank" rel="noreferrer"
+                className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl font-semibold border-2 border-orange-200 text-orange-600 hover:bg-orange-50 transition-colors">
+                <ExternalLink size={14} />View / Print PDF
+              </a>
               <div className="flex gap-3 pt-1">
-                <button onClick={() => { setForm({...selected}); loadAttachments(selected.id); setShowForm(true); setSelected(null) }} className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl font-semibold border-2 hover:bg-blue-50 transition-colors" style={{ borderColor:'#b8895a', color:'#b8895a' }}><Edit3 size={14} />Edit</button>
+                <button onClick={() => { setForm({...selected}); loadAttachments(selected.id); setShowForm(true); setSelected(null) }} className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl font-semibold border-2 hover:bg-blue-50 transition-colors" style={{ borderColor:'#185FA5', color:'#185FA5' }}><Edit3 size={14} />Edit</button>
                 <button onClick={() => deleteInvoice(selected.id)} className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl font-semibold border-2 border-red-200 text-red-600 hover:bg-red-50 transition-colors"><Trash2 size={14} />Delete</button>
               </div>
             </div>
@@ -484,7 +606,7 @@ export default function InvoicesPage() {
         const maxMonthlyBilled = Math.max(...monthlyRows.map(([, v]) => v.billed), 1)
         const monthLabels: Record<string, string> = { '01':'Jan','02':'Feb','03':'Mar','04':'Apr','05':'May','06':'Jun','07':'Jul','08':'Aug','09':'Sep','10':'Oct','11':'Nov','12':'Dec' }
 
-        const statCard = (icon: React.ReactNode, label: string, value: string, sub?: string, color = '#b8895a') => (
+        const statCard = (icon: React.ReactNode, label: string, value: string, sub?: string, color = '#185FA5') => (
           <div className="bg-gray-50 rounded-2xl p-4">
             <div className="flex items-center gap-2 mb-2" style={{ color }}>{icon}<span className="text-xs font-bold uppercase tracking-wider opacity-70">{label}</span></div>
             <div className="text-2xl font-extrabold text-gray-900">{value}</div>
@@ -498,7 +620,7 @@ export default function InvoicesPage() {
               <div className="sticky top-0 bg-white px-6 py-4 border-b border-gray-100 flex items-center justify-between">
                 <div>
                   <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
-                    <BarChart2 size={18} style={{ color:'#b8895a' }} />
+                    <BarChart2 size={18} style={{ color:'#185FA5' }} />
                     {isInvoice ? 'Invoice Report' : 'Quote Report'}
                   </h2>
                   <p className="text-xs text-gray-400 mt-0.5">{all.length} {isInvoice ? 'invoice' : 'quote'}{all.length !== 1 ? 's' : ''} total</p>
@@ -550,7 +672,7 @@ export default function InvoicesPage() {
                             <div key={key} className="flex-1 flex flex-col items-center gap-1">
                               <div className="w-full flex items-end gap-0.5 h-24">
                                 <div className="flex-1 rounded-t-md transition-all" style={{ height: `${billedH}%`, background: '#bfdbfe', minHeight: val.billed > 0 ? 4 : 0 }} title={`Billed: ${formatCurrency(val.billed)}`} />
-                                <div className="flex-1 rounded-t-md transition-all" style={{ height: `${collectedH}%`, background: '#b8895a', minHeight: val.collected > 0 ? 4 : 0 }} title={`Collected: ${formatCurrency(val.collected)}`} />
+                                <div className="flex-1 rounded-t-md transition-all" style={{ height: `${collectedH}%`, background: '#185FA5', minHeight: val.collected > 0 ? 4 : 0 }} title={`Collected: ${formatCurrency(val.collected)}`} />
                               </div>
                               <div className="text-xs text-gray-400 font-medium">{monthLabels[month]}</div>
                               {val.count > 0 && <div className="text-xs text-gray-500">{val.count}</div>}
@@ -560,7 +682,7 @@ export default function InvoicesPage() {
                       </div>
                       <div className="flex gap-4 mt-2 text-xs text-gray-500">
                         <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-blue-200 inline-block" />Billed</span>
-                        <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded inline-block" style={{ background:'#b8895a' }} />Collected</span>
+                        <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded inline-block" style={{ background:'#185FA5' }} />Collected</span>
                       </div>
                     </div>
                   </>
@@ -608,7 +730,7 @@ export default function InvoicesPage() {
                             <span className="text-gray-500 ml-2 shrink-0">{formatCurrency(amount)} · {count} job{count !== 1 ? 's' : ''}</span>
                           </div>
                           <div className="bg-gray-100 rounded-full h-2 overflow-hidden">
-                            <div className="h-full rounded-full" style={{ width: `${(amount / maxServiceAmount) * 100}%`, background:'#b8895a' }} />
+                            <div className="h-full rounded-full" style={{ width: `${(amount / maxServiceAmount) * 100}%`, background:'#185FA5' }} />
                           </div>
                         </div>
                       ))}
@@ -741,7 +863,7 @@ export default function InvoicesPage() {
                 <div className="border border-dashed border-gray-200 rounded-2xl p-4">
                   <h3 className="text-sm font-bold text-gray-800 mb-3 flex items-center gap-2"><FileImage size={14} />Check Image</h3>
                   <div className="flex items-center gap-3">
-                    <label className={`flex items-center gap-2 px-4 py-2.5 rounded-xl border border-dashed border-blue-300 text-sm font-semibold cursor-pointer hover:bg-blue-50 transition-all ${attachUploading ? 'opacity-60 cursor-not-allowed' : ''}`} style={{ color:'#b8895a' }}>
+                    <label className={`flex items-center gap-2 px-4 py-2.5 rounded-xl border border-dashed border-blue-300 text-sm font-semibold cursor-pointer hover:bg-blue-50 transition-all ${attachUploading ? 'opacity-60 cursor-not-allowed' : ''}`} style={{ color:'#185FA5' }}>
                       {attachUploading ? <Loader2 size={14} className="animate-spin" /> : <Camera size={14} />}
                       Take Photo
                       <input type="file" accept="image/*" capture="environment" className="hidden" disabled={attachUploading}
@@ -759,7 +881,7 @@ export default function InvoicesPage() {
                       {attachments.filter(a => a.doc_type === 'check').map(att => (
                         <div key={att.path} className="flex items-center gap-3 bg-blue-50 rounded-xl px-3 py-2">
                           <FileImage size={13} className="text-blue-600 shrink-0" />
-                          <a href={att.url} target="_blank" rel="noreferrer" className="flex-1 text-xs font-medium truncate hover:underline" style={{ color:'#b8895a' }}>{att.name}</a>
+                          <a href={att.url} target="_blank" rel="noreferrer" className="flex-1 text-xs font-medium truncate hover:underline" style={{ color:'#185FA5' }}>{att.name}</a>
                           <button onClick={() => deleteAttachment(att.path, (form as any).id)} className="text-gray-400 hover:text-red-500 p-1"><Trash2 size={13} /></button>
                         </div>
                       ))}
@@ -775,14 +897,17 @@ export default function InvoicesPage() {
               )}
 
               {formError && (
-                <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm">{formError}</div>
+                <div className={`px-4 py-3 rounded-xl text-sm border ${formError.startsWith('Saved as draft') ? 'bg-amber-50 border-amber-200 text-amber-700' : 'bg-red-50 border-red-200 text-red-700'}`}>{formError}</div>
               )}
             </div>
-            <div className="px-6 pb-6 flex gap-3">
-              <button onClick={saveForm} disabled={saving} className="flex-1 flex items-center justify-center gap-2 text-white font-bold py-3 rounded-xl disabled:opacity-60" style={{ background:'#b8895a' }}>
+            <div className="px-6 pb-6 flex gap-2">
+              <button onClick={() => saveForm(false)} disabled={saving} className="flex-1 flex items-center justify-center gap-2 text-white font-bold py-3 rounded-xl disabled:opacity-60" style={{ background:'#185FA5' }}>
                 {saving ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />}{saving ? 'Saving...' : `Save ${form.invoice_type==='quote'?'Quote':'Invoice'}`}
               </button>
-              <button onClick={() => setShowForm(false)} className="px-5 py-3 rounded-xl border border-gray-200 text-gray-600 font-semibold">Cancel</button>
+              <button onClick={() => saveForm(true)} disabled={saving} className="flex items-center gap-2 px-4 py-3 rounded-xl border-2 border-gray-200 text-gray-600 font-semibold text-sm hover:bg-gray-50 disabled:opacity-60">
+                <FileText size={14} />Draft
+              </button>
+              <button onClick={() => setShowForm(false)} className="px-4 py-3 rounded-xl border border-gray-200 text-gray-600 font-semibold text-sm">Cancel</button>
             </div>
           </div>
         </div>

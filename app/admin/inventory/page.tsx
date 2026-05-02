@@ -89,7 +89,221 @@ function GasTypeBadge({ t }: { t: string }) {
 }
 
 export default function InventoryPage() {
-  const [tab, setTab] = useState<'inventory' | 'materials' | 'history'>('inventory')
+  const [tab, setTab] = useState<'inventory' | 'materials' | 'suppliers' | 'history'>('inventory')
+
+  // Materials Lists state
+  type MaterialsList = { id: string; name: string; worksite_id?: string | null; property_address?: string | null; customer_name?: string | null; service_type?: string | null; scheduled_date?: string | null; status: string; notes?: string | null; items?: any[] }
+  const [lists, setLists] = useState<MaterialsList[]>([])
+  const [listsLoading, setListsLoading] = useState(false)
+  const [showNewList, setShowNewList] = useState(false)
+  const [newListForm, setNewListForm] = useState<Partial<MaterialsList>>({ status: 'draft' })
+  const [savingList, setSavingList] = useState(false)
+  const [expandedList, setExpandedList] = useState<string | null>(null)
+  const [listItems, setListItems] = useState<Record<string, any[]>>({})
+  const [worksiteOptions, setWorksiteOptions] = useState<any[]>([])
+  const [newItemFor, setNewItemFor] = useState<string | null>(null)
+  const [newItemQty, setNewItemQty] = useState('1')
+  const [newItemId, setNewItemId] = useState('')
+
+  async function loadLists() {
+    setListsLoading(true)
+    try {
+      const res = await fetch('/api/materials-lists')
+      const d = await res.json()
+      setLists(Array.isArray(d) ? d : [])
+    } finally { setListsLoading(false) }
+  }
+
+  async function syncListsFromCalendar() {
+    setSyncing(true)
+    setSyncResult(null)
+    try {
+      const res = await fetch('/api/materials-lists?action=sync-calendar', { method: 'POST' })
+      const ct = res.headers.get('content-type') || ''
+      const raw = await res.text()
+      if (!ct.includes('application/json')) {
+        setSyncResult(`Server returned ${res.status}. The latest image may not be deployed yet.`)
+        return
+      }
+      const d = JSON.parse(raw)
+      if (res.ok) {
+        setSyncResult(`Created ${d.lists_created || 0} lists with ${d.items_added || 0} items from ${d.appointments_scanned || 0} appointments`)
+        await loadLists()
+      } else {
+        setSyncResult(`Error: ${d.error || 'sync failed'}`)
+      }
+    } catch (e: any) {
+      setSyncResult(`Error: ${e.message}`)
+    } finally { setSyncing(false) }
+  }
+
+  async function loadWorksiteOptions() {
+    if (worksiteOptions.length > 0) return
+    const res = await fetch('/api/worksites').catch(() => null)
+    if (res?.ok) {
+      const d = await res.json()
+      setWorksiteOptions(Array.isArray(d) ? d : [])
+    }
+  }
+
+  async function createList() {
+    if (!newListForm.name) return
+    setSavingList(true)
+    try {
+      const res = await fetch('/api/materials-lists', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newListForm),
+      })
+      if (res.ok) {
+        await loadLists()
+        setShowNewList(false)
+        setNewListForm({ status: 'draft' })
+      }
+    } finally { setSavingList(false) }
+  }
+
+  async function deleteList(id: string) {
+    if (!confirm('Delete this materials list and all its items?')) return
+    await fetch(`/api/materials-lists?id=${id}`, { method: 'DELETE' })
+    await loadLists()
+  }
+
+  async function expandList(id: string) {
+    if (expandedList === id) {
+      setExpandedList(null)
+      return
+    }
+    if (!listItems[id]) {
+      const res = await fetch(`/api/materials-lists?id=${id}`)
+      const d = await res.json()
+      setListItems(prev => ({ ...prev, [id]: d.items || [] }))
+    }
+    setExpandedList(id)
+    setNewItemFor(id)
+  }
+
+  async function addItemToList(listId: string) {
+    if (!newItemId) return
+    const item = items.find(i => i.id === newItemId)
+    if (!item) return
+    await fetch('/api/materials-lists?action=add-item', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        list_id: listId,
+        inventory_item_id: item.id,
+        item_name: item.name,
+        category: item.category,
+        unit: item.unit,
+        unit_cost: item.unit_cost || null,
+        supplier: item.supplier || null,
+        quantity_needed: Number(newItemQty) || 1,
+      }),
+    })
+    // Refresh items
+    const res = await fetch(`/api/materials-lists?id=${listId}`)
+    const d = await res.json()
+    setListItems(prev => ({ ...prev, [listId]: d.items || [] }))
+    setNewItemId('')
+    setNewItemQty('1')
+    await loadLists() // refresh count badges
+  }
+
+  async function toggleItemFulfilled(listId: string, itemId: string, fulfilled: boolean) {
+    await fetch('/api/materials-lists?action=item', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: itemId, fulfilled }),
+    })
+    setListItems(prev => ({
+      ...prev,
+      [listId]: (prev[listId] || []).map(it => it.id === itemId ? { ...it, fulfilled } : it),
+    }))
+  }
+
+  async function deleteListItem(listId: string, itemId: string) {
+    await fetch(`/api/materials-lists?item_id=${itemId}`, { method: 'DELETE' })
+    setListItems(prev => ({ ...prev, [listId]: (prev[listId] || []).filter(it => it.id !== itemId) }))
+    await loadLists()
+  }
+
+  // Suppliers state
+  type Supplier = { id: string; name: string; contact_name?: string; contact_email?: string; contact_phone?: string; website?: string; account_number?: string; address?: string; notes?: string; items?: any[]; is_active?: boolean }
+  const [suppliers, setSuppliers] = useState<Supplier[]>([])
+  const [suppliersLoading, setSuppliersLoading] = useState(false)
+  const [showAddSupplier, setShowAddSupplier] = useState(false)
+  const [editSupplier, setEditSupplier] = useState<Supplier | null>(null)
+  const [supplierForm, setSupplierForm] = useState<Partial<Supplier>>({})
+  const [savingSupplier, setSavingSupplier] = useState(false)
+  const [expandedSupplier, setExpandedSupplier] = useState<string | null>(null)
+  const [supplierItems, setSupplierItems] = useState<Record<string, any[]>>({})
+
+  async function loadSuppliers() {
+    setSuppliersLoading(true)
+    const res = await fetch('/api/suppliers')
+    const d = await res.json()
+    setSuppliers(Array.isArray(d) ? d : [])
+    setSuppliersLoading(false)
+  }
+
+  async function saveSupplier() {
+    setSavingSupplier(true)
+    try {
+      if (editSupplier) {
+        await fetch('/api/suppliers', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: editSupplier.id, ...supplierForm }),
+        })
+      } else {
+        await fetch('/api/suppliers', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(supplierForm),
+        })
+      }
+      await loadSuppliers()
+      setShowAddSupplier(false)
+      setEditSupplier(null)
+      setSupplierForm({})
+    } finally { setSavingSupplier(false) }
+  }
+
+  async function deleteSupplier(id: string) {
+    if (!confirm('Delete this supplier? Inventory items will be unassigned but kept.')) return
+    await fetch(`/api/suppliers?id=${id}`, { method: 'DELETE' })
+    await loadSuppliers()
+  }
+
+  async function expandSupplier(id: string) {
+    if (expandedSupplier === id) {
+      setExpandedSupplier(null)
+      return
+    }
+    if (!supplierItems[id]) {
+      const res = await fetch(`/api/suppliers?id=${id}`)
+      const d = await res.json()
+      setSupplierItems(prev => ({ ...prev, [id]: d.items || [] }))
+    }
+    setExpandedSupplier(id)
+  }
+
+  async function assignItemToSupplier(itemId: string, supplierId: string | null) {
+    await fetch('/api/inventory', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: itemId, supplier_id: supplierId }),
+    })
+    await loadInventory()
+    // Refresh supplier item list cache
+    setSupplierItems({})
+    if (expandedSupplier) {
+      const res = await fetch(`/api/suppliers?id=${expandedSupplier}`)
+      const d = await res.json()
+      setSupplierItems(prev => ({ ...prev, [expandedSupplier]: d.items || [] }))
+    }
+  }
   const [items, setItems] = useState<InventoryItem[]>([])
   const [materials, setMaterials] = useState<PropertyMaterial[]>([])
   const [loading, setLoading] = useState(true)
@@ -106,6 +320,56 @@ export default function InventoryPage() {
   const [editItem, setEditItem] = useState<InventoryItem | null>(null)
   const [syncing, setSyncing] = useState(false)
   const [syncResult, setSyncResult] = useState<string | null>(null)
+
+  // Price search modal
+  const [priceSearchItem, setPriceSearchItem] = useState<InventoryItem | null>(null)
+  const [priceSearchLoading, setPriceSearchLoading] = useState(false)
+  const [priceSearchResults, setPriceSearchResults] = useState<any | null>(null)
+  const [priceSearchError, setPriceSearchError] = useState('')
+
+  async function runPriceSearch(item: InventoryItem) {
+    setPriceSearchItem(item)
+    setPriceSearchLoading(true)
+    setPriceSearchResults(null)
+    setPriceSearchError('')
+    try {
+      const res = await fetch(`/api/inventory?action=price-search&id=${item.id}`)
+      const ct = res.headers.get('content-type') || ''
+      const raw = await res.text()
+      // If the server returned HTML (404, 500 page, etc.), show a useful message
+      if (!ct.includes('application/json')) {
+        const isNotFound = raw.includes('404') || res.status === 404
+        throw new Error(
+          isNotFound
+            ? 'Price-search endpoint not found — the new image may not be deployed yet. Redeploy on Flux and try again.'
+            : `Server returned ${res.status}. ${raw.slice(0, 200)}`
+        )
+      }
+      const d = JSON.parse(raw)
+      if (!res.ok) throw new Error(d.error || `Search failed (${res.status})`)
+      setPriceSearchResults(d)
+    } catch (e: any) {
+      setPriceSearchError(e.message)
+    } finally {
+      setPriceSearchLoading(false)
+    }
+  }
+
+  async function applyCheapestPrice() {
+    if (!priceSearchItem || !priceSearchResults?.cheapest_price) return
+    await fetch('/api/inventory', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: priceSearchItem.id,
+        unit_cost: priceSearchResults.cheapest_price,
+        supplier: priceSearchResults.cheapest_supplier,
+      }),
+    })
+    await loadInventory()
+    setPriceSearchItem(null)
+    setPriceSearchResults(null)
+  }
 
   const loadInventory = useCallback(async () => {
     setLoading(true)
@@ -125,7 +389,7 @@ export default function InventoryPage() {
   }, [matSearch])
 
   useEffect(() => { loadInventory() }, [loadInventory])
-  useEffect(() => { if (tab === 'materials') loadMaterials() }, [tab, loadMaterials])
+  useEffect(() => { if (tab === 'materials') { loadMaterials(); loadLists(); loadWorksiteOptions() } }, [tab, loadMaterials])
 
   // Derived / filtered list
   const filtered = items.filter(item => {
@@ -137,6 +401,20 @@ export default function InventoryPage() {
   })
 
   const lowStockCount = items.filter(i => i.is_low_stock || i.is_out_of_stock).length
+
+  async function syncFromCalendar() {
+    setSyncing(true)
+    setSyncResult(null)
+    try {
+      const res = await fetch('/api/property-materials?action=sync-calendar')
+      const d = await res.json()
+      if (res.ok) setSyncResult(`Imported ${d.imported || 0} materials from ${d.scanned || 0} appointments`)
+      else setSyncResult(`Error: ${d.error || 'sync failed'}`)
+      await loadMaterials()
+    } catch (e: any) {
+      setSyncResult(`Error: ${e.message}`)
+    } finally { setSyncing(false) }
+  }
 
   async function syncFromInvoices() {
     setSyncing(true)
@@ -188,10 +466,10 @@ export default function InventoryPage() {
             </>
           )}
           {tab === 'materials' && (
-            <button onClick={syncFromInvoices} disabled={syncing}
+            <button onClick={syncFromCalendar} disabled={syncing}
               className="flex items-center gap-1.5 px-3 py-2 text-sm rounded-lg border border-gray-200 bg-white hover:bg-gray-50 text-gray-700">
               {syncing ? <RefreshCw size={15} className="animate-spin" /> : <RefreshCw size={15} />}
-              Sync from Invoices
+              Sync from Calendar
             </button>
           )}
         </div>
@@ -237,9 +515,10 @@ export default function InventoryPage() {
         <div className="flex gap-1">
           {([
             ['inventory', 'Inventory', Package],
-            ['materials', 'Property Materials', MapPin],
+            ['materials', 'Worksite Materials', MapPin],
+            ['suppliers', 'Suppliers', Home],
           ] as const).map(([key, label, Icon]) => (
-            <button key={key} onClick={() => setTab(key)}
+            <button key={key} onClick={() => { setTab(key); if (key === 'suppliers' && suppliers.length === 0) loadSuppliers() }}
               className={`flex items-center gap-1.5 px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
                 tab === key ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
               <Icon size={15} />{label}
@@ -362,6 +641,11 @@ export default function InventoryPage() {
                             </td>
                             <td className="px-3 py-3">
                               <div className="flex items-center justify-end gap-1">
+                                <button onClick={() => runPriceSearch(item)}
+                                  title="AI: Find cheapest price online"
+                                  className="p-1.5 rounded-lg text-gray-400 hover:text-purple-600 hover:bg-purple-50 transition-colors">
+                                  <Sparkles size={16} />
+                                </button>
                                 <button onClick={() => setShowAdjust(item)}
                                   title="Adjust stock"
                                   className="p-1.5 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors">
@@ -391,32 +675,397 @@ export default function InventoryPage() {
         </div>
       )}
 
-      {/* ── PROPERTY MATERIALS TAB ─────────────────────────────── */}
+      {/* ── WORKSITE MATERIALS TAB ─────────────────────────────── */}
       {tab === 'materials' && (
         <div className="flex-1 overflow-auto p-6">
-          <div className="flex gap-3 mb-5">
-            <div className="relative flex-1">
-              <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-              <input value={matSearch} onChange={e => setMatSearch(e.target.value)}
-                placeholder="Search materials or items…"
-                className="w-full pl-9 pr-4 py-2 text-sm rounded-lg border border-gray-200 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500" />
+          {/* Materials Lists section (planning) */}
+          <div className="flex items-center justify-between mb-3 gap-2">
+            <div>
+              <h2 className="text-lg font-extrabold text-gray-900">Materials Lists</h2>
+              <p className="text-xs text-gray-500">Pre-job planning lists, grouped by worksite. Click an item to mark it staged.</p>
+            </div>
+            <div className="flex gap-2">
+              <button onClick={syncListsFromCalendar} disabled={syncing}
+                className="flex items-center gap-2 px-3 py-2 text-sm rounded-xl border border-gray-200 hover:bg-gray-50 disabled:opacity-50">
+                {syncing ? <RefreshCw size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+                Sync from Calendar
+              </button>
+              <button onClick={() => { setNewListForm({ status: 'draft' }); setShowNewList(true) }}
+                className="flex items-center gap-2 px-4 py-2 rounded-xl text-white text-sm font-bold shadow-sm" style={{ background: '#185FA5' }}>
+                <Plus size={14} />New Materials List
+              </button>
             </div>
           </div>
 
-          {materials.length === 0 ? (
-            <div className="text-center py-20">
-              <MapPin size={40} className="mx-auto text-gray-300 mb-3" />
-              <p className="text-gray-500 font-medium">No property materials yet</p>
-              <p className="text-sm text-gray-400 mt-1">Sync from invoices or add materials manually per property</p>
-              <button onClick={syncFromInvoices} disabled={syncing}
-                className="mt-4 px-4 py-2 text-sm rounded-lg bg-blue-600 text-white hover:bg-blue-700 flex items-center gap-1.5 mx-auto">
-                {syncing ? <RefreshCw size={15} className="animate-spin" /> : <RefreshCw size={15} />}
-                Sync from Invoices
+          {listsLoading ? (
+            <div className="flex justify-center py-8"><RefreshCw size={20} className="animate-spin text-gray-400" /></div>
+          ) : lists.length === 0 ? (
+            <div className="bg-white rounded-2xl border border-gray-100 p-8 text-center mb-6">
+              <ClipboardList size={28} className="mx-auto mb-2 text-gray-300" />
+              <p className="text-sm font-semibold text-gray-700 mb-1">No materials lists yet</p>
+              <p className="text-xs text-gray-500 mb-3">Create a list to plan what's needed for an upcoming job, then check items off as you stage them.</p>
+            </div>
+          ) : (() => {
+            // Group lists by jobsite address (or "Unassigned")
+            const grouped: Record<string, MaterialsList[]> = {}
+            for (const l of lists) {
+              const key = l.property_address || 'Unassigned'
+              if (!grouped[key]) grouped[key] = []
+              grouped[key].push(l)
+            }
+            return (
+              <div className="space-y-4 mb-6">
+                {Object.entries(grouped).map(([address, listsForAddress]) => (
+                  <div key={address}>
+                    <div className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
+                      <MapPin size={12} />{address}
+                    </div>
+                    <div className="space-y-2">
+                      {listsForAddress.map(l => {
+                        const itemCount = (l as any).items?.[0]?.count ?? 0
+                        const isExpanded = expandedList === l.id
+                        const expandedItems = listItems[l.id] || []
+                        const fulfilledCount = expandedItems.filter((i: any) => i.fulfilled).length
+                        const STATUS_COLORS: Record<string, string> = {
+                          draft: 'bg-gray-100 text-gray-700',
+                          ready: 'bg-blue-100 text-blue-700',
+                          in_progress: 'bg-amber-100 text-amber-700',
+                          completed: 'bg-green-100 text-green-700',
+                          cancelled: 'bg-red-100 text-red-700',
+                        }
+                        return (
+                          <div key={l.id} className="bg-white rounded-xl border border-gray-100 overflow-hidden">
+                            <div className="flex items-center justify-between px-4 py-3 hover:bg-gray-50 cursor-pointer" onClick={() => expandList(l.id)}>
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2 mb-0.5 flex-wrap">
+                                  <span className="font-bold text-gray-900 text-sm">{l.name}</span>
+                                  <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${STATUS_COLORS[l.status] || 'bg-gray-100 text-gray-600'}`}>{l.status.replace('_', ' ')}</span>
+                                  <span className="text-xs px-2 py-0.5 rounded-full bg-blue-50 text-blue-700">{itemCount} items</span>
+                                  {isExpanded && expandedItems.length > 0 && (
+                                    <span className="text-xs text-gray-500">{fulfilledCount}/{expandedItems.length} ready</span>
+                                  )}
+                                </div>
+                                <div className="flex items-center gap-3 text-xs text-gray-500 flex-wrap">
+                                  {l.customer_name && <span>{l.customer_name}</span>}
+                                  {l.service_type && <span>{l.service_type}</span>}
+                                  {l.scheduled_date && <span>📅 {new Date(l.scheduled_date + 'T00:00:00').toLocaleDateString()}</span>}
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
+                                <button onClick={() => deleteList(l.id)} className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg"><Trash2 size={13} /></button>
+                                {isExpanded ? <ChevronUp size={15} className="text-gray-400" /> : <ChevronDown size={15} className="text-gray-400" />}
+                              </div>
+                            </div>
+                            {isExpanded && (
+                              <div className="border-t border-gray-100 bg-gray-50 px-4 py-3">
+                                {expandedItems.length === 0 ? (
+                                  <p className="text-xs text-gray-500 mb-3">No items on this list yet. Add inventory items below.</p>
+                                ) : (
+                                  <div className="space-y-1 mb-3">
+                                    {expandedItems.map((it: any) => (
+                                      <div key={it.id} className="flex items-center gap-2 px-3 py-2 bg-white rounded-lg text-sm">
+                                        <input type="checkbox" checked={!!it.fulfilled} onChange={e => toggleItemFulfilled(l.id, it.id, e.target.checked)}
+                                          className="cursor-pointer" />
+                                        <div className="flex-1">
+                                          <div className={`font-semibold text-sm ${it.fulfilled ? 'text-gray-400 line-through' : 'text-gray-800'}`}>{it.item_name}</div>
+                                          <div className="text-xs text-gray-500">
+                                            <span className="font-bold">{it.quantity_needed}</span> {it.unit}
+                                            {it.unit_cost ? ` · $${Number(it.unit_cost).toFixed(2)} ea` : ''}
+                                            {it.supplier ? ` · ${it.supplier}` : ''}
+                                            {it.inventory_item?.quantity_on_hand !== undefined && ` · ${it.inventory_item.quantity_on_hand} on hand`}
+                                          </div>
+                                        </div>
+                                        <button onClick={() => deleteListItem(l.id, it.id)}
+                                          className="p-1 text-gray-400 hover:text-red-600"><X size={13} /></button>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                                {/* Add item to list */}
+                                <div className="flex gap-2">
+                                  <select value={newItemFor === l.id ? newItemId : ''} onChange={e => { setNewItemFor(l.id); setNewItemId(e.target.value) }}
+                                    className="flex-1 px-3 py-2 rounded-lg border border-gray-200 text-sm">
+                                    <option value="">— select inventory item —</option>
+                                    {items.map(it => (
+                                      <option key={it.id} value={it.id}>{it.name} ({CATEGORIES[it.category]?.label || it.category})</option>
+                                    ))}
+                                  </select>
+                                  <input type="number" min="0.01" step="0.01" value={newItemFor === l.id ? newItemQty : '1'}
+                                    onChange={e => { setNewItemFor(l.id); setNewItemQty(e.target.value) }}
+                                    className="w-20 px-2 py-2 rounded-lg border border-gray-200 text-sm" placeholder="Qty" />
+                                  <button onClick={() => addItemToList(l.id)} disabled={newItemFor !== l.id || !newItemId}
+                                    className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-bold disabled:opacity-50">Add</button>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )
+          })()}
+
+        </div>
+      )}
+
+      {/* New Materials List modal */}
+      {showNewList && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+              <h3 className="text-lg font-extrabold text-gray-900">New Materials List</h3>
+              <button onClick={() => { setShowNewList(false); setNewListForm({ status: 'draft' }) }}><X size={18} className="text-gray-400" /></button>
+            </div>
+            <div className="p-6 grid grid-cols-2 gap-3">
+              <div className="col-span-2">
+                <label className="text-xs font-semibold text-gray-600 mb-1 block">List Name *</label>
+                <input value={newListForm.name || ''} onChange={e => setNewListForm(p => ({ ...p, name: e.target.value }))}
+                  className="w-full px-3 py-2.5 rounded-xl border border-gray-200 text-sm" placeholder='e.g. "Smith retrofit – kitchen"' />
+              </div>
+              <div className="col-span-2">
+                <label className="text-xs font-semibold text-gray-600 mb-1 block">Worksite</label>
+                <select value={newListForm.worksite_id || ''}
+                  onChange={e => {
+                    const w = worksiteOptions.find((x: any) => x.id === e.target.value)
+                    const addr = w?.address || ''
+                    setNewListForm(p => ({
+                      ...p,
+                      worksite_id: e.target.value || null,
+                      property_address: addr || p.property_address || '',
+                      // Auto-fill list name with the address if name is empty or
+                      // matched a previous worksite's address.
+                      name: !p.name || worksiteOptions.some((x: any) => x.address === p.name)
+                        ? addr || p.name
+                        : p.name,
+                    }))
+                  }}
+                  className="w-full px-3 py-2.5 rounded-xl border border-gray-200 text-sm">
+                  <option value="">— optional, link to a worksite —</option>
+                  {worksiteOptions.map((w: any) => (
+                    <option key={w.id} value={w.id}>{w.address}{w.city ? `, ${w.city}` : ''}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="col-span-2">
+                <label className="text-xs font-semibold text-gray-600 mb-1 block">Property Address {newListForm.worksite_id ? '(auto-filled)' : ''}</label>
+                <input value={newListForm.property_address || ''}
+                  onChange={e => setNewListForm(p => ({
+                    ...p,
+                    property_address: e.target.value,
+                    // Mirror address into the list name if the name is empty or
+                    // still matches the previous address (so it stays in sync).
+                    name: !p.name || p.name === p.property_address ? e.target.value : p.name,
+                  }))}
+                  className="w-full px-3 py-2.5 rounded-xl border border-gray-200 text-sm" placeholder="If no worksite selected, type the address" />
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-gray-600 mb-1 block">Customer Name</label>
+                <input value={newListForm.customer_name || ''} onChange={e => setNewListForm(p => ({ ...p, customer_name: e.target.value }))}
+                  className="w-full px-3 py-2.5 rounded-xl border border-gray-200 text-sm" />
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-gray-600 mb-1 block">Service Type</label>
+                <input value={newListForm.service_type || ''} onChange={e => setNewListForm(p => ({ ...p, service_type: e.target.value }))}
+                  className="w-full px-3 py-2.5 rounded-xl border border-gray-200 text-sm" placeholder="e.g. Gas line install" />
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-gray-600 mb-1 block">Scheduled Date</label>
+                <input type="date" value={newListForm.scheduled_date || ''} onChange={e => setNewListForm(p => ({ ...p, scheduled_date: e.target.value || null }))}
+                  className="w-full px-3 py-2.5 rounded-xl border border-gray-200 text-sm" />
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-gray-600 mb-1 block">Status</label>
+                <select value={newListForm.status || 'draft'} onChange={e => setNewListForm(p => ({ ...p, status: e.target.value }))}
+                  className="w-full px-3 py-2.5 rounded-xl border border-gray-200 text-sm">
+                  <option value="draft">Draft</option>
+                  <option value="ready">Ready to start</option>
+                  <option value="in_progress">In progress</option>
+                  <option value="completed">Completed</option>
+                </select>
+              </div>
+              <div className="col-span-2">
+                <label className="text-xs font-semibold text-gray-600 mb-1 block">Notes</label>
+                <textarea value={newListForm.notes || ''} onChange={e => setNewListForm(p => ({ ...p, notes: e.target.value }))}
+                  rows={2} className="w-full px-3 py-2.5 rounded-xl border border-gray-200 text-sm" />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 px-6 py-4 border-t border-gray-100">
+              <button onClick={() => { setShowNewList(false); setNewListForm({ status: 'draft' }) }}
+                className="px-4 py-2 rounded-xl text-sm font-semibold text-gray-600 hover:bg-gray-100">Cancel</button>
+              <button onClick={createList} disabled={savingList || !newListForm.name}
+                className="px-5 py-2 rounded-xl text-white text-sm font-bold disabled:opacity-50" style={{ background: '#185FA5' }}>
+                {savingList ? 'Creating…' : 'Create List'}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── SUPPLIERS TAB ──────────────────────────────────────── */}
+      {tab === 'suppliers' && (
+        <div className="flex-1 overflow-auto p-6">
+          <div className="flex items-center justify-between mb-5">
+            <div>
+              <h2 className="text-lg font-extrabold text-gray-900">Suppliers</h2>
+              <p className="text-sm text-gray-500">Companies you regularly order inventory from. Click a supplier to see what's assigned.</p>
+            </div>
+            <button onClick={() => { setEditSupplier(null); setSupplierForm({}); setShowAddSupplier(true) }}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-white text-sm font-bold shadow-sm" style={{ background: '#185FA5' }}>
+              <Plus size={14} />Add Supplier
+            </button>
+          </div>
+
+          {suppliersLoading ? (
+            <div className="flex justify-center py-12"><RefreshCw size={24} className="animate-spin text-gray-400" /></div>
+          ) : suppliers.length === 0 ? (
+            <div className="bg-white rounded-2xl border border-gray-100 p-12 text-center">
+              <Home size={32} className="mx-auto mb-2 text-gray-300" />
+              <p className="text-sm font-semibold text-gray-700 mb-1">No suppliers yet</p>
+              <p className="text-xs text-gray-500">Add the companies you regularly order from (Ferguson, SupplyHouse, Home Depot, etc.) so you can track which inventory comes from where.</p>
+            </div>
           ) : (
-            <PropertyMaterialsGrouped materials={materials} onDelete={deleteMaterial} />
+            <div className="space-y-3">
+              {suppliers.map(s => {
+                const itemCount = (s as any).items?.[0]?.count ?? 0
+                const isExpanded = expandedSupplier === s.id
+                const assignedItems = supplierItems[s.id] || []
+                const assignedIds = new Set(assignedItems.map((it: any) => it.id))
+                const availableItems = items.filter(it => !assignedIds.has(it.id))
+                return (
+                  <div key={s.id} className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
+                    <div className="flex items-center justify-between px-5 py-4 hover:bg-gray-50 cursor-pointer" onClick={() => expandSupplier(s.id)}>
+                      <div className="flex items-center gap-3 flex-1">
+                        <div className="w-10 h-10 rounded-xl flex items-center justify-center bg-blue-50 text-blue-600 font-extrabold">
+                          {s.name[0]?.toUpperCase()}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="font-bold text-gray-900">{s.name}</div>
+                          <div className="text-xs text-gray-500 flex flex-wrap gap-x-3">
+                            {s.contact_phone && <span>{s.contact_phone}</span>}
+                            {s.contact_email && <span>{s.contact_email}</span>}
+                            {s.account_number && <span>Acct #{s.account_number}</span>}
+                          </div>
+                        </div>
+                        <span className="text-xs px-2.5 py-1 rounded-full bg-blue-100 text-blue-700 font-semibold">{itemCount} items</span>
+                      </div>
+                      <div className="flex items-center gap-1 ml-3" onClick={e => e.stopPropagation()}>
+                        {s.website && <a href={s.website} target="_blank" rel="noreferrer" className="p-1.5 text-gray-400 hover:text-blue-600 rounded-lg hover:bg-gray-100" title="Website">↗</a>}
+                        <button onClick={() => { setEditSupplier(s); setSupplierForm(s); setShowAddSupplier(true) }}
+                          className="p-1.5 text-gray-400 hover:text-gray-700 rounded-lg hover:bg-gray-100"><Edit3 size={14} /></button>
+                        <button onClick={() => deleteSupplier(s.id)}
+                          className="p-1.5 text-gray-400 hover:text-red-600 rounded-lg hover:bg-red-50"><Trash2 size={14} /></button>
+                        {isExpanded ? <ChevronUp size={16} className="text-gray-400" /> : <ChevronDown size={16} className="text-gray-400" />}
+                      </div>
+                    </div>
+                    {isExpanded && (
+                      <div className="border-t border-gray-100 bg-gray-50 px-5 py-4">
+                        {s.notes && <p className="text-xs text-gray-600 italic mb-3">{s.notes}</p>}
+                        <div className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Items ordered from {s.name}</div>
+                        {assignedItems.length === 0 ? (
+                          <p className="text-xs text-gray-500 mb-3">No items assigned. Use the dropdown below to add inventory items.</p>
+                        ) : (
+                          <div className="space-y-1 mb-3">
+                            {assignedItems.map((it: any) => (
+                              <div key={it.id} className="flex items-center justify-between px-3 py-2 bg-white rounded-lg text-sm">
+                                <div className="flex-1">
+                                  <div className="font-semibold text-gray-800">{it.name}</div>
+                                  <div className="text-xs text-gray-500">
+                                    <CategoryBadge cat={it.category} /> · {it.quantity_on_hand} {it.unit} on hand
+                                    {it.unit_cost ? ` · $${Number(it.unit_cost).toFixed(2)}` : ''}
+                                  </div>
+                                </div>
+                                <button onClick={() => assignItemToSupplier(it.id, null)}
+                                  className="p-1 text-gray-400 hover:text-red-600" title="Unassign">
+                                  <X size={14} />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        <div>
+                          <label className="text-xs font-semibold text-gray-600 mb-1 block">Assign an inventory item:</label>
+                          <select onChange={e => { if (e.target.value) { assignItemToSupplier(e.target.value, s.id); e.target.value = '' } }}
+                            className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-blue-400"
+                            defaultValue="">
+                            <option value="">— select an item to assign —</option>
+                            {availableItems.map(it => (
+                              <option key={it.id} value={it.id}>{it.name} ({CATEGORIES[it.category]?.label || it.category})</option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
           )}
+        </div>
+      )}
+
+      {/* Add/Edit supplier modal */}
+      {showAddSupplier && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+              <h3 className="text-lg font-extrabold text-gray-900">{editSupplier ? 'Edit Supplier' : 'Add Supplier'}</h3>
+              <button onClick={() => { setShowAddSupplier(false); setEditSupplier(null); setSupplierForm({}) }}><X size={18} className="text-gray-400" /></button>
+            </div>
+            <div className="p-6 grid grid-cols-2 gap-3">
+              <div className="col-span-2">
+                <label className="text-xs font-semibold text-gray-600 mb-1 block">Name *</label>
+                <input value={supplierForm.name || ''} onChange={e => setSupplierForm(p => ({ ...p, name: e.target.value }))}
+                  className="w-full px-3 py-2.5 rounded-xl border border-gray-200 text-sm focus:outline-none focus:border-blue-400" placeholder="e.g. Ferguson Plumbing" />
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-gray-600 mb-1 block">Contact Name</label>
+                <input value={supplierForm.contact_name || ''} onChange={e => setSupplierForm(p => ({ ...p, contact_name: e.target.value }))}
+                  className="w-full px-3 py-2.5 rounded-xl border border-gray-200 text-sm focus:outline-none focus:border-blue-400" />
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-gray-600 mb-1 block">Account Number</label>
+                <input value={supplierForm.account_number || ''} onChange={e => setSupplierForm(p => ({ ...p, account_number: e.target.value }))}
+                  className="w-full px-3 py-2.5 rounded-xl border border-gray-200 text-sm focus:outline-none focus:border-blue-400" />
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-gray-600 mb-1 block">Phone</label>
+                <input value={supplierForm.contact_phone || ''} onChange={e => setSupplierForm(p => ({ ...p, contact_phone: e.target.value }))}
+                  className="w-full px-3 py-2.5 rounded-xl border border-gray-200 text-sm focus:outline-none focus:border-blue-400" />
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-gray-600 mb-1 block">Email</label>
+                <input value={supplierForm.contact_email || ''} onChange={e => setSupplierForm(p => ({ ...p, contact_email: e.target.value }))}
+                  className="w-full px-3 py-2.5 rounded-xl border border-gray-200 text-sm focus:outline-none focus:border-blue-400" />
+              </div>
+              <div className="col-span-2">
+                <label className="text-xs font-semibold text-gray-600 mb-1 block">Website</label>
+                <input value={supplierForm.website || ''} onChange={e => setSupplierForm(p => ({ ...p, website: e.target.value }))}
+                  className="w-full px-3 py-2.5 rounded-xl border border-gray-200 text-sm focus:outline-none focus:border-blue-400" placeholder="https://" />
+              </div>
+              <div className="col-span-2">
+                <label className="text-xs font-semibold text-gray-600 mb-1 block">Address</label>
+                <input value={supplierForm.address || ''} onChange={e => setSupplierForm(p => ({ ...p, address: e.target.value }))}
+                  className="w-full px-3 py-2.5 rounded-xl border border-gray-200 text-sm focus:outline-none focus:border-blue-400" />
+              </div>
+              <div className="col-span-2">
+                <label className="text-xs font-semibold text-gray-600 mb-1 block">Notes</label>
+                <textarea value={supplierForm.notes || ''} onChange={e => setSupplierForm(p => ({ ...p, notes: e.target.value }))}
+                  rows={2}
+                  className="w-full px-3 py-2.5 rounded-xl border border-gray-200 text-sm focus:outline-none focus:border-blue-400" />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 px-6 py-4 border-t border-gray-100">
+              <button onClick={() => { setShowAddSupplier(false); setEditSupplier(null); setSupplierForm({}) }}
+                className="px-4 py-2 rounded-xl text-sm font-semibold text-gray-600 hover:bg-gray-100">Cancel</button>
+              <button onClick={saveSupplier} disabled={savingSupplier || !supplierForm.name}
+                className="px-5 py-2 rounded-xl text-white text-sm font-bold disabled:opacity-50" style={{ background: '#185FA5' }}>
+                {savingSupplier ? 'Saving…' : 'Save'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -446,6 +1095,107 @@ export default function InventoryPage() {
           onClose={() => setShowCatalog(false)}
           onImported={() => { setShowCatalog(false); loadInventory() }}
         />
+      )}
+      {priceSearchItem && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto">
+            <div className="sticky top-0 bg-white px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Sparkles size={18} className="text-purple-600" />
+                <div>
+                  <h2 className="text-lg font-bold text-gray-900">AI Price Search</h2>
+                  <p className="text-xs text-gray-500">{priceSearchItem.name}</p>
+                </div>
+              </div>
+              <button onClick={() => { setPriceSearchItem(null); setPriceSearchResults(null); setPriceSearchError('') }}>
+                <X size={18} className="text-gray-400 hover:text-gray-700" />
+              </button>
+            </div>
+            <div className="p-6">
+              {priceSearchLoading && (
+                <div className="flex flex-col items-center justify-center py-12 gap-3">
+                  <RefreshCw size={28} className="animate-spin text-purple-600" />
+                  <p className="text-sm font-semibold text-gray-700">Searching retailers…</p>
+                  <p className="text-xs text-gray-500">This usually takes 20-40 seconds. Looking at the major suppliers (Home Depot, Lowe's, Ferguson, SupplyHouse, Amazon, etc.).</p>
+                </div>
+              )}
+              {priceSearchError && (
+                <div className="p-4 rounded-xl bg-red-50 border border-red-200 text-sm text-red-700">{priceSearchError}</div>
+              )}
+              {priceSearchResults && !priceSearchLoading && (
+                <div className="space-y-4">
+                  {priceSearchResults.search_summary && (
+                    <p className="text-sm text-gray-600 italic">{priceSearchResults.search_summary}</p>
+                  )}
+                  {Array.isArray(priceSearchResults.results) && priceSearchResults.results.length > 0 ? (
+                    <>
+                      <div className="overflow-hidden rounded-xl border border-gray-100">
+                        <table className="w-full text-sm">
+                          <thead className="bg-gray-50">
+                            <tr>
+                              <th className="px-3 py-2 text-left text-xs font-bold uppercase text-gray-500">Supplier</th>
+                              <th className="px-3 py-2 text-left text-xs font-bold uppercase text-gray-500">Product</th>
+                              <th className="px-3 py-2 text-right text-xs font-bold uppercase text-gray-500">Price</th>
+                              <th className="px-3 py-2 text-center text-xs font-bold uppercase text-gray-500">Stock</th>
+                              <th className="px-3 py-2"></th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {priceSearchResults.results.map((r: any, i: number) => {
+                              const isCheapest = i === 0
+                              return (
+                                <tr key={i} className={`border-t border-gray-100 ${isCheapest ? 'bg-green-50' : ''}`}>
+                                  <td className="px-3 py-3 font-semibold text-gray-900">
+                                    {isCheapest && <span className="inline-block px-1.5 py-0.5 text-[10px] font-bold rounded bg-green-200 text-green-800 mr-1.5">CHEAPEST</span>}
+                                    {r.supplier}
+                                  </td>
+                                  <td className="px-3 py-3 text-gray-600">
+                                    <div className="font-medium text-gray-800">{r.product_name}</div>
+                                    {r.notes && <div className="text-xs text-gray-500 mt-0.5">{r.notes}</div>}
+                                  </td>
+                                  <td className="px-3 py-3 text-right">
+                                    <div className={`font-bold ${isCheapest ? 'text-green-700' : 'text-gray-900'}`}>${Number(r.price).toFixed(2)}</div>
+                                    <div className="text-xs text-gray-500">{r.unit}</div>
+                                  </td>
+                                  <td className="px-3 py-3 text-center">
+                                    {r.in_stock === false ? <span className="text-red-600 text-xs font-semibold">Out</span> : <span className="text-green-600 text-xs font-semibold">In stock</span>}
+                                  </td>
+                                  <td className="px-3 py-3 text-right">
+                                    {r.url && (
+                                      <a href={r.url} target="_blank" rel="noopener noreferrer"
+                                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-blue-50 text-blue-600 text-xs font-bold hover:bg-blue-100">
+                                        Buy ↗
+                                      </a>
+                                    )}
+                                  </td>
+                                </tr>
+                              )
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                      {priceSearchResults.cheapest_price && (
+                        <div className="flex items-center justify-between p-4 bg-green-50 rounded-xl border border-green-200">
+                          <div>
+                            <div className="text-xs font-bold text-green-800 uppercase">Best price found</div>
+                            <div className="text-2xl font-extrabold text-green-700">${Number(priceSearchResults.cheapest_price).toFixed(2)}</div>
+                            <div className="text-sm text-green-600">{priceSearchResults.cheapest_supplier}</div>
+                          </div>
+                          <button onClick={applyCheapestPrice}
+                            className="px-4 py-2.5 bg-green-600 text-white rounded-xl text-sm font-bold hover:bg-green-700">
+                            Save as Unit Cost
+                          </button>
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <p className="text-sm text-gray-500 py-8 text-center">No price results returned. Try editing the item name to be more specific (add brand, size, model number).</p>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )
@@ -815,7 +1565,7 @@ function CatalogModal({ onClose, onImported }: { onClose: () => void; onImported
 
   async function doImport() {
     setImporting(true)
-    const items = [...selected].map(i => catalog[i]).filter(Boolean)
+    const items = Array.from(selected).map(i => catalog[i]).filter(Boolean)
     const res = await fetch('/api/inventory?action=bulk', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ items }),

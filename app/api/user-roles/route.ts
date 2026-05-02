@@ -16,13 +16,13 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   const supabase = createServerClient()
   const body = await req.json()
-  const { email, password, display_name, role } = body
+  const { email, password, display_name, role, assigned_account_id } = body
 
   if (!email || !password || !role) {
     return NextResponse.json({ error: 'email, password, and role are required' }, { status: 400 })
   }
-  if (!['admin', 'bookkeeper', 'invoicing'].includes(role)) {
-    return NextResponse.json({ error: 'role must be admin, bookkeeper, or invoicing' }, { status: 400 })
+  if (!['admin', 'bookkeeper', 'invoicing', 'customer'].includes(role)) {
+    return NextResponse.json({ error: 'role must be admin, bookkeeper, invoicing, or customer' }, { status: 400 })
   }
 
   // Create auth user
@@ -39,6 +39,7 @@ export async function POST(req: NextRequest) {
     email,
     display_name: display_name || email.split('@')[0],
     role,
+    assigned_account_id: assigned_account_id || null,
   }).select().single()
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 

@@ -24,6 +24,15 @@ export async function GET(req: NextRequest) {
     return NextResponse.json(GAS_LP_CATALOG)
   }
 
+  // ── AI price search — find cheapest sources for an item ─────
+  if (action === 'price-search') {
+    const itemId = req.nextUrl.searchParams.get('id')
+    if (!itemId) return NextResponse.json({ error: 'id required' }, { status: 400 })
+    const { data: item, error: e } = await supabase.from('inventory_items').select('*').eq('id', itemId).single()
+    if (e || !item) return NextResponse.json({ error: 'Item not found' }, { status: 404 })
+    return priceSearch(item)
+  }
+
   if (id) {
     const { data, error } = await supabase.from('inventory_items').select('*').eq('id', id).single()
     if (error) return NextResponse.json({ error: error.message }, { status: 404 })
@@ -287,3 +296,130 @@ export const GAS_LP_CATALOG = [
   { category: 'tools', name: 'Adjustable Pipe Wrench 10"', unit: 'each', gas_type: 'both', reorder_point: 1 },
   { category: 'tools', name: 'Adjustable Pipe Wrench 14"', unit: 'each', gas_type: 'both', reorder_point: 1 },
 ]
+
+// ══════════════════════════════════════════════════════════════
+// AI price search — finds the cheapest sources for an inventory
+// item using Claude with web search.
+// ══════════════════════════════════════════════════════════════
+async function priceSearch(item: any) {
+  try {
+    return await priceSearchInner(item)
+  } catch (err: any) {
+    // Last-resort catch — make absolutely sure we return JSON, not an HTML error page
+    return NextResponse.json({ error: err?.message || 'Price search failed', stack: err?.stack?.slice(0, 500) }, { status: 500 })
+  }
+}
+
+async function priceSearchInner(item: any) {
+  const apiKey = process.env.ANTHROPIC_API_KEY
+  if (!apiKey || apiKey === 'build-placeholder') {
+    return NextResponse.json({ error: 'Anthropic API key not configured — set ANTHROPIC_API_KEY in your environment' }, { status: 503 })
+  }
+
+  const itemDesc = [
+    item.name,
+    item.description ? `(${item.description})` : '',
+    item.sku ? `SKU: ${item.sku}` : '',
+    item.supplier_part_number ? `Part #: ${item.supplier_part_number}` : '',
+  ].filter(Boolean).join(' ')
+
+  const prompt = `You are a sourcing agent for a GAS appliance / LP gas contractor in Florida.
+This is for NATURAL GAS and PROPANE installations — NOT water plumbing.
+
+⚠️ CRITICAL: Only return products rated for GAS service. STRICTLY EXCLUDE:
+  • PVC, CPVC, or plastic anything (illegal for gas in most jurisdictions)
+  • Water shut-off valves, water hammer arrestors, water pressure regulators
+  • Compression fittings not rated for gas
+  • Anything labeled "water only", "for water lines", "potable water"
+  • Sharkbite / push-to-connect fittings unless explicitly gas-rated
+
+✅ ONLY INCLUDE products that are clearly gas-rated. Look for these markers:
+  • "Gas ball valve", "gas-rated", "CSA-certified", "ANSI Z21.15", "UL listed for gas"
+  • Brass with full-port for gas, forged steel, black iron, malleable iron
+  • CSST (TracPipe, Gastite, HomeFlex), gas flex connectors
+  • Yellow-handled ball valves (industry standard for gas service)
+  • Pipe dope/sealant rated for gas (NOT teflon tape unless yellow gas-rated)
+  • Brands known for gas: Apollo (gas line), Jomar, Matco-Norca gas, BrassCraft gas
+
+Find the CHEAPEST current online prices for this GAS-rated item:
+"${itemDesc}"
+Category: ${item.category}
+Unit: ${item.unit}
+Gas type: ${item.gas_type}
+
+Search 2-3 of these retailers (pick the most likely for gas products): SupplyHouse (best for gas), Ferguson, Grainger, Home Depot, Amazon. Use search terms like "gas ball valve", "CSA gas", "natural gas line" — NOT just "ball valve" which returns water products.
+
+Return ONLY a valid JSON object (no markdown, no extra text) in this exact shape:
+{
+  "item_name": "${item.name}",
+  "search_summary": "One sentence about what you found — confirm products are gas-rated",
+  "results": [
+    {
+      "supplier": "Retailer name",
+      "product_name": "Exact product title from the listing",
+      "price": 12.99,
+      "unit": "each | pack of 10 | etc.",
+      "url": "Direct product URL",
+      "in_stock": true,
+      "gas_rated": true,
+      "notes": "Mention CSA/UL gas certification, material (brass/steel), and any minimum order"
+    }
+  ],
+  "cheapest_supplier": "Name of the lowest-priced GAS-rated supplier",
+  "cheapest_price": 9.99,
+  "cheapest_url": "URL of the cheapest gas-rated option"
+}
+
+Sort "results" from cheapest to most expensive. Include 3-6 results when possible. If you can only find water-rated products and no gas-rated equivalent, return results: [] and explain in search_summary why no gas-rated options were found. NEVER return a water product as a result.`
+
+  // Aggressive 45s timeout — must finish well before any upstream LB/ingress
+  // timeout (nginx default is 60s) so the user gets a useful JSON error rather
+  // than an HTML 504 page.
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 45000)
+
+  try {
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      signal: controller.signal,
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        // Sonnet is ~3x faster than Opus and plenty smart for this task.
+        model: 'claude-sonnet-4-5',
+        max_tokens: 2500,
+        // 3 searches is enough to hit the major retailers and stay under the
+        // ingress timeout. Bumping this back up requires increasing the LB
+        // timeout or moving the search to a background job.
+        tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 3 }],
+        messages: [{ role: 'user', content: prompt }],
+      }),
+    })
+    clearTimeout(timeout)
+
+    if (!response.ok) {
+      const err = await response.text()
+      return NextResponse.json({ error: `AI API error (${response.status}): ${err}` }, { status: 500 })
+    }
+
+    const aiData = await response.json()
+    // The model returns a sequence of content blocks; find the final text block
+    const textBlocks = (aiData.content || []).filter((b: any) => b.type === 'text')
+    const text = textBlocks.map((b: any) => b.text).join('\n')
+
+    const jsonMatch = text.match(/\{[\s\S]*\}/)
+    if (!jsonMatch) return NextResponse.json({ error: 'Could not parse AI response', raw: text }, { status: 500 })
+
+    const parsed = JSON.parse(jsonMatch[0])
+    return NextResponse.json({ ...parsed, ai_searched: true })
+  } catch (err: any) {
+    clearTimeout(timeout)
+    if (err.name === 'AbortError') {
+      return NextResponse.json({ error: 'AI search timed out after 60 seconds' }, { status: 504 })
+    }
+    return NextResponse.json({ error: err.message }, { status: 500 })
+  }
+}

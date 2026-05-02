@@ -3,6 +3,70 @@ export const dynamic = 'force-dynamic'
 import { createServerClient } from '@/lib/supabase'
 import { createCheckoutSession } from '@/lib/stripe'
 import { sendInvoiceEmail } from '@/lib/resend'
+import { google } from 'googleapis'
+
+// Copy sent email to Gmail Sent folder via Google API
+async function copyToGmailSent(invoice: any, paymentUrl: string) {
+  if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_REFRESH_TOKEN) {
+    console.log('Gmail: skipping — missing credentials')
+    return
+  }
+  try {
+    const auth = new google.auth.OAuth2(
+      process.env.GOOGLE_CLIENT_ID,
+      process.env.GOOGLE_CLIENT_SECRET,
+    )
+    auth.setCredentials({ refresh_token: process.env.GOOGLE_REFRESH_TOKEN })
+    const gmail = google.gmail({ version: 'v1', auth })
+
+    const isQuote = invoice.invoice_type === 'quote'
+    const label = isQuote ? 'Quote' : 'Invoice'
+    // Subject matches the new email format — just "DPG INV-..." no "Invoice" word
+    const subject = `DPG ${invoice.invoice_number}${invoice.job_address ? ' ' + invoice.job_address : ''}`
+
+    const fromEmail = process.env.RESEND_FROM_EMAIL || 'Lacey@LaceyNPrice.com'
+
+    const bodyHtml = [
+      `<p><strong>${label} #${invoice.invoice_number}</strong> sent to ${invoice.customer_name} (${invoice.customer_email})</p>`,
+      `<p>Amount: $${Number(invoice.amount_due).toFixed(2)}</p>`,
+      invoice.job_address ? `<p>Job: ${invoice.job_address}${invoice.jobsite_city ? ', ' + invoice.jobsite_city : ''}</p>` : '',
+      invoice.service_description ? `<p>Description: ${invoice.service_description}</p>` : '',
+      paymentUrl ? `<p><a href="${paymentUrl}">Payment Link</a></p>` : '',
+      `<hr/><p style="color:#999;font-size:12px">Sent via L. Price Building Company app · ${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}</p>`,
+    ].filter(Boolean).join('\n')
+
+    // RFC 2822 message — headers then blank line then body
+    const message = [
+      `From: L. Price Building Company <${fromEmail}>`,
+      `To: ${invoice.customer_name} <${invoice.customer_email}>`,
+      `Subject: ${subject.trim()}`,
+      `Date: ${new Date().toUTCString()}`,
+      `MIME-Version: 1.0`,
+      `Content-Type: text/html; charset=UTF-8`,
+      ``,
+      `<html><body>${bodyHtml}</body></html>`,
+    ].join('\r\n')
+
+    // Base64url encode
+    const encoded = Buffer.from(message, 'utf-8')
+      .toString('base64')
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=+$/, '')
+
+    await gmail.users.messages.insert({
+      userId: 'me',
+      internalDateSource: 'dateHeader',
+      requestBody: {
+        raw: encoded,
+        labelIds: ['SENT'],
+      },
+    })
+    console.log(`Gmail: ✅ inserted ${label} ${invoice.invoice_number} into Sent folder`)
+  } catch (e: any) {
+    console.error('Gmail copy-to-sent failed:', e?.message || e)
+  }
+}
 
 export async function POST(req: NextRequest) {
   const supabase = createServerClient()
@@ -20,31 +84,43 @@ export async function POST(req: NextRequest) {
   if (error || !invoice) return NextResponse.json({ error: 'Invoice not found' }, { status: 404 })
   if (!invoice.customer_email) return NextResponse.json({ error: 'Invoice has no customer email' }, { status: 400 })
 
-  // Create Stripe Checkout Session
-  const appUrl = process.env.APP_URL || 'http://localhost:3000'
+  // Create Stripe Checkout Session (skip for quotes)
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || 'http://localhost:3000'
   let paymentUrl = ''
-  try {
-    const session = await createCheckoutSession({
-      invoiceId: invoice.id,
-      invoiceNumber: invoice.invoice_number,
-      customerName: invoice.customer_name,
-      customerEmail: invoice.customer_email,
-      amountDue: invoice.amount_due,
-      description: invoice.service_description || `Invoice ${invoice.invoice_number}`,
-      successUrl: `${appUrl}/invoice/success`,
-      cancelUrl: `${appUrl}/invoice/cancelled`,
-    })
-    paymentUrl = session.url || ''
-  } catch (e: any) {
-    console.error('Stripe error:', e)
-    return NextResponse.json({ error: 'Failed to create payment link: ' + e.message }, { status: 500 })
+  if (invoice.invoice_type !== 'quote') {
+    try {
+      const session = await createCheckoutSession({
+        invoiceId: invoice.id,
+        invoiceNumber: invoice.invoice_number,
+        customerName: invoice.customer_name,
+        customerEmail: invoice.customer_email,
+        amountDue: invoice.amount_due,
+        description: invoice.service_description || `Invoice ${invoice.invoice_number}`,
+        successUrl: `${appUrl}/invoice/success`,
+        cancelUrl: `${appUrl}/invoice/cancelled`,
+      })
+      paymentUrl = session.url || ''
+    } catch (e: any) {
+      console.error('Stripe error:', e)
+      return NextResponse.json({ error: 'Failed to create payment link: ' + e.message }, { status: 500 })
+    }
   }
 
-  // Update invoice with payment link and status
-  await supabase.from('invoices').update({
-    stripe_payment_link: paymentUrl,
-    invoice_status: 'sent',
-  }).eq('id', invoiceId)
+  // Update invoice — preserve paid status if already paid
+  const now = new Date().toISOString()
+  const updates: Record<string, any> = {
+    last_sent_at: now,
+  }
+  // Only set stripe link if we created one
+  if (paymentUrl) updates.stripe_payment_link = paymentUrl
+  // First send: record sent_at
+  if (!invoice.sent_at) updates.sent_at = now
+  // Only change status to 'sent' if it's currently draft (don't overwrite paid/approved)
+  if (invoice.invoice_status === 'draft') {
+    updates.invoice_status = 'sent'
+  }
+
+  await supabase.from('invoices').update(updates).eq('id', invoiceId)
 
   // Send invoice email via Resend
   try {
@@ -60,11 +136,15 @@ export async function POST(req: NextRequest) {
       jobsiteCity: invoice.jobsite_city,
       companyName: invoice.company_name,
       paymentUrl,
+      isPaid: invoice.invoice_status === 'paid',
     })
   } catch (e) {
     console.error('Resend error:', e)
     // Don't fail the whole request if email fails — payment link is still created
   }
+
+  // Copy to Gmail Sent folder (fire-and-forget)
+  copyToGmailSent(invoice, paymentUrl).catch(() => {})
 
   // Auto-upsert contact: update existing or create new
   try {

@@ -21,7 +21,7 @@ const nextConfig = {
     remotePatterns: [
       { protocol: 'https', hostname: '*.supabase.co' },
       { protocol: 'https', hostname: 'laceynprice.com' },
-      { protocol: 'https', hostname: 'admin.laceynprice.com' },
+      { protocol: 'https', hostname: 'login.laceynprice.com' },
     ],
   },
 }
