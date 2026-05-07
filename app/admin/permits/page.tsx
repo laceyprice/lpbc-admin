@@ -258,7 +258,7 @@ function PermitModal({
           <button onClick={onClose} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg">Cancel</button>
           <button onClick={save} disabled={saving}
             className="flex items-center gap-2 px-4 py-2 text-sm text-white rounded-lg disabled:opacity-50"
-            style={{ background: '#1a4a6b' }}>
+            style={{ background: '#2f5a5e' }}>
             {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
             {isNew ? 'Create Permit' : 'Save Changes'}
           </button>
@@ -329,10 +329,10 @@ function JurisdictionModal({
           {error && <div className="text-red-600 text-sm bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</div>}
 
           {/* AI Research Panel */}
-          <div className="rounded-xl p-4 border-2 border-dashed" style={{ borderColor: '#1a4a6b22', background: '#f0f7ff' }}>
+          <div className="rounded-xl p-4 border-2 border-dashed" style={{ borderColor: '#2f5a5e22', background: '#f0f7ff' }}>
             <div className="flex items-center gap-2 mb-3">
-              <Sparkles size={16} style={{ color: '#1a4a6b' }} />
-              <span className="text-sm font-semibold" style={{ color: '#1a4a6b' }}>AI Research — auto-fill permit info</span>
+              <Sparkles size={16} style={{ color: '#2f5a5e' }} />
+              <span className="text-sm font-semibold" style={{ color: '#2f5a5e' }}>AI Research — auto-fill permit info</span>
             </div>
             <div className="flex gap-2">
               <input className={inp + ' flex-1'} value={researchName} onChange={e => setResearchName(e.target.value)}
@@ -341,7 +341,7 @@ function JurisdictionModal({
                 placeholder="State" maxLength={2} />
               <button onClick={research} disabled={researching}
                 className="flex items-center gap-2 px-4 py-2 text-sm text-white rounded-lg whitespace-nowrap disabled:opacity-50"
-                style={{ background: '#1a4a6b' }}>
+                style={{ background: '#2f5a5e' }}>
                 {researching ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
                 {researching ? 'Researching...' : 'Research'}
               </button>
@@ -450,7 +450,7 @@ function JurisdictionModal({
           <button onClick={onClose} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg">Cancel</button>
           <button onClick={save} disabled={saving}
             className="flex items-center gap-2 px-4 py-2 text-sm text-white rounded-lg disabled:opacity-50"
-            style={{ background: '#1a4a6b' }}>
+            style={{ background: '#2f5a5e' }}>
             {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
             {isNew ? 'Add Jurisdiction' : 'Save Changes'}
           </button>
@@ -483,7 +483,7 @@ function PermitDetail({ permit, jurisdictions, onEdit, onDelete, onClose }: {
             <p className="text-sm text-gray-500">{permit.job_address}</p>
           </div>
           <div className="flex items-center gap-2">
-            <button onClick={onEdit} className="flex items-center gap-1 px-3 py-1.5 text-sm text-white rounded-lg" style={{ background: '#1a4a6b' }}>
+            <button onClick={onEdit} className="flex items-center gap-1 px-3 py-1.5 text-sm text-white rounded-lg" style={{ background: '#2f5a5e' }}>
               <Edit2 size={13} /> Edit
             </button>
             <button onClick={onClose} className="p-1 rounded-lg hover:bg-gray-100"><X size={18} /></button>
@@ -628,7 +628,7 @@ function JurisdictionsView({ jurisdictions, onRefresh }: { jurisdictions: Jurisd
         </div>
         <button onClick={() => { setEditJx({}); setShowModal(true) }}
           className="flex items-center gap-2 px-4 py-2 text-sm text-white rounded-xl"
-          style={{ background: '#1a4a6b' }}>
+          style={{ background: '#2f5a5e' }}>
           <Plus size={15} /> Add Jurisdiction
         </button>
       </div>
@@ -786,7 +786,7 @@ export default function PermitsPage() {
       <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
         <div>
           <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
-            <FileCheck size={24} style={{ color: '#1a4a6b' }} />
+            <FileCheck size={24} style={{ color: '#2f5a5e' }} />
             Permits / Licensing
           </h1>
           <p className="text-gray-500 text-sm mt-0.5">Track permits, jurisdictions, inspections & deadlines</p>
@@ -804,7 +804,7 @@ export default function PermitsPage() {
           </button>
           <button onClick={() => { setEditPermit({}); setShowPermitModal(true) }}
             className="flex items-center gap-2 px-4 py-2 text-sm text-white rounded-xl"
-            style={{ background: '#1a4a6b' }}>
+            style={{ background: '#2f5a5e' }}>
             <Plus size={15} /> Add Permit
           </button>
         </div>
@@ -839,7 +839,7 @@ export default function PermitsPage() {
           {/* Summary Cards */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
             {[
-              { label: 'Total', value: permits.length, color: '#1a4a6b' },
+              { label: 'Total', value: permits.length, color: '#2f5a5e' },
               { label: 'Active', value: permits.filter(p => !['closed', 'not_required', 'passed'].includes(p.status)).length, color: '#d97706' },
               { label: 'Issued', value: permits.filter(p => p.status === 'issued').length, color: '#059669' },
               { label: 'Fee Due', value: permits.filter(p => p.permit_fee && !p.fee_paid).length, color: '#dc2626' },
@@ -862,7 +862,7 @@ export default function PermitsPage() {
               {allStatuses.map(s => (
                 <button key={s} onClick={() => setStatusFilter(s)}
                   className={`px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all ${statusFilter === s ? 'border-transparent text-white' : 'border-gray-200 text-gray-600 hover:border-gray-300'}`}
-                  style={statusFilter === s ? { background: '#1a4a6b' } : {}}>
+                  style={statusFilter === s ? { background: '#2f5a5e' } : {}}>
                   {s === 'all' ? 'All' : STATUS_CONFIG[s]?.label || s}
                 </button>
               ))}

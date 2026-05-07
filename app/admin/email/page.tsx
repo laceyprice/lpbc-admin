@@ -18,7 +18,10 @@ const FOLDERS = [
   { key: 'all', label: 'All Mail', icon: Mail },
 ] as const
 
-const SIG_KEY = 'gasologist_email_signature'
+// Migrated from the old "gasologist_email_signature" key — falls back to that
+// on first read so any existing signatures users saved aren't lost.
+const SIG_KEY = 'lpbc_email_signature'
+const LEGACY_SIG_KEY = 'gasologist_email_signature'
 const DEFAULT_SIGNATURE = `<br><br>—<br><strong>Lacey Price</strong><br>L. Price Building Company<br><a href="tel:8505989128">850-598-9128</a><br><a href="mailto:Lacey@LaceyNPrice.com">Lacey@LaceyNPrice.com</a>`
 
 export default function EmailPage() {
@@ -49,7 +52,7 @@ export function EmailInbox({ embedded = false }: { embedded?: boolean } = {}) {
   // Load signature from localStorage
   useEffect(() => {
     if (typeof window === 'undefined') return
-    setSignature(localStorage.getItem(SIG_KEY) || DEFAULT_SIGNATURE)
+    setSignature(localStorage.getItem(SIG_KEY) || localStorage.getItem(LEGACY_SIG_KEY) || DEFAULT_SIGNATURE)
   }, [])
 
   useEffect(() => { loadList() }, [folder])
@@ -296,7 +299,7 @@ export function EmailInbox({ embedded = false }: { embedded?: boolean } = {}) {
             <button onClick={() => setShowSettings(true)} className="flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-semibold text-gray-600 hover:bg-gray-100">
               <Settings size={14} />Signature
             </button>
-            <button onClick={() => openCompose()} className="flex items-center gap-2 px-4 py-2 rounded-xl text-white text-sm font-bold shadow-sm" style={{ background: '#185FA5' }}>
+            <button onClick={() => openCompose()} className="flex items-center gap-2 px-4 py-2 rounded-xl text-white text-sm font-bold shadow-sm" style={{ background: '#b8895a' }}>
               <Plus size={14} />Compose
             </button>
           </div>
@@ -307,7 +310,7 @@ export function EmailInbox({ embedded = false }: { embedded?: boolean } = {}) {
           <button onClick={() => setShowSettings(true)} className="flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-semibold text-gray-600 hover:bg-gray-100">
             <Settings size={14} />Signature
           </button>
-          <button onClick={() => openCompose()} className="flex items-center gap-2 px-4 py-2 rounded-xl text-white text-sm font-bold shadow-sm" style={{ background: '#185FA5' }}>
+          <button onClick={() => openCompose()} className="flex items-center gap-2 px-4 py-2 rounded-xl text-white text-sm font-bold shadow-sm" style={{ background: '#b8895a' }}>
             <Plus size={14} />Compose
           </button>
         </div>
@@ -517,7 +520,7 @@ export function EmailInbox({ embedded = false }: { embedded?: boolean } = {}) {
                   <Save size={13} />Save Draft
                 </button>
                 <button onClick={send} disabled={sending || !composeTo || !composeSubject}
-                  className="flex items-center gap-2 px-5 py-2 rounded-xl text-white text-sm font-bold disabled:opacity-50" style={{ background: '#185FA5' }}>
+                  className="flex items-center gap-2 px-5 py-2 rounded-xl text-white text-sm font-bold disabled:opacity-50" style={{ background: '#b8895a' }}>
                   {sending ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
                   Send
                 </button>
@@ -563,7 +566,7 @@ export function EmailInbox({ embedded = false }: { embedded?: boolean } = {}) {
             <div className="flex justify-end gap-2 px-5 py-3 border-t border-gray-100">
               <button onClick={() => { localStorage.removeItem(SIG_KEY); setSignature(DEFAULT_SIGNATURE); if (sigRef.current) sigRef.current.innerHTML = DEFAULT_SIGNATURE }}
                 className="px-3 py-2 rounded-xl text-sm font-semibold text-gray-600 hover:bg-gray-100">Reset to default</button>
-              <button onClick={saveSignature} className="px-5 py-2 rounded-xl text-white text-sm font-bold" style={{ background: '#185FA5' }}>Save</button>
+              <button onClick={saveSignature} className="px-5 py-2 rounded-xl text-white text-sm font-bold" style={{ background: '#b8895a' }}>Save</button>
             </div>
           </div>
         </div>

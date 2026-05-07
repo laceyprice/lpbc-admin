@@ -94,7 +94,7 @@ export default function LicensingPage() {
     setEditing(null)
     setForm({
       license_type: 'contractor',
-      holder_name: 'The Gasologist LLC',
+      holder_name: 'L. Price Building Company',
       holder_type: 'business',
       status: 'active',
       renewal_period_months: 12,
@@ -168,7 +168,7 @@ export default function LicensingPage() {
           <h1 className="text-2xl font-extrabold text-gray-900">Permits / Licensing</h1>
           <p className="text-gray-500 text-sm">{licenses.length} licenses tracked · {activeCount} active</p>
         </div>
-        <button onClick={openAdd} className="flex items-center gap-2 text-white font-semibold px-4 py-2.5 rounded-xl shadow-md" style={{ background:'#185FA5' }}>
+        <button onClick={openAdd} className="flex items-center gap-2 text-white font-semibold px-4 py-2.5 rounded-xl shadow-md" style={{ background:'#b8895a' }}>
           <Plus size={16} /> Add License
         </button>
       </div>
@@ -193,7 +193,7 @@ export default function LicensingPage() {
         <StatCard icon={<CheckCircle2 size={14} />} label="Active" value={activeCount} color="#16a34a" />
         <StatCard icon={<AlertTriangle size={14} />} label="Expiring Soon (60 days)" value={expiringCount} color={expiringCount > 0 ? '#d97706' : '#9ca3af'} />
         <StatCard icon={<AlertTriangle size={14} />} label="Expired" value={expiredCount} color={expiredCount > 0 ? '#dc2626' : '#9ca3af'} />
-        <StatCard icon={<Award size={14} />} label="Total" value={licenses.length} color="#185FA5" />
+        <StatCard icon={<Award size={14} />} label="Total" value={licenses.length} color="#b8895a" />
       </div>
 
       {/* Search + filter */}
@@ -223,7 +223,7 @@ export default function LicensingPage() {
           <Award size={32} className="mx-auto mb-2 text-gray-300" />
           <p className="text-sm font-semibold text-gray-700 mb-1">No licenses yet</p>
           <p className="text-xs text-gray-500 mb-3">Track contractor licenses, LP gas dealer permits (FDACS), bonds, and insurance with renewal dates.</p>
-          <button onClick={openAdd} className="px-4 py-2 rounded-xl text-white text-sm font-bold" style={{ background:'#185FA5' }}>
+          <button onClick={openAdd} className="px-4 py-2 rounded-xl text-white text-sm font-bold" style={{ background:'#b8895a' }}>
             <Plus size={14} className="inline mr-1" />Add Your First License
           </button>
         </div>
@@ -371,7 +371,7 @@ export default function LicensingPage() {
             </div>
             <div className="sticky bottom-0 bg-white flex justify-end gap-2 px-6 py-4 border-t border-gray-100">
               <button onClick={() => { setShowForm(false); setEditing(null); setForm({}) }} className="px-4 py-2 rounded-xl text-sm font-semibold text-gray-600 hover:bg-gray-100">Cancel</button>
-              <button onClick={save} disabled={saving || !form.holder_name} className="flex items-center gap-2 px-5 py-2 rounded-xl text-white text-sm font-bold disabled:opacity-50" style={{ background:'#185FA5' }}>
+              <button onClick={save} disabled={saving || !form.holder_name} className="flex items-center gap-2 px-5 py-2 rounded-xl text-white text-sm font-bold disabled:opacity-50" style={{ background:'#b8895a' }}>
                 {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
                 {editing ? 'Save Changes' : 'Add License'}
               </button>

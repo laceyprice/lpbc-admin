@@ -234,7 +234,7 @@ export default function TodoPage() {
       <div className="flex items-center justify-between mb-6">
         <div>
           <div className="flex items-center gap-2 mb-1">
-            <Sparkles size={22} style={{ color: '#185FA5' }} />
+            <Sparkles size={22} style={{ color: '#b8895a' }} />
             <h1 className="text-2xl font-extrabold text-gray-900">Todo List</h1>
           </div>
           <p className="text-gray-500 text-sm">
@@ -251,7 +251,7 @@ export default function TodoPage() {
             onClick={refresh}
             disabled={loading}
             className="flex items-center gap-2 text-white font-semibold px-4 py-2.5 rounded-xl shadow-md disabled:opacity-60"
-            style={{ background: '#185FA5' }}>
+            style={{ background: '#b8895a' }}>
             {loading ? <Loader2 size={15} className="animate-spin" /> : <RefreshCw size={15} />}
             {loading ? 'Analyzing…' : 'Refresh'}
           </button>
@@ -413,7 +413,7 @@ export default function TodoPage() {
             <button
               onClick={refresh}
               className="text-white font-semibold px-5 py-2.5 rounded-xl shadow-md flex items-center gap-2"
-              style={{ background: '#185FA5' }}>
+              style={{ background: '#b8895a' }}>
               <Sparkles size={15} />Generate AI Todos
             </button>
           </div>
@@ -473,7 +473,7 @@ export default function TodoPage() {
                               <button
                                 onClick={() => router.push(todo.action_url!)}
                                 className="flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-lg border hover:bg-gray-50 whitespace-nowrap"
-                                style={{ borderColor: '#185FA5', color: '#185FA5' }}>
+                                style={{ borderColor: '#b8895a', color: '#b8895a' }}>
                                 Go <ArrowRight size={11} />
                               </button>
                             )}
@@ -576,7 +576,7 @@ export default function TodoPage() {
             <div className="flex justify-end gap-2 px-5 py-3 border-t border-gray-100">
               <button onClick={() => setShowAdd(false)} className="px-4 py-2 rounded-xl text-sm font-semibold text-gray-600 hover:bg-gray-100">Cancel</button>
               <button onClick={createManualTodo} disabled={savingTodo || !addForm.title}
-                className="px-5 py-2 rounded-xl text-white text-sm font-bold disabled:opacity-50" style={{ background:'#185FA5' }}>
+                className="px-5 py-2 rounded-xl text-white text-sm font-bold disabled:opacity-50" style={{ background:'#b8895a' }}>
                 {savingTodo ? 'Adding…' : 'Add Todo'}
               </button>
             </div>

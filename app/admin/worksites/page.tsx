@@ -362,8 +362,8 @@ export default function WorksitesPage() {
           </button>
           <div className="flex-1">
             <div className="flex items-center gap-3 flex-wrap">
-              <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: '#EBF3FC' }}>
-                <PropIcon size={18} style={{ color: '#185FA5' }} />
+              <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: '#f3ede3' }}>
+                <PropIcon size={18} style={{ color: '#b8895a' }} />
               </div>
               <div>
                 <h1 className="text-xl font-extrabold text-gray-900">{selected.address}</h1>
@@ -384,7 +384,7 @@ export default function WorksitesPage() {
         </div>
 
         {detailLoading ? (
-          <div className="flex justify-center py-20"><Loader2 size={28} className="animate-spin" style={{ color: '#185FA5' }} /></div>
+          <div className="flex justify-center py-20"><Loader2 size={28} className="animate-spin" style={{ color: '#b8895a' }} /></div>
         ) : (
           <>
             {/* Edit form */}
@@ -424,7 +424,7 @@ export default function WorksitesPage() {
                 <div className="flex gap-2">
                   <button type="submit" disabled={savingEdit}
                     className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-white text-sm font-bold disabled:opacity-60"
-                    style={{ background: '#185FA5' }}>
+                    style={{ background: '#b8895a' }}>
                     {savingEdit ? <Loader2 size={13} className="animate-spin" /> : <CheckCircle2 size={13} />}Save
                   </button>
                   <button type="button" onClick={() => setEditingSite(false)} className="px-4 py-2 rounded-xl border border-gray-200 text-sm font-semibold">Cancel</button>
@@ -451,7 +451,7 @@ export default function WorksitesPage() {
               return (
                 <div className="grid grid-cols-4 gap-3 mb-5">
                   <div className="bg-white rounded-2xl border border-gray-100 p-4 shadow-sm">
-                    <div className="text-2xl font-extrabold" style={{ color: '#185FA5' }}>{totalInvoices}</div>
+                    <div className="text-2xl font-extrabold" style={{ color: '#b8895a' }}>{totalInvoices}</div>
                     <div className="text-xs text-gray-500 mt-0.5">Invoices</div>
                   </div>
                   <div className="bg-white rounded-2xl border border-gray-100 p-4 shadow-sm">
@@ -490,7 +490,7 @@ export default function WorksitesPage() {
                     if (k === 'permits' && selected) loadSitePermits(selected.address)
                   }}
                     className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${detailTab === k ? 'bg-white shadow-sm' : 'text-gray-500'}`}
-                    style={{ color: detailTab === k ? '#185FA5' : undefined }}>
+                    style={{ color: detailTab === k ? '#b8895a' : undefined }}>
                     {l}
                     {count > 0 && <span className="ml-1.5 text-xs bg-blue-100 text-blue-700 rounded-full px-1.5 py-0.5">{count}</span>}
                   </button>
@@ -509,7 +509,7 @@ export default function WorksitesPage() {
                 ...(s.visits||[]).filter((v: any) => !v.invoice_id).map((v: any) => ({ id: `visit-${v.id}`, date: v.visit_date || '', type: 'visit' as const, data: v })),
               ].sort((a, b) => b.date.localeCompare(a.date))
               const typeStyle: Record<string, { bg: string; border: string; label: string; icon: any }> = {
-                invoice:          { bg: '#EBF3FC', border: '#185FA5', label: 'Invoice',          icon: Receipt },
+                invoice:          { bg: '#f3ede3', border: '#b8895a', label: 'Invoice',          icon: Receipt },
                 appointment:      { bg: '#F0FDF4', border: '#16A34A', label: 'Appointment',      icon: Calendar },
                 schedule_request: { bg: '#FFFBEB', border: '#D97706', label: 'Schedule Request', icon: ClipboardList },
                 visit:            { bg: '#F5F3FF', border: '#7C3AED', label: 'Work Visit',        icon: FileText },
@@ -518,7 +518,7 @@ export default function WorksitesPage() {
                 <div className="space-y-4">
                   <button onClick={() => setShowNewVisit(true)}
                     className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-white text-sm font-bold shadow-sm"
-                    style={{ background: '#185FA5' }}>
+                    style={{ background: '#b8895a' }}>
                     <Plus size={14} />Log Visit / Work
                   </button>
                   {events.length === 0 ? (
@@ -623,7 +623,7 @@ export default function WorksitesPage() {
                                 <div className="flex items-center gap-2 flex-wrap mb-1">
                                   <span className="text-xs font-bold uppercase tracking-wider" style={{ color: ts.border }}>{ts.label}</span>
                                   <span className="text-xs text-gray-400">{formatDateShort(v.visit_date)}</span>
-                                  {v.service_type && <span className="text-xs px-1.5 py-0.5 rounded-full font-semibold" style={{ background: '#EBF3FC', color: '#185FA5' }}>{v.service_type}</span>}
+                                  {v.service_type && <span className="text-xs px-1.5 py-0.5 rounded-full font-semibold" style={{ background: '#f3ede3', color: '#b8895a' }}>{v.service_type}</span>}
                                 </div>
                                 {v.customer_name && <div className="text-xs text-gray-500">{v.customer_name}{v.customer_phone?` · ${v.customer_phone}`:''}</div>}
                                 {v.technician && <div className="text-xs text-gray-500">Tech: {v.technician}</div>}
@@ -676,7 +676,7 @@ export default function WorksitesPage() {
                   ) : contacts.map((c: any, i: number) => (
                     <div key={i} className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
                       <div className="flex items-start gap-3">
-                        <div className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 font-bold text-sm text-white" style={{ background: '#185FA5' }}>
+                        <div className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 font-bold text-sm text-white" style={{ background: '#b8895a' }}>
                           {c.name.split(' ').map((n: string) => n[0]).slice(0,2).join('').toUpperCase()}
                         </div>
                         <div className="flex-1">
@@ -730,7 +730,7 @@ export default function WorksitesPage() {
                   <div className="flex items-center gap-3">
                     <button onClick={() => { setPermitForm({ permit_type: 'gas', status: 'pending_application' }); setShowAddPermit(true) }}
                       className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-white text-sm font-bold shadow-sm"
-                      style={{ background: '#185FA5' }}>
+                      style={{ background: '#b8895a' }}>
                       <Plus size={14} />Add Permit
                     </button>
                     <a href="/admin/permits" className="flex items-center gap-1 text-xs text-blue-600 hover:underline">
@@ -739,7 +739,7 @@ export default function WorksitesPage() {
                   </div>
 
                   {permitsLoading ? (
-                    <div className="flex justify-center py-12"><Loader2 size={24} className="animate-spin" style={{ color: '#185FA5' }} /></div>
+                    <div className="flex justify-center py-12"><Loader2 size={24} className="animate-spin" style={{ color: '#b8895a' }} /></div>
                   ) : sitePermits.length === 0 ? (
                     <div className="text-center py-12 text-gray-400">
                       <FileCheck size={30} className="mx-auto mb-2 opacity-30" />
@@ -881,7 +881,7 @@ export default function WorksitesPage() {
                           <div className="flex gap-3 pt-1">
                             <button type="submit" disabled={savingPermit}
                               className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl text-white font-bold disabled:opacity-60"
-                              style={{ background: '#185FA5' }}>
+                              style={{ background: '#b8895a' }}>
                               {savingPermit ? <Loader2 size={15} className="animate-spin" /> : <FileCheck size={15} />}Add Permit
                             </button>
                             <button type="button" onClick={() => setShowAddPermit(false)} className="px-5 py-3 rounded-xl border border-gray-200 font-semibold text-sm">Cancel</button>
@@ -902,11 +902,11 @@ export default function WorksitesPage() {
                     {PHOTO_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
                   </select>
                   <input value={photoCaption} onChange={e => setPhotoCaption(e.target.value)} placeholder="Caption (optional)" className="flex-1 min-w-32 px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none" />
-                  <label className={`flex items-center gap-2 px-3 py-2 rounded-xl text-white text-sm font-bold cursor-pointer ${uploadingPhoto?'opacity-50 cursor-not-allowed':''}`} style={{ background: '#185FA5' }}>
+                  <label className={`flex items-center gap-2 px-3 py-2 rounded-xl text-white text-sm font-bold cursor-pointer ${uploadingPhoto?'opacity-50 cursor-not-allowed':''}`} style={{ background: '#b8895a' }}>
                     {uploadingPhoto?<Loader2 size={14} className="animate-spin"/>:<Camera size={14}/>} Take Photo
                     <input type="file" accept="image/*" capture="environment" className="hidden" disabled={uploadingPhoto} onChange={e=>{const f=e.target.files?.[0];if(f)uploadPhoto(f,null)}} />
                   </label>
-                  <label className={`flex items-center gap-2 px-3 py-2 rounded-xl border-2 text-sm font-bold cursor-pointer hover:bg-blue-50 ${uploadingPhoto?'opacity-50 cursor-not-allowed':''}`} style={{ borderColor:'#185FA5', color:'#185FA5' }}>
+                  <label className={`flex items-center gap-2 px-3 py-2 rounded-xl border-2 text-sm font-bold cursor-pointer hover:bg-blue-50 ${uploadingPhoto?'opacity-50 cursor-not-allowed':''}`} style={{ borderColor:'#b8895a', color:'#b8895a' }}>
                     {uploadingPhoto?<Loader2 size={14} className="animate-spin"/>:<Upload size={14}/>} Upload
                     <input type="file" accept="image/*" className="hidden" disabled={uploadingPhoto} onChange={e=>{const f=e.target.files?.[0];if(f)uploadPhoto(f,null)}} />
                   </label>
@@ -976,7 +976,7 @@ export default function WorksitesPage() {
                 <div className="flex gap-3 pt-2">
                   <button type="submit" disabled={savingVisit}
                     className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl text-white font-bold disabled:opacity-60"
-                    style={{ background: '#185FA5' }}>
+                    style={{ background: '#b8895a' }}>
                     {savingVisit ? <Loader2 size={15} className="animate-spin" /> : <CheckCircle2 size={15} />}Save Visit
                   </button>
                   <button type="button" onClick={() => setShowNewVisit(false)} className="px-5 py-3 rounded-xl border border-gray-200 font-semibold text-sm">Cancel</button>
@@ -1021,13 +1021,13 @@ export default function WorksitesPage() {
         <div className="flex items-center gap-2">
           <button onClick={importFromInvoices} disabled={importing}
             className="flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-sm border border-gray-200 hover:bg-gray-50 disabled:opacity-60 transition-all"
-            style={{ color: '#185FA5' }}>
+            style={{ color: '#b8895a' }}>
             {importing ? <Loader2 size={14} className="animate-spin" /> : <FileText size={14} />}
             {importing ? 'Importingâ€¦' : 'Import from Invoices'}
           </button>
           <button onClick={() => setShowNewSite(true)}
             className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-white font-bold shadow-md text-sm"
-            style={{ background: '#185FA5' }}>
+            style={{ background: '#b8895a' }}>
             <Plus size={14} />Add Property
           </button>
         </div>
@@ -1054,7 +1054,7 @@ export default function WorksitesPage() {
 
       {/* List */}
       {loading ? (
-        <div className="flex justify-center py-20"><Loader2 size={28} className="animate-spin" style={{ color: '#185FA5' }} /></div>
+        <div className="flex justify-center py-20"><Loader2 size={28} className="animate-spin" style={{ color: '#b8895a' }} /></div>
       ) : filtered.length === 0 ? (
         <div className="text-center py-20 text-gray-400">
           <MapPin size={32} className="mx-auto mb-3 opacity-30" />
@@ -1063,18 +1063,18 @@ export default function WorksitesPage() {
           <div className="flex items-center justify-center gap-3">
             <button onClick={importFromInvoices} disabled={importing}
               className="flex items-center gap-2 px-5 py-2.5 rounded-xl font-bold text-sm border-2 disabled:opacity-60"
-              style={{ borderColor: '#185FA5', color: '#185FA5' }}>
+              style={{ borderColor: '#b8895a', color: '#b8895a' }}>
               {importing ? <Loader2 size={14} className="animate-spin" /> : <FileText size={14} />}
               {importing ? 'Importingâ€¦' : 'Import from Invoices'}
             </button>
             <button onClick={() => setShowNewSite(true)}
               className="text-white font-bold px-6 py-2.5 rounded-xl shadow-md text-sm"
-              style={{ background: '#185FA5' }}>Add First Property</button>
+              style={{ background: '#b8895a' }}>Add First Property</button>
           </div>
         </div>
       ) : (
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto" style={{ WebkitOverflowScrolling: 'touch' }}>
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-gray-50 border-b border-gray-100">
@@ -1089,8 +1089,8 @@ export default function WorksitesPage() {
                   return (
                     <tr key={site.id} onClick={() => openSite(site)} className="hover:bg-gray-50 cursor-pointer transition-colors">
                       <td className="px-5 py-3">
-                        <div className="w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: '#EBF3FC' }}>
-                          <PropIcon size={15} style={{ color: '#185FA5' }} />
+                        <div className="w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: '#f3ede3' }}>
+                          <PropIcon size={15} style={{ color: '#b8895a' }} />
                         </div>
                       </td>
                       <td className="px-5 py-3">
@@ -1101,7 +1101,7 @@ export default function WorksitesPage() {
                         <span className="text-xs capitalize text-gray-500">{site.property_type}</span>
                       </td>
                       <td className="px-5 py-3">
-                        <span className={`text-sm font-bold ${site.visit_count > 0 ? '' : 'text-gray-400'}`} style={{ color: site.visit_count > 0 ? '#185FA5' : undefined }}>{site.visit_count}</span>
+                        <span className={`text-sm font-bold ${site.visit_count > 0 ? '' : 'text-gray-400'}`} style={{ color: site.visit_count > 0 ? '#b8895a' : undefined }}>{site.visit_count}</span>
                       </td>
                       <td className="px-5 py-3">
                         {(() => {
@@ -1160,7 +1160,7 @@ export default function WorksitesPage() {
                     <button key={value} type="button"
                       onClick={() => setSiteForm(f => ({ ...f, property_type: value }))}
                       className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl border-2 text-sm font-semibold transition-all ${siteForm.property_type === value ? 'text-white border-transparent' : 'border-gray-200 text-gray-500 hover:border-gray-300'}`}
-                      style={{ background: siteForm.property_type === value ? '#185FA5' : undefined }}>
+                      style={{ background: siteForm.property_type === value ? '#b8895a' : undefined }}>
                       <Icon size={14} />{label}
                     </button>
                   ))}
@@ -1174,7 +1174,7 @@ export default function WorksitesPage() {
               <div className="flex gap-3 pt-1">
                 <button type="submit" disabled={savingSite}
                   className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl text-white font-bold disabled:opacity-60"
-                  style={{ background: '#185FA5' }}>
+                  style={{ background: '#b8895a' }}>
                   {savingSite ? <Loader2 size={15} className="animate-spin" /> : <MapPin size={15} />}Add Property
                 </button>
                 <button type="button" onClick={() => setShowNewSite(false)} className="px-5 py-3 rounded-xl border border-gray-200 font-semibold text-sm">Cancel</button>

@@ -1,7 +1,8 @@
 'use client'
 import { useEffect, useState, useRef } from 'react'
-import { FileText, Upload, Trash2, ExternalLink, Plus, Loader2, X, AlertCircle, CheckCircle2, Clock, ShieldCheck, File, Mail, ScanLine } from 'lucide-react'
+import { FileText, Upload, Trash2, ExternalLink, Plus, Loader2, X, AlertCircle, CheckCircle2, Clock, ShieldCheck, File, Mail, ScanLine, FolderOpen } from 'lucide-react'
 import { formatDateShort } from '@/lib/utils'
+import DrivePicker from '@/components/admin/DrivePicker'
 
 const DOC_TYPES = [
   { value: 'all', label: 'All Documents' },
@@ -33,6 +34,7 @@ export default function DocumentsPage() {
   const [loading, setLoading] = useState(true)
   const [typeFilter, setTypeFilter] = useState('all')
   const [showUpload, setShowUpload] = useState(false)
+  const [showDrivePicker, setShowDrivePicker] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [form, setForm] = useState({ doc_type: 'coi', vendor_name: '', expiry_date: '', notes: '' })
   const fileRef = useRef<HTMLInputElement>(null)
@@ -164,19 +166,32 @@ export default function DocumentsPage() {
           <h1 className="text-2xl font-extrabold text-gray-900">Vendor Documents</h1>
           <p className="text-sm text-gray-500 mt-0.5">W-9s, certificates of insurance, contracts — auto-imported from email or uploaded manually</p>
         </div>
-        <button onClick={() => setShowUpload(true)}
-          className="flex items-center gap-2 text-white font-semibold px-4 py-2.5 rounded-xl shadow-md"
-          style={{ background: '#185FA5' }}>
-          <Plus size={14} /> Upload Document
-        </button>
+        <div className="flex items-center gap-2 flex-wrap">
+          <button onClick={() => setShowDrivePicker(true)}
+            className="flex items-center gap-2 font-semibold px-4 py-2.5 rounded-xl shadow-sm border"
+            style={{ background: 'white', color: '#2f5a5e', borderColor: '#2f5a5e' }}>
+            <FolderOpen size={14} /> Import from Drive
+          </button>
+          <button onClick={() => setShowUpload(true)}
+            className="flex items-center gap-2 text-white font-semibold px-4 py-2.5 rounded-xl shadow-md"
+            style={{ background: '#b8895a' }}>
+            <Plus size={14} /> Upload Document
+          </button>
+        </div>
       </div>
+      <DrivePicker
+        open={showDrivePicker}
+        onClose={() => setShowDrivePicker(false)}
+        defaultTarget="document"
+        onImported={() => { load() }}
+      />
 
       {/* ── Email Scan Panel ── */}
       <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 mb-5">
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div className="flex items-start gap-3">
-            <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: '#EBF3FC' }}>
-              <Mail size={16} style={{ color: '#185FA5' }} />
+            <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: '#f3ede3' }}>
+              <Mail size={16} style={{ color: '#b8895a' }} />
             </div>
             <div>
               <p className="font-bold text-gray-900 text-sm">Scan Lacey@LaceyNPrice.com</p>
@@ -193,7 +208,7 @@ export default function DocumentsPage() {
             </select>
             <button onClick={runScan} disabled={scanning}
               className="flex items-center gap-2 text-white font-semibold px-4 py-2 rounded-xl shadow-sm disabled:opacity-60 text-sm"
-              style={{ background: '#185FA5' }}>
+              style={{ background: '#b8895a' }}>
               {scanning ? <Loader2 size={14} className="animate-spin" /> : <ScanLine size={14} />}
               {scanning ? 'Scanning...' : 'Scan Email'}
             </button>
@@ -303,7 +318,7 @@ export default function DocumentsPage() {
         {DOC_TYPES.map(t => (
           <button key={t.value} onClick={() => setTypeFilter(t.value)}
             className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${typeFilter === t.value ? 'bg-white shadow-sm' : 'text-gray-500'}`}
-            style={{ color: typeFilter === t.value ? '#185FA5' : undefined }}>
+            style={{ color: typeFilter === t.value ? '#b8895a' : undefined }}>
             {t.label}
           </button>
         ))}
@@ -311,7 +326,7 @@ export default function DocumentsPage() {
 
       {/* Document list */}
       {loading ? (
-        <div className="flex justify-center py-20"><Loader2 size={22} className="animate-spin" style={{ color: '#185FA5' }} /></div>
+        <div className="flex justify-center py-20"><Loader2 size={22} className="animate-spin" style={{ color: '#b8895a' }} /></div>
       ) : docs.length === 0 ? (
         <div className="text-center py-20 text-gray-400">
           <FileText size={30} className="mx-auto mb-2 opacity-30" />
@@ -367,7 +382,7 @@ export default function DocumentsPage() {
                     <td className="px-4 py-3">
                       <a href={doc.file_url} target="_blank" rel="noopener noreferrer"
                         className="flex items-center gap-1.5 text-xs font-medium hover:underline truncate max-w-36"
-                        style={{ color: '#185FA5' }}>
+                        style={{ color: '#b8895a' }}>
                         <File size={12} />
                         {doc.file_name || 'View file'}
                         <ExternalLink size={10} className="opacity-60" />
@@ -483,7 +498,7 @@ export default function DocumentsPage() {
             <div className="px-6 pb-5 flex gap-3">
               <button onClick={uploadDoc} disabled={uploading || !selectedFile}
                 className="flex-1 flex items-center justify-center gap-2 text-white font-bold py-2.5 rounded-xl disabled:opacity-60 shadow-sm"
-                style={{ background: '#185FA5' }}>
+                style={{ background: '#b8895a' }}>
                 {uploading ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
                 {uploading ? 'Uploading...' : 'Upload'}
               </button>

@@ -20,6 +20,18 @@ export async function GET(req: NextRequest) {
 
   const { data, error } = await query
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+  // For bank_transactions, also tag which ones are already posted to accounting
+  if (table === 'bank_transactions') {
+    const { data: posted } = await supabase
+      .from('accounting_entries')
+      .select('bank_transaction_id')
+      .not('bank_transaction_id', 'is', null)
+    const postedSet = new Set((posted || []).map((e: any) => e.bank_transaction_id))
+    const enriched = (data || []).map((tx: any) => ({ ...tx, _posted: postedSet.has(tx.id) }))
+    return NextResponse.json(enriched)
+  }
+
   return NextResponse.json(data)
 }
 
@@ -70,6 +82,120 @@ export async function POST(req: NextRequest) {
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
     return NextResponse.json({ imported: data?.length || 0, total: rows.length })
+  }
+
+  // ── Bulk update action — apply payee/account to many transactions at once ──
+  if (action === 'bulk-update') {
+    const body = await req.json()
+    const { ids, payee, account_id } = body
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return NextResponse.json({ error: 'ids required' }, { status: 400 })
+    }
+    const updates: any = {}
+    if (payee !== undefined) updates.payee = payee
+    if (account_id !== undefined) updates.account_id = account_id
+
+    const { error } = await supabase
+      .from('bank_transactions')
+      .update(updates)
+      .in('id', ids)
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+    // Sync to accounting_entries if account_id is being set
+    if (account_id) {
+      const { data: txRows } = await supabase
+        .from('bank_transactions')
+        .select('*')
+        .in('id', ids)
+      for (const tx of txRows || []) {
+        const { data: existing } = await supabase
+          .from('accounting_entries')
+          .select('id')
+          .eq('bank_transaction_id', tx.id)
+          .maybeSingle()
+        if (!existing) {
+          await supabase.from('accounting_entries').insert({
+            transaction_date: tx.transaction_date,
+            description: tx.description,
+            amount: tx.amount,
+            payee: tx.payee || null,
+            account_id,
+            check_number: tx.check_number || null,
+            source: 'bank_sync',
+            bank_transaction_id: tx.id,
+          })
+        } else {
+          await supabase.from('accounting_entries')
+            .update({ account_id, ...(payee !== undefined ? { payee } : {}) })
+            .eq('bank_transaction_id', tx.id)
+        }
+      }
+    } else if (payee !== undefined) {
+      await supabase
+        .from('accounting_entries')
+        .update({ payee })
+        .in('bank_transaction_id', ids)
+    }
+    return NextResponse.json({ updated: ids.length })
+  }
+
+  // ── Bulk delete — remove transactions and their linked accounting entries ──
+  if (action === 'bulk-delete') {
+    const body = await req.json()
+    const { ids } = body
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return NextResponse.json({ error: 'ids required' }, { status: 400 })
+    }
+    // Cascade: delete linked accounting_entries first
+    await supabase
+      .from('accounting_entries')
+      .delete()
+      .in('bank_transaction_id', ids)
+    const { error } = await supabase
+      .from('bank_transactions')
+      .delete()
+      .in('id', ids)
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    return NextResponse.json({ deleted: ids.length })
+  }
+
+  // ── Accept action — post a categorized bank transaction to the accounting ledger ──
+  if (action === 'accept') {
+    const body = await req.json()
+    const { id } = body
+    if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 })
+
+    const { data: tx } = await supabase
+      .from('bank_transactions')
+      .select('*')
+      .eq('id', id)
+      .single()
+    if (!tx) return NextResponse.json({ error: 'Transaction not found' }, { status: 404 })
+    if (!tx.account_id) return NextResponse.json({ error: 'Transaction has no account — categorize first' }, { status: 400 })
+
+    const { data: existing } = await supabase
+      .from('accounting_entries')
+      .select('id')
+      .eq('bank_transaction_id', id)
+      .maybeSingle()
+
+    if (!existing) {
+      const { data: entry, error } = await supabase.from('accounting_entries').insert({
+        transaction_date: tx.transaction_date,
+        description: tx.description,
+        amount: tx.amount,
+        payee: tx.payee || null,
+        category: tx.category || null,
+        account_id: tx.account_id,
+        check_number: tx.check_number || null,
+        notes: tx.notes || null,
+        source: 'bank_sync',
+        bank_transaction_id: id,
+      }).select().single()
+      if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+      return NextResponse.json({ created: true, entry })
+    }
+    return NextResponse.json({ created: false, existing })
   }
 
   // Manual transaction entry

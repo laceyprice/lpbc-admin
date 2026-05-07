@@ -12,6 +12,7 @@ export async function GET(req: NextRequest) {
   const supabase = createServerClient()
   const type = req.nextUrl.searchParams.get('type')
   const matched = req.nextUrl.searchParams.get('matched')
+  const accountId = req.nextUrl.searchParams.get('account_id')
   let query = supabase
     .from('transaction_images')
     .select('*, matched_tx:bank_transactions!transaction_images_matched_bank_transaction_id_fkey(id, transaction_date, description, amount, check_number)')
@@ -19,6 +20,7 @@ export async function GET(req: NextRequest) {
   if (type) query = query.eq('image_type', type)
   if (matched === 'true') query = query.not('matched_bank_transaction_id', 'is', null)
   if (matched === 'false') query = query.is('matched_bank_transaction_id', null)
+  if (accountId) query = query.eq('financial_account_id', accountId)
   const { data, error } = await query
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   await attachSignedUrls(supabase, BUCKET, data)
@@ -185,7 +187,7 @@ export async function PATCH(req: NextRequest) {
   const { id, ...updates } = body
   if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 })
   // whitelist columns we allow to be updated from the client
-  const allowed = ['check_number', 'vendor', 'amount', 'receipt_date', 'notes']
+  const allowed = ['check_number', 'vendor', 'amount', 'receipt_date', 'notes', 'financial_account_id', 'image_type']
   const clean: Record<string, unknown> = {}
   for (const k of allowed) if (k in updates) clean[k] = updates[k]
   const { data, error } = await supabase

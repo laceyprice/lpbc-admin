@@ -691,7 +691,7 @@ export default function InventoryPage() {
                 Sync from Calendar
               </button>
               <button onClick={() => { setNewListForm({ status: 'draft' }); setShowNewList(true) }}
-                className="flex items-center gap-2 px-4 py-2 rounded-xl text-white text-sm font-bold shadow-sm" style={{ background: '#185FA5' }}>
+                className="flex items-center gap-2 px-4 py-2 rounded-xl text-white text-sm font-bold shadow-sm" style={{ background: '#b8895a' }}>
                 <Plus size={14} />New Materials List
               </button>
             </div>
@@ -896,7 +896,7 @@ export default function InventoryPage() {
               <button onClick={() => { setShowNewList(false); setNewListForm({ status: 'draft' }) }}
                 className="px-4 py-2 rounded-xl text-sm font-semibold text-gray-600 hover:bg-gray-100">Cancel</button>
               <button onClick={createList} disabled={savingList || !newListForm.name}
-                className="px-5 py-2 rounded-xl text-white text-sm font-bold disabled:opacity-50" style={{ background: '#185FA5' }}>
+                className="px-5 py-2 rounded-xl text-white text-sm font-bold disabled:opacity-50" style={{ background: '#b8895a' }}>
                 {savingList ? 'Creating…' : 'Create List'}
               </button>
             </div>
@@ -913,7 +913,7 @@ export default function InventoryPage() {
               <p className="text-sm text-gray-500">Companies you regularly order inventory from. Click a supplier to see what's assigned.</p>
             </div>
             <button onClick={() => { setEditSupplier(null); setSupplierForm({}); setShowAddSupplier(true) }}
-              className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-white text-sm font-bold shadow-sm" style={{ background: '#185FA5' }}>
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-white text-sm font-bold shadow-sm" style={{ background: '#b8895a' }}>
               <Plus size={14} />Add Supplier
             </button>
           </div>
@@ -1061,7 +1061,7 @@ export default function InventoryPage() {
               <button onClick={() => { setShowAddSupplier(false); setEditSupplier(null); setSupplierForm({}) }}
                 className="px-4 py-2 rounded-xl text-sm font-semibold text-gray-600 hover:bg-gray-100">Cancel</button>
               <button onClick={saveSupplier} disabled={savingSupplier || !supplierForm.name}
-                className="px-5 py-2 rounded-xl text-white text-sm font-bold disabled:opacity-50" style={{ background: '#185FA5' }}>
+                className="px-5 py-2 rounded-xl text-white text-sm font-bold disabled:opacity-50" style={{ background: '#b8895a' }}>
                 {savingSupplier ? 'Saving…' : 'Save'}
               </button>
             </div>

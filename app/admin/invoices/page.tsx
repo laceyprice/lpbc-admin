@@ -341,7 +341,7 @@ export default function InvoicesPage() {
               setShowContactDropdown(false)
               setShowForm(true)
             }}
-            className="flex items-center gap-2 text-white font-semibold px-4 py-2.5 rounded-xl shadow-md" style={{ background:'#185FA5' }}>
+            className="flex items-center gap-2 text-white font-semibold px-4 py-2.5 rounded-xl shadow-md" style={{ background:'#b8895a' }}>
             <Plus size={15} /> New {typeFilter === 'quote' ? 'Quote' : 'Invoice'}
           </button>
         </div>
@@ -352,14 +352,14 @@ export default function InvoicesPage() {
           {['invoice','quote'].map(t => (
             <button key={t} onClick={() => setTypeFilter(t)}
               className={`px-4 py-2 rounded-lg text-sm font-semibold capitalize transition-all ${typeFilter===t ? 'bg-white shadow-sm' : 'text-gray-500'}`}
-              style={{ color: typeFilter===t ? '#185FA5' : undefined }}>{t}s</button>
+              style={{ color: typeFilter===t ? '#b8895a' : undefined }}>{t}s</button>
           ))}
         </div>
         <div className="flex bg-gray-100 rounded-xl p-1 gap-1">
           {['all','draft','unpaid'].map(s => (
             <button key={s} onClick={() => setFilter(s)}
               className={`px-3 py-1.5 rounded-lg text-xs font-semibold capitalize transition-all ${filter===s ? 'bg-white shadow-sm' : 'text-gray-500'}`}
-              style={{ color: filter===s ? '#185FA5' : undefined }}>{s}</button>
+              style={{ color: filter===s ? '#b8895a' : undefined }}>{s}</button>
           ))}
         </div>
         <div className="relative flex-1 min-w-44">
@@ -370,7 +370,7 @@ export default function InvoicesPage() {
       </div>
 
       <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto" style={{ WebkitOverflowScrolling: 'touch' }}>
           <table className="w-full text-sm">
             <thead><tr className="bg-gray-50 border-b border-gray-100">
               <th className="text-left px-5 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider">
@@ -388,7 +388,7 @@ export default function InvoicesPage() {
               ))}
             </tr></thead>
             <tbody className="divide-y divide-gray-50">
-              {loading ? <tr><td colSpan={8} className="text-center py-12"><Loader2 size={22} className="animate-spin mx-auto" style={{ color:'#185FA5' }} /></td></tr>
+              {loading ? <tr><td colSpan={8} className="text-center py-12"><Loader2 size={22} className="animate-spin mx-auto" style={{ color:'#b8895a' }} /></td></tr>
                 : filtered.length === 0 ? <tr><td colSpan={8} className="text-center py-12 text-gray-400 text-sm">No invoices found</td></tr>
                 : filtered.map(inv => (
                   <tr key={inv.id} onClick={() => openDetail(inv)} className="hover:bg-gray-50 cursor-pointer transition-colors">
@@ -471,7 +471,7 @@ export default function InvoicesPage() {
                 ))}
               </div>
               {selected.service_description && <div className="bg-gray-50 rounded-xl p-3"><div className="text-xs text-gray-500 mb-1">Description</div><div className="text-gray-700">{selected.service_description}</div></div>}
-              {selected.stripe_payment_link && <a href={selected.stripe_payment_link} target="_blank" className="block text-center text-white py-2.5 rounded-xl font-semibold" style={{ background:'#185FA5' }}>View Payment Link ↗</a>}
+              {selected.stripe_payment_link && <a href={selected.stripe_payment_link} target="_blank" className="block text-center text-white py-2.5 rounded-xl font-semibold" style={{ background:'#b8895a' }}>View Payment Link ↗</a>}
               <div className="flex gap-3 pt-2">
                 <button onClick={async () => { await sendInvoice(selected.id); setSelected(null) }} className="flex-1 flex items-center justify-center gap-2 text-white py-2.5 rounded-xl font-semibold" style={{ background:'#2563eb' }}>
                   <Send size={14} />{selected.invoice_status === 'sent' || selected.invoice_status === 'approved' || selected.last_sent_at || selected.sent_at ? 'Resend' : 'Send'} {selected.invoice_type === 'quote' ? 'Quote' : 'Invoice'}
@@ -519,7 +519,7 @@ export default function InvoicesPage() {
 
                 {/* Uploaded files list */}
                 {attachLoading ? (
-                  <div className="flex justify-center py-4"><Loader2 size={16} className="animate-spin" style={{ color:'#185FA5' }} /></div>
+                  <div className="flex justify-center py-4"><Loader2 size={16} className="animate-spin" style={{ color:'#b8895a' }} /></div>
                 ) : attachments.length === 0 ? (
                   <p className="text-xs text-gray-400 text-center py-3">No attachments yet</p>
                 ) : (
@@ -529,7 +529,7 @@ export default function InvoicesPage() {
                         <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${att.doc_type === 'receipt' ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'}`}>
                           {att.doc_type === 'receipt' ? 'Receipt' : 'Check'}
                         </span>
-                        <a href={att.url} target="_blank" rel="noreferrer" className="flex-1 flex items-center gap-1.5 text-xs font-medium truncate hover:underline" style={{ color:'#185FA5' }}>
+                        <a href={att.url} target="_blank" rel="noreferrer" className="flex-1 flex items-center gap-1.5 text-xs font-medium truncate hover:underline" style={{ color:'#b8895a' }}>
                           {att.doc_type === 'receipt' ? <Receipt size={13} /> : <FileImage size={13} />}
                           {att.name}
                         </a>
@@ -545,7 +545,7 @@ export default function InvoicesPage() {
                 <ExternalLink size={14} />View / Print PDF
               </a>
               <div className="flex gap-3 pt-1">
-                <button onClick={() => { setForm({...selected}); loadAttachments(selected.id); setShowForm(true); setSelected(null) }} className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl font-semibold border-2 hover:bg-blue-50 transition-colors" style={{ borderColor:'#185FA5', color:'#185FA5' }}><Edit3 size={14} />Edit</button>
+                <button onClick={() => { setForm({...selected}); loadAttachments(selected.id); setShowForm(true); setSelected(null) }} className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl font-semibold border-2 hover:bg-blue-50 transition-colors" style={{ borderColor:'#b8895a', color:'#b8895a' }}><Edit3 size={14} />Edit</button>
                 <button onClick={() => deleteInvoice(selected.id)} className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl font-semibold border-2 border-red-200 text-red-600 hover:bg-red-50 transition-colors"><Trash2 size={14} />Delete</button>
               </div>
             </div>
@@ -606,7 +606,7 @@ export default function InvoicesPage() {
         const maxMonthlyBilled = Math.max(...monthlyRows.map(([, v]) => v.billed), 1)
         const monthLabels: Record<string, string> = { '01':'Jan','02':'Feb','03':'Mar','04':'Apr','05':'May','06':'Jun','07':'Jul','08':'Aug','09':'Sep','10':'Oct','11':'Nov','12':'Dec' }
 
-        const statCard = (icon: React.ReactNode, label: string, value: string, sub?: string, color = '#185FA5') => (
+        const statCard = (icon: React.ReactNode, label: string, value: string, sub?: string, color = '#b8895a') => (
           <div className="bg-gray-50 rounded-2xl p-4">
             <div className="flex items-center gap-2 mb-2" style={{ color }}>{icon}<span className="text-xs font-bold uppercase tracking-wider opacity-70">{label}</span></div>
             <div className="text-2xl font-extrabold text-gray-900">{value}</div>
@@ -620,7 +620,7 @@ export default function InvoicesPage() {
               <div className="sticky top-0 bg-white px-6 py-4 border-b border-gray-100 flex items-center justify-between">
                 <div>
                   <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
-                    <BarChart2 size={18} style={{ color:'#185FA5' }} />
+                    <BarChart2 size={18} style={{ color:'#b8895a' }} />
                     {isInvoice ? 'Invoice Report' : 'Quote Report'}
                   </h2>
                   <p className="text-xs text-gray-400 mt-0.5">{all.length} {isInvoice ? 'invoice' : 'quote'}{all.length !== 1 ? 's' : ''} total</p>
@@ -672,7 +672,7 @@ export default function InvoicesPage() {
                             <div key={key} className="flex-1 flex flex-col items-center gap-1">
                               <div className="w-full flex items-end gap-0.5 h-24">
                                 <div className="flex-1 rounded-t-md transition-all" style={{ height: `${billedH}%`, background: '#bfdbfe', minHeight: val.billed > 0 ? 4 : 0 }} title={`Billed: ${formatCurrency(val.billed)}`} />
-                                <div className="flex-1 rounded-t-md transition-all" style={{ height: `${collectedH}%`, background: '#185FA5', minHeight: val.collected > 0 ? 4 : 0 }} title={`Collected: ${formatCurrency(val.collected)}`} />
+                                <div className="flex-1 rounded-t-md transition-all" style={{ height: `${collectedH}%`, background: '#b8895a', minHeight: val.collected > 0 ? 4 : 0 }} title={`Collected: ${formatCurrency(val.collected)}`} />
                               </div>
                               <div className="text-xs text-gray-400 font-medium">{monthLabels[month]}</div>
                               {val.count > 0 && <div className="text-xs text-gray-500">{val.count}</div>}
@@ -682,7 +682,7 @@ export default function InvoicesPage() {
                       </div>
                       <div className="flex gap-4 mt-2 text-xs text-gray-500">
                         <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-blue-200 inline-block" />Billed</span>
-                        <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded inline-block" style={{ background:'#185FA5' }} />Collected</span>
+                        <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded inline-block" style={{ background:'#b8895a' }} />Collected</span>
                       </div>
                     </div>
                   </>
@@ -730,7 +730,7 @@ export default function InvoicesPage() {
                             <span className="text-gray-500 ml-2 shrink-0">{formatCurrency(amount)} · {count} job{count !== 1 ? 's' : ''}</span>
                           </div>
                           <div className="bg-gray-100 rounded-full h-2 overflow-hidden">
-                            <div className="h-full rounded-full" style={{ width: `${(amount / maxServiceAmount) * 100}%`, background:'#185FA5' }} />
+                            <div className="h-full rounded-full" style={{ width: `${(amount / maxServiceAmount) * 100}%`, background:'#b8895a' }} />
                           </div>
                         </div>
                       ))}
@@ -863,7 +863,7 @@ export default function InvoicesPage() {
                 <div className="border border-dashed border-gray-200 rounded-2xl p-4">
                   <h3 className="text-sm font-bold text-gray-800 mb-3 flex items-center gap-2"><FileImage size={14} />Check Image</h3>
                   <div className="flex items-center gap-3">
-                    <label className={`flex items-center gap-2 px-4 py-2.5 rounded-xl border border-dashed border-blue-300 text-sm font-semibold cursor-pointer hover:bg-blue-50 transition-all ${attachUploading ? 'opacity-60 cursor-not-allowed' : ''}`} style={{ color:'#185FA5' }}>
+                    <label className={`flex items-center gap-2 px-4 py-2.5 rounded-xl border border-dashed border-blue-300 text-sm font-semibold cursor-pointer hover:bg-blue-50 transition-all ${attachUploading ? 'opacity-60 cursor-not-allowed' : ''}`} style={{ color:'#b8895a' }}>
                       {attachUploading ? <Loader2 size={14} className="animate-spin" /> : <Camera size={14} />}
                       Take Photo
                       <input type="file" accept="image/*" capture="environment" className="hidden" disabled={attachUploading}
@@ -881,7 +881,7 @@ export default function InvoicesPage() {
                       {attachments.filter(a => a.doc_type === 'check').map(att => (
                         <div key={att.path} className="flex items-center gap-3 bg-blue-50 rounded-xl px-3 py-2">
                           <FileImage size={13} className="text-blue-600 shrink-0" />
-                          <a href={att.url} target="_blank" rel="noreferrer" className="flex-1 text-xs font-medium truncate hover:underline" style={{ color:'#185FA5' }}>{att.name}</a>
+                          <a href={att.url} target="_blank" rel="noreferrer" className="flex-1 text-xs font-medium truncate hover:underline" style={{ color:'#b8895a' }}>{att.name}</a>
                           <button onClick={() => deleteAttachment(att.path, (form as any).id)} className="text-gray-400 hover:text-red-500 p-1"><Trash2 size={13} /></button>
                         </div>
                       ))}
@@ -901,7 +901,7 @@ export default function InvoicesPage() {
               )}
             </div>
             <div className="px-6 pb-6 flex gap-2">
-              <button onClick={() => saveForm(false)} disabled={saving} className="flex-1 flex items-center justify-center gap-2 text-white font-bold py-3 rounded-xl disabled:opacity-60" style={{ background:'#185FA5' }}>
+              <button onClick={() => saveForm(false)} disabled={saving} className="flex-1 flex items-center justify-center gap-2 text-white font-bold py-3 rounded-xl disabled:opacity-60" style={{ background:'#b8895a' }}>
                 {saving ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />}{saving ? 'Saving...' : `Save ${form.invoice_type==='quote'?'Quote':'Invoice'}`}
               </button>
               <button onClick={() => saveForm(true)} disabled={saving} className="flex items-center gap-2 px-4 py-3 rounded-xl border-2 border-gray-200 text-gray-600 font-semibold text-sm hover:bg-gray-50 disabled:opacity-60">

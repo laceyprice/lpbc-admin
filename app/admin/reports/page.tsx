@@ -1,9 +1,11 @@
 'use client'
 import { useEffect, useState } from 'react'
-import { Loader2, TrendingUp, TrendingDown, DollarSign, Scale, ArrowRightLeft, Download, AlertTriangle } from 'lucide-react'
+import { Loader2, TrendingUp, TrendingDown, DollarSign, Scale, ArrowRightLeft, Download, AlertTriangle, FileBarChart2, FileText, Trash2 } from 'lucide-react'
 import { formatCurrency, formatDateShort } from '@/lib/utils'
 
-type Tab = 'pnl' | 'balance-sheet' | 'cash-flow' | 'reconciliation'
+type Tab = 'pnl' | 'balance-sheet' | 'cash-flow' | 'reconciliation' | 'generate'
+
+const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December']
 
 interface FinancialAccount { id: string; name: string; color: string }
 
@@ -19,11 +21,55 @@ export default function ReportsPage() {
   const [financialAccounts, setFinancialAccounts] = useState<FinancialAccount[]>([])
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null)
 
+  // Generate Reports tab state
+  const [genMonth, setGenMonth] = useState(() => MONTHS[new Date().getMonth()])
+  const [genYear, setGenYear] = useState(() => new Date().getFullYear())
+  const [genType, setGenType] = useState('pnl')
+  const [generating, setGenerating] = useState(false)
+  const [savedReports, setSavedReports] = useState<any[]>([])
+  const [savedLoading, setSavedLoading] = useState(false)
+
   useEffect(() => {
     fetch('/api/financial-accounts').then(r => r.json()).then(d => setFinancialAccounts(Array.isArray(d) ? d : []))
   }, [])
 
-  useEffect(() => { load() }, [tab, from, to, selectedAccountId])
+  useEffect(() => { if (tab !== 'generate') load() }, [tab, from, to, selectedAccountId])
+  useEffect(() => { if (tab === 'generate') loadSavedReports() }, [tab])
+
+  async function loadSavedReports() {
+    setSavedLoading(true)
+    try {
+      const res = await fetch('/api/saved-reports')
+      const d = await res.json()
+      setSavedReports(Array.isArray(d) ? d : [])
+    } catch { setSavedReports([]) }
+    finally { setSavedLoading(false) }
+  }
+
+  async function generateReport() {
+    setGenerating(true)
+    try {
+      const res = await fetch('/api/saved-reports', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ report_type: genType, month: genMonth, year: genYear }),
+      })
+      if (!res.ok) { const e = await res.json(); alert(e.error || 'Failed to generate report'); return }
+      await loadSavedReports()
+    } catch { alert('Failed to generate report') }
+    finally { setGenerating(false) }
+  }
+
+  async function deleteSavedReport(id: string) {
+    if (!confirm('Delete this saved report?')) return
+    await fetch(`/api/saved-reports?id=${id}`, { method: 'DELETE' })
+    await loadSavedReports()
+  }
+
+  async function downloadSavedReport(report: any) {
+    // Reuse the in-page downloadPDF by temporarily passing the saved report's data
+    await downloadPDFWith(report.report_type, report.report_data, report.period_from, report.period_to)
+  }
 
   async function load() {
     setLoading(true)
@@ -41,15 +87,25 @@ export default function ReportsPage() {
     { k: 'balance-sheet', l: 'Balance Sheet' },
     { k: 'cash-flow', l: 'Cash Flow' },
     { k: 'reconciliation', l: 'Reconciliation' },
+    { k: 'generate', l: 'Generate Reports' },
   ]
+
+  // Computed period for generate tab
+  const monthIndex = MONTHS.indexOf(genMonth)
+  const periodFrom = new Date(genYear, monthIndex, 1).toISOString().split('T')[0]
+  const periodTo = new Date(genYear, monthIndex + 1, 0).toISOString().split('T')[0]
 
   const inputCls = 'px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:border-blue-400'
 
   async function downloadPDF() {
-    if (!data) return
+    if (!data || tab === 'generate') return
+    await downloadPDFWith(tab, data, from, to)
+  }
+
+  async function downloadPDFWith(reportTab: string, reportData: any, reportFrom: string, reportTo: string) {
     const { default: jsPDF } = await import('jspdf')
     await import('jspdf-autotable')
-    const tabLabels: Record<Tab, string> = { pnl: 'Profit & Loss', 'balance-sheet': 'Balance Sheet', 'cash-flow': 'Cash Flow Statement', reconciliation: 'Reconciliation Report' }
+    const tabLabels: Record<string, string> = { pnl: 'Profit & Loss', 'balance-sheet': 'Balance Sheet', 'cash-flow': 'Cash Flow Statement', reconciliation: 'Reconciliation Report' }
     const doc = new jsPDF('p', 'pt', 'letter') as any
     const pageW = doc.internal.pageSize.getWidth()
 
@@ -69,11 +125,11 @@ export default function ReportsPage() {
     doc.setTextColor(30, 30, 30)
     doc.setFontSize(16)
     doc.setFont('helvetica', 'bold')
-    doc.text(tabLabels[tab], 40, headerH + 30)
+    doc.text(tabLabels[reportTab], 40, headerH + 30)
     doc.setFontSize(10)
     doc.setFont('helvetica', 'normal')
     doc.setTextColor(100, 100, 100)
-    doc.text(`Period: ${from} to ${to}`, 40, headerH + 46)
+    doc.text(`Period: ${reportFrom} to ${reportTo}`, 40, headerH + 46)
     doc.text(`Generated: ${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}`, 40, headerH + 60)
 
     let curY = headerH + 80
@@ -83,15 +139,15 @@ export default function ReportsPage() {
     const bodyStyles = { fontSize: 9 }
     const footStyles = { fillColor: [243, 237, 227] as [number, number, number], textColor: brand, fontStyle: 'bold' as const, fontSize: 9 }
 
-    if (tab === 'pnl') {
+    if (reportTab === 'pnl') {
       // Revenue
       curY = addSectionLabel(doc, 'REVENUE', curY, pageW)
       doc.autoTable({
         startY: curY,
         head: [['Account', 'Amount']],
-        body: [...(data.revenue || []).map((l: any) => [l.name, fmtMoney(l.total)]),
-          ...(data.uncategorized?.revenue > 0 ? [['Uncategorized', fmtMoney(data.uncategorized.revenue)]] : [])],
-        foot: [['Total Revenue', fmtMoney(data.totalRevenue ?? 0)]],
+        body: [...(reportData.revenue || []).map((l: any) => [l.name, fmtMoney(l.total)]),
+          ...(reportData.uncategorized?.revenue > 0 ? [['Uncategorized', fmtMoney(reportData.uncategorized.revenue)]] : [])],
+        foot: [['Total Revenue', fmtMoney(reportData.totalRevenue ?? 0)]],
         headStyles, bodyStyles, footStyles,
         margin: { left: 40, right: 40 },
         columnStyles: { 1: { halign: 'right' } },
@@ -103,9 +159,9 @@ export default function ReportsPage() {
       doc.autoTable({
         startY: curY,
         head: [['Account', 'Amount']],
-        body: [...(data.expenses || []).map((l: any) => [l.name, fmtMoney(l.total)]),
-          ...(data.uncategorized?.expense > 0 ? [['Uncategorized', fmtMoney(data.uncategorized.expense)]] : [])],
-        foot: [['Total Expenses', fmtMoney(data.totalExpenses ?? 0)]],
+        body: [...(reportData.expenses || []).map((l: any) => [l.name, fmtMoney(l.total)]),
+          ...(reportData.uncategorized?.expense > 0 ? [['Uncategorized', fmtMoney(reportData.uncategorized.expense)]] : [])],
+        foot: [['Total Expenses', fmtMoney(reportData.totalExpenses ?? 0)]],
         headStyles, bodyStyles, footStyles,
         margin: { left: 40, right: 40 },
         columnStyles: { 1: { halign: 'right' } },
@@ -113,13 +169,13 @@ export default function ReportsPage() {
       curY = doc.lastAutoTable.finalY + 20
 
       // Distributions
-      if ((data.distributions || []).length > 0) {
+      if ((reportData.distributions || []).length > 0) {
         curY = addSectionLabel(doc, 'OWNER DISTRIBUTIONS', curY, pageW)
         doc.autoTable({
           startY: curY,
           head: [['Account', 'Amount']],
-          body: (data.distributions || []).map((l: any) => [l.name, fmtMoney(l.total)]),
-          foot: [['Total Distributions', fmtMoney(data.totalDistributions ?? 0)]],
+          body: (reportData.distributions || []).map((l: any) => [l.name, fmtMoney(l.total)]),
+          foot: [['Total Distributions', fmtMoney(reportData.totalDistributions ?? 0)]],
           headStyles, bodyStyles, footStyles,
           margin: { left: 40, right: 40 },
           columnStyles: { 1: { halign: 'right' } },
@@ -132,11 +188,11 @@ export default function ReportsPage() {
       doc.autoTable({
         startY: curY,
         body: [
-          ['Total Revenue', fmtMoney(data.totalRevenue ?? 0)],
-          ['Total Expenses', fmtMoney(data.totalExpenses ?? 0)],
-          ...((data.totalDistributions ?? 0) > 0 ? [['Total Distributions', fmtMoney(data.totalDistributions)]] : []),
+          ['Total Revenue', fmtMoney(reportData.totalRevenue ?? 0)],
+          ['Total Expenses', fmtMoney(reportData.totalExpenses ?? 0)],
+          ...((reportData.totalDistributions ?? 0) > 0 ? [['Total Distributions', fmtMoney(reportData.totalDistributions)]] : []),
         ],
-        foot: [['NET INCOME', fmtMoney(data.netIncome ?? 0)]],
+        foot: [['NET INCOME', fmtMoney(reportData.netIncome ?? 0)]],
         headStyles, bodyStyles,
         footStyles: { ...footStyles, fontSize: 11 },
         margin: { left: 40, right: 40 },
@@ -144,12 +200,12 @@ export default function ReportsPage() {
       })
     }
 
-    if (tab === 'balance-sheet') {
+    if (reportTab === 'balance-sheet') {
       for (const [label, key] of [['ASSETS', 'assets'], ['LIABILITIES', 'liabilities'], ['EQUITY', 'equity']] as const) {
         curY = addSectionLabel(doc, label, curY, pageW)
-        const lines = (data[key] || []).map((l: any) => [l.name, fmtMoney(l.opening), fmtMoney(l.activity), fmtMoney(l.balance)])
-        if (key === 'equity') lines.push(['Net Income (Current Period)', '—', '—', fmtMoney(data.netIncome ?? 0)])
-        const totalVal = key === 'equity' ? (data.totalEquity ?? 0) + (data.netIncome ?? 0) : (data[`total${label.charAt(0) + label.slice(1).toLowerCase()}`] ?? 0)
+        const lines = (reportData[key] || []).map((l: any) => [l.name, fmtMoney(l.opening), fmtMoney(l.activity), fmtMoney(l.balance)])
+        if (key === 'equity') lines.push(['Net Income (Current Period)', '—', '—', fmtMoney(reportData.netIncome ?? 0)])
+        const totalVal = key === 'equity' ? (reportData.totalEquity ?? 0) + (reportData.netIncome ?? 0) : (reportData[`total${label.charAt(0) + label.slice(1).toLowerCase()}`] ?? 0)
         doc.autoTable({
           startY: curY,
           head: [['Account', 'Opening', 'Activity', 'Balance']],
@@ -165,35 +221,35 @@ export default function ReportsPage() {
       doc.autoTable({
         startY: curY,
         body: [
-          ['Total Assets', fmtMoney(data.totalAssets ?? 0)],
-          ['Total Liabilities & Equity', fmtMoney(data.totalLiabilitiesAndEquity ?? 0)],
+          ['Total Assets', fmtMoney(reportData.totalAssets ?? 0)],
+          ['Total Liabilities & Equity', fmtMoney(reportData.totalLiabilitiesAndEquity ?? 0)],
         ],
-        foot: [['Difference', fmtMoney(Math.abs((data.totalAssets ?? 0) - (data.totalLiabilitiesAndEquity ?? 0)))]],
+        foot: [['Difference', fmtMoney(Math.abs((reportData.totalAssets ?? 0) - (reportData.totalLiabilitiesAndEquity ?? 0)))]],
         headStyles, bodyStyles, footStyles: { ...footStyles, fontSize: 11 },
         margin: { left: 40, right: 40 },
         columnStyles: { 1: { halign: 'right' } },
       })
     }
 
-    if (tab === 'cash-flow') {
+    if (reportTab === 'cash-flow') {
       curY = addSectionLabel(doc, 'MONTHLY CASH FLOW', curY, pageW)
       doc.autoTable({
         startY: curY,
         head: [['Month', 'Inflows', 'Outflows', 'Net']],
-        body: (data.monthly || []).map((m: any) => [m.month, fmtMoney(m.inflows), fmtMoney(m.outflows), fmtMoney(m.net)]),
-        foot: [['TOTAL', fmtMoney(data.totalInflows ?? 0), fmtMoney(data.totalOutflows ?? 0), fmtMoney(data.netCashFlow ?? 0)]],
+        body: (reportData.monthly || []).map((m: any) => [m.month, fmtMoney(m.inflows), fmtMoney(m.outflows), fmtMoney(m.net)]),
+        foot: [['TOTAL', fmtMoney(reportData.totalInflows ?? 0), fmtMoney(reportData.totalOutflows ?? 0), fmtMoney(reportData.netCashFlow ?? 0)]],
         headStyles, bodyStyles, footStyles,
         margin: { left: 40, right: 40 },
         columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' } },
       })
       curY = doc.lastAutoTable.finalY + 20
 
-      if ((data.byAccount || []).length > 0) {
+      if ((reportData.byAccount || []).length > 0) {
         curY = addSectionLabel(doc, 'CASH FLOW BY ACCOUNT', curY, pageW)
         doc.autoTable({
           startY: curY,
           head: [['Account', 'Type', 'Net Amount']],
-          body: (data.byAccount || []).map((a: any) => [a.name, a.type, fmtMoney(a.total)]),
+          body: (reportData.byAccount || []).map((a: any) => [a.name, a.type, fmtMoney(a.total)]),
           headStyles, bodyStyles,
           margin: { left: 40, right: 40 },
           columnStyles: { 2: { halign: 'right' } },
@@ -201,33 +257,33 @@ export default function ReportsPage() {
       }
     }
 
-    if (tab === 'reconciliation') {
+    if (reportTab === 'reconciliation') {
       curY = addSectionLabel(doc, 'RECONCILIATION SUMMARY', curY, pageW)
       doc.autoTable({
         startY: curY,
         head: [['Metric', 'Value']],
         body: [
-          ['Bank Transactions', String(data.bankTransactionCount ?? 0)],
-          ['Accounting Entries', String(data.accountingEntryCount ?? 0)],
-          ['Reconciled', String(data.reconciledCount ?? 0)],
-          ['Unreconciled', String(data.unreconciledCount ?? 0)],
-          ['Uncategorized', String(data.uncategorizedCount ?? 0)],
-          ['Bank Total', fmtMoney(data.bankTotal ?? 0)],
-          ['Accounting Total', fmtMoney(data.accountingTotal ?? 0)],
+          ['Bank Transactions', String(reportData.bankTransactionCount ?? 0)],
+          ['Accounting Entries', String(reportData.accountingEntryCount ?? 0)],
+          ['Reconciled', String(reportData.reconciledCount ?? 0)],
+          ['Unreconciled', String(reportData.unreconciledCount ?? 0)],
+          ['Uncategorized', String(reportData.uncategorizedCount ?? 0)],
+          ['Bank Total', fmtMoney(reportData.bankTotal ?? 0)],
+          ['Accounting Total', fmtMoney(reportData.accountingTotal ?? 0)],
         ],
-        foot: [['Difference', fmtMoney(data.difference ?? 0)]],
+        foot: [['Difference', fmtMoney(reportData.difference ?? 0)]],
         headStyles, bodyStyles, footStyles,
         margin: { left: 40, right: 40 },
         columnStyles: { 1: { halign: 'right' } },
       })
       curY = doc.lastAutoTable.finalY + 20
 
-      if ((data.unreconciled || []).length > 0) {
-        curY = addSectionLabel(doc, `UNRECONCILED TRANSACTIONS (${data.unreconciledCount})`, curY, pageW)
+      if ((reportData.unreconciled || []).length > 0) {
+        curY = addSectionLabel(doc, `UNRECONCILED TRANSACTIONS (${reportData.unreconciledCount})`, curY, pageW)
         doc.autoTable({
           startY: curY,
           head: [['Date', 'Description', 'Payee', 'Amount']],
-          body: (data.unreconciled || []).map((tx: any) => [tx.transaction_date, tx.description, tx.payee || '—', fmtMoney(tx.amount)]),
+          body: (reportData.unreconciled || []).map((tx: any) => [tx.transaction_date, tx.description, tx.payee || '—', fmtMoney(tx.amount)]),
           headStyles, bodyStyles,
           margin: { left: 40, right: 40 },
           columnStyles: { 3: { halign: 'right' } },
@@ -235,12 +291,12 @@ export default function ReportsPage() {
         curY = doc.lastAutoTable.finalY + 20
       }
 
-      if ((data.uncategorized || []).length > 0) {
-        curY = addSectionLabel(doc, `UNCATEGORIZED TRANSACTIONS (${data.uncategorizedCount})`, curY, pageW)
+      if ((reportData.uncategorized || []).length > 0) {
+        curY = addSectionLabel(doc, `UNCATEGORIZED TRANSACTIONS (${reportData.uncategorizedCount})`, curY, pageW)
         doc.autoTable({
           startY: curY,
           head: [['Date', 'Description', 'Payee', 'Amount']],
-          body: (data.uncategorized || []).map((tx: any) => [tx.transaction_date, tx.description, tx.payee || '—', fmtMoney(tx.amount)]),
+          body: (reportData.uncategorized || []).map((tx: any) => [tx.transaction_date, tx.description, tx.payee || '—', fmtMoney(tx.amount)]),
           headStyles, bodyStyles,
           margin: { left: 40, right: 40 },
           columnStyles: { 3: { halign: 'right' } },
@@ -259,7 +315,7 @@ export default function ReportsPage() {
       doc.text(`Page ${i} of ${pageCount}`, pageW - 40, pageH - 20, { align: 'right' })
     }
 
-    const filename = `${tabLabels[tab].replace(/ /g, '_')}_${from}_to_${to}.pdf`
+    const filename = `${tabLabels[reportTab].replace(/ /g, '_')}_${from}_to_${to}.pdf`
     doc.save(filename)
   }
 
@@ -299,16 +355,18 @@ export default function ReportsPage() {
         </div>
       )}
 
-      {/* Date Range */}
-      <div className="flex flex-wrap items-center gap-3 mb-5">
-        <label className="text-sm font-semibold text-gray-600">From</label>
-        <input type="date" value={from} onChange={e => setFrom(e.target.value)} className={inputCls} />
-        <label className="text-sm font-semibold text-gray-600">To</label>
-        <input type="date" value={to} onChange={e => setTo(e.target.value)} className={inputCls} />
-      </div>
+      {/* Date Range — hidden on Generate tab (it has its own period selector) */}
+      {tab !== 'generate' && (
+        <div className="flex flex-wrap items-center gap-3 mb-5">
+          <label className="text-sm font-semibold text-gray-600">From</label>
+          <input type="date" value={from} onChange={e => setFrom(e.target.value)} className={inputCls} />
+          <label className="text-sm font-semibold text-gray-600">To</label>
+          <input type="date" value={to} onChange={e => setTo(e.target.value)} className={inputCls} />
+        </div>
+      )}
 
       {/* Tabs */}
-      <div className="flex gap-1 bg-gray-100 rounded-xl p-1 w-fit mb-6">
+      <div className="flex gap-1 bg-gray-100 rounded-xl p-1 w-fit mb-6 flex-wrap">
         {tabs.map(({ k, l }) => (
           <button key={k} onClick={() => setTab(k)}
             className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${tab === k ? 'bg-white shadow-sm' : 'text-gray-500'}`}
@@ -316,7 +374,79 @@ export default function ReportsPage() {
         ))}
       </div>
 
-      {loading ? (
+      {tab === 'generate' ? (
+        <div className="space-y-6">
+          {/* Generate panel */}
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+            <h2 className="font-bold text-gray-900 mb-1 text-lg">Generate &amp; Save Report</h2>
+            <p className="text-sm text-gray-500 mb-4">Snapshot a report for a specific month/year and save it for historical reference.</p>
+            <div className="flex flex-wrap items-end gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1">Type</label>
+                <select value={genType} onChange={e => setGenType(e.target.value)} className={inputCls}>
+                  <option value="pnl">Profit &amp; Loss</option>
+                  <option value="balance-sheet">Balance Sheet</option>
+                  <option value="cash-flow">Cash Flow</option>
+                  <option value="reconciliation">Reconciliation</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1">Month</label>
+                <select value={genMonth} onChange={e => setGenMonth(e.target.value)} className={inputCls}>
+                  {MONTHS.map(m => <option key={m} value={m}>{m}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1">Year</label>
+                <input type="number" value={genYear} onChange={e => setGenYear(Number(e.target.value))} className={inputCls + ' w-28'} />
+              </div>
+              <div className="text-xs text-gray-400 pb-3">{periodFrom} → {periodTo}</div>
+              <button onClick={generateReport} disabled={generating}
+                className="flex items-center gap-2 text-white font-semibold px-5 py-2 rounded-xl shadow-sm disabled:opacity-60"
+                style={{ background: '#b8895a' }}>
+                {generating ? <Loader2 size={14} className="animate-spin" /> : <FileBarChart2 size={14} />}
+                {generating ? 'Generating…' : 'Generate &amp; Save'}
+              </button>
+            </div>
+          </div>
+
+          {/* Saved reports list */}
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-100">
+            <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+              <h2 className="font-bold text-gray-900">Saved Reports</h2>
+              <span className="text-xs text-gray-400">{savedReports.length} report{savedReports.length === 1 ? '' : 's'}</span>
+            </div>
+            {savedLoading ? (
+              <div className="flex justify-center py-12"><Loader2 size={24} className="animate-spin" style={{ color: '#b8895a' }} /></div>
+            ) : savedReports.length === 0 ? (
+              <div className="text-center py-12 text-gray-400">
+                <FileText size={28} className="mx-auto mb-2 opacity-30" />
+                <p className="text-sm">No saved reports yet</p>
+                <p className="text-xs mt-1">Generate one above to save a snapshot for the period.</p>
+              </div>
+            ) : (
+              <div className="divide-y divide-gray-50">
+                {savedReports.map(r => (
+                  <div key={r.id} className="flex items-center justify-between px-6 py-3 hover:bg-gray-50">
+                    <div className="flex-1">
+                      <div className="font-semibold text-gray-900 text-sm">{r.report_label || `${r.report_type} · ${r.month} ${r.year}`}</div>
+                      <div className="text-xs text-gray-500">
+                        {r.month} {r.year} · {r.period_from} to {r.period_to} · saved {formatDateShort(r.created_at)}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button onClick={() => downloadSavedReport(r)} className="flex items-center gap-1 text-xs font-semibold px-3 py-1.5 rounded-lg text-white" style={{ background: '#b8895a' }}>
+                        <Download size={12} />PDF
+                      </button>
+                      <button onClick={() => deleteSavedReport(r.id)} className="text-gray-300 hover:text-red-500 p-1"><Trash2 size={13} /></button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      ) : loading ? (
         <div className="flex justify-center py-20"><Loader2 size={28} className="animate-spin" style={{ color: '#b8895a' }} /></div>
       ) : !data || data.error ? (
         <div className="text-center py-20 text-gray-400">

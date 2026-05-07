@@ -54,25 +54,25 @@ export async function GET(req: NextRequest) {
       .no-print { display: none !important; }
     }
     body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 40px; color: #1a1a1a; }
-    .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 40px; border-bottom: 3px solid #185FA5; padding-bottom: 20px; }
+    .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 40px; border-bottom: 3px solid #b8895a; padding-bottom: 20px; }
     .company-info { text-align: right; color: #666; font-size: 14px; }
-    .company-info strong { color: #185FA5; font-size: 18px; display: block; margin-bottom: 4px; }
-    .invoice-title { font-size: 32px; font-weight: bold; color: #185FA5; margin: 0; }
+    .company-info strong { color: #b8895a; font-size: 18px; display: block; margin-bottom: 4px; }
+    .invoice-title { font-size: 32px; font-weight: bold; color: #b8895a; margin: 0; }
     .invoice-number { color: #666; font-size: 16px; margin-top: 4px; }
     .details-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 30px; margin-bottom: 30px; }
     .detail-box h3 { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: #999; margin: 0 0 8px; }
     .detail-box p { margin: 2px 0; font-size: 14px; }
     .line-items { width: 100%; border-collapse: collapse; margin-bottom: 30px; }
-    .line-items th { background: #185FA5; color: white; padding: 12px 16px; text-align: left; font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px; }
+    .line-items th { background: #b8895a; color: white; padding: 12px 16px; text-align: left; font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px; }
     .line-items td { padding: 12px 16px; border-bottom: 1px solid #eee; font-size: 14px; }
     .line-items tr:nth-child(even) { background: #f8fafc; }
-    .total-row { background: #185FA5 !important; }
+    .total-row { background: #b8895a !important; }
     .total-row td { color: white; font-weight: bold; font-size: 18px; padding: 14px 16px; }
     .paid-row { background: #16a34a !important; }
     .paid-row td { color: white; font-weight: bold; font-size: 18px; padding: 14px 16px; }
     .paid-stamp { display:inline-block; border: 4px solid #16a34a; color: #16a34a; font-size: 32px; font-weight: 900; letter-spacing: 4px; padding: 6px 20px; border-radius: 6px; transform: rotate(-8deg); opacity: 0.85; margin: 10px 0; }
     .footer { margin-top: 40px; padding-top: 20px; border-top: 1px solid #eee; text-align: center; color: #999; font-size: 12px; }
-    .print-btn { display: inline-block; background: #185FA5; color: white; padding: 12px 32px; border-radius: 8px; text-decoration: none; font-weight: bold; font-size: 16px; cursor: pointer; border: none; margin-bottom: 30px; }
+    .print-btn { display: inline-block; background: #b8895a; color: white; padding: 12px 32px; border-radius: 8px; text-decoration: none; font-weight: bold; font-size: 16px; cursor: pointer; border: none; margin-bottom: 30px; }
     .print-btn:hover { background: #134a80; }
   </style>
 </head>
@@ -93,7 +93,7 @@ export async function GET(req: NextRequest) {
         850-598-9128<br/>
         Lacey@LaceyNPrice.com
       </div>
-      <img src="https://laceynprice.com/logo.png" alt="L. Price Building Company" style="height:80px;width:auto;object-fit:contain"/>
+      <img src="https://login.laceynprice.com/logo.png" alt="L. Price Building Company" style="height:80px;width:auto;object-fit:contain"/>
     </div>
   </div>
 
@@ -149,17 +149,17 @@ export async function GET(req: NextRequest) {
   </div>
   ` : ''}
 
-  ${invoice.notes ? `<div style="background:#f8fafc;padding:16px;border-radius:8px;margin-bottom:20px"><p style="margin:0 0 4px;font-weight:bold;color:#185FA5;font-size:13px">Notes</p><p style="margin:0;font-size:14px;color:#666">${invoice.notes}</p></div>` : ''}
+  ${invoice.notes ? `<div style="background:#f8fafc;padding:16px;border-radius:8px;margin-bottom:20px"><p style="margin:0 0 4px;font-weight:bold;color:#b8895a;font-size:13px">Notes</p><p style="margin:0;font-size:14px;color:#666">${invoice.notes}</p></div>` : ''}
 
   ${!isPaid ? `
   <div style="background:#f8fafc;padding:16px;border-radius:8px;margin-bottom:20px;border:1px solid #e2e8f0">
-    <p style="margin:0 0 8px;font-weight:bold;color:#185FA5;font-size:13px">Payment Options</p>
+    <p style="margin:0 0 8px;font-weight:bold;color:#b8895a;font-size:13px">Payment Options</p>
     <table style="width:100%;font-size:13px;color:#374151">
       <tr><td style="padding:3px 0"><strong>Cash</strong> — Preferred</td></tr>
       <tr><td style="padding:3px 0"><strong>Zelle</strong> — Lacey@LaceyNPrice.com</td></tr>
       <tr><td style="padding:3px 0"><strong>Venmo</strong> — @laceynprice</td></tr>
       <tr><td style="padding:3px 0"><strong>PayPal</strong> — Lacey@LaceyNPrice.com (Friends &amp; Family)</td></tr>
-      <tr><td style="padding:3px 0"><strong>Check</strong> — PO Box, Crestview FL</td></tr>
+      <tr><td style="padding:3px 0"><strong>Check</strong> — 4231 Country Breeze Lane, Crestview FL 32539</td></tr>
     </table>
     <p style="margin:8px 0 0;font-size:11px;color:#6b7280;font-style:italic">Please include invoice #${invoice.invoice_number} in the memo/notes.</p>
   </div>
@@ -167,7 +167,7 @@ export async function GET(req: NextRequest) {
 
   <div class="footer">
     <p>Thank you for your business!</p>
-    <p>D P Gas Company &middot; 850-598-9128 &middot; Lacey@LaceyNPrice.com</p>
+    <p>L. Price Building Company &middot; 850-598-9128 &middot; Lacey@LaceyNPrice.com</p>
   </div>
 </body>
 </html>`

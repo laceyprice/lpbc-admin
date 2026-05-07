@@ -18,7 +18,12 @@ export async function POST(req: NextRequest) {
   if (!body.name) return NextResponse.json({ error: 'name required' }, { status: 400 })
   const { data, error } = await supabase
     .from('financial_accounts')
-    .insert({ name: body.name, description: body.description ?? null, color: body.color ?? '#b8895a' })
+    .insert({
+      name: body.name,
+      description: body.description ?? null,
+      account_number: body.account_number ?? null,
+      color: body.color ?? '#b8895a',
+    })
     .select().single()
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json(data, { status: 201 })
@@ -27,8 +32,15 @@ export async function POST(req: NextRequest) {
 export async function PATCH(req: NextRequest) {
   const supabase = createServerClient()
   const body = await req.json()
-  const { id, ...updates } = body
+  // Whitelist editable fields
+  const { id, name, description, account_number, color, is_active } = body
   if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 })
+  const updates: Record<string, any> = {}
+  if (name !== undefined) updates.name = name
+  if (description !== undefined) updates.description = description || null
+  if (account_number !== undefined) updates.account_number = account_number || null
+  if (color !== undefined) updates.color = color
+  if (is_active !== undefined) updates.is_active = !!is_active
   const { data, error } = await supabase
     .from('financial_accounts')
     .update(updates)

@@ -37,13 +37,13 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const visibleNav = nav.filter(n => !role || n.roles.includes(role))
 
   return (
-    <div className="flex flex-col h-full" style={{ background: 'linear-gradient(180deg, #1a4a6b 0%, #185FA5 100%)' }}>
+    <div className="flex flex-col h-full" style={{ background: 'linear-gradient(180deg, #2f5a5e 0%, #b8895a 100%)' }}>
       <div className="flex items-center gap-3 px-5 py-5 border-b border-white/10">
         <div className="w-10 h-10 bg-white rounded-full flex items-center justify-center flex-shrink-0">
-          <Image src="/logo.png" alt="The Gasologist" width={28} height={28} className="object-contain" />
+          <Image src="/logo.png" alt="L. Price Building Company" width={28} height={28} className="object-contain" />
         </div>
         <div>
-          <div className="text-white font-bold text-sm">The Gasologist</div>
+          <div className="text-white font-bold text-sm">L. Price Building Co.</div>
           <div className="text-xs" style={{ color: 'rgba(255,255,255,0.45)' }}>Admin Portal</div>
         </div>
       </div>
@@ -83,7 +83,7 @@ export default function AdminSidebar() {
       <aside className="hidden md:flex flex-col w-60 flex-shrink-0">
         <SidebarContent />
       </aside>
-      <div className="md:hidden fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-4 py-3 shadow-md" style={{ background: '#1a4a6b' }}>
+      <div className="md:hidden fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-4 py-3 shadow-md" style={{ background: '#2f5a5e' }}>
         <div className="flex items-center gap-2">
           <div className="w-8 h-8 bg-white rounded-full flex items-center justify-center flex-shrink-0">
             <Image src="/logo.png" alt="" width={22} height={22} className="object-contain" />
