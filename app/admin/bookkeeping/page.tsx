@@ -539,7 +539,7 @@ export default function BookkeepingPage() {
   async function load() {
     setLoading(true)
     if (tab === 'statements') {
-      const res = await fetch('/api/bank-statements')
+      const res = await fetch(`/api/bank-statements${selectedAccountId ? `?account_id=${selectedAccountId}` : ''}`)
       const d = await res.json()
       setStatements(Array.isArray(d) ? d : [])
     } else if (tab === 'uploads') {
@@ -693,6 +693,7 @@ export default function BookkeepingPage() {
       for (const file of list) {
         const fd = new FormData()
         fd.append('file', file)
+        if (selectedAccountId) fd.append('financial_account_id', selectedAccountId)
         const res = await fetch('/api/bank-statements', { method: 'POST', body: fd })
         if (res.ok) okCount++
         else failCount++
@@ -1452,9 +1453,9 @@ export default function BookkeepingPage() {
           ) : (
             <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
               <div className="overflow-x-auto" style={{ WebkitOverflowScrolling: 'touch' }}>
-              <table className="w-full text-sm" style={{ minWidth: '500px' }}>
+              <table className="w-full text-sm" style={{ minWidth: '700px' }}>
                 <thead><tr className="bg-gray-50 border-b border-gray-100">
-                  {['File','Date Uploaded','Actions'].map(h => (
+                  {['File','Account','Date Uploaded','Actions'].map(h => (
                     <th key={h} className="text-left px-5 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider whitespace-nowrap">{h}</th>
                   ))}
                 </tr></thead>
@@ -1466,6 +1467,26 @@ export default function BookkeepingPage() {
                           <FileText size={15} />
                           {s.label || s.file_name}
                         </a>
+                      </td>
+                      <td className="px-5 py-3">
+                        <select
+                          value={s.financial_account_id || ''}
+                          onChange={async (e) => {
+                            const newId = e.target.value || null
+                            await fetch('/api/bank-statements', {
+                              method: 'PATCH',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ id: s.id, financial_account_id: newId }),
+                            })
+                            await load()
+                          }}
+                          className="text-xs px-2 py-1 rounded border border-gray-200 bg-white"
+                        >
+                          <option value="">— Unassigned —</option>
+                          {financialAccounts.filter(a => a.is_active).map(a => (
+                            <option key={a.id} value={a.id}>{a.name}</option>
+                          ))}
+                        </select>
                       </td>
                       <td className="px-5 py-3 text-gray-500 text-xs">{formatDateShort(s.created_at)}</td>
                       <td className="px-5 py-3">

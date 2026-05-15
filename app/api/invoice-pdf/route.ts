@@ -104,7 +104,6 @@ export async function GET(req: NextRequest) {
       ${invoice.company_name ? `<p>${invoice.company_name}</p>` : ''}
       ${invoice.customer_email ? `<p>${invoice.customer_email}</p>` : ''}
       ${invoice.customer_phone ? `<p>${invoice.customer_phone}</p>` : ''}
-      ${invoice.customer_address ? `<p>${invoice.customer_address}</p>` : ''}
     </div>
     <div class="detail-box">
       <h3>${label} Details</h3>

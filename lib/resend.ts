@@ -6,13 +6,20 @@ function getResend() {
   return _resend
 }
 
-const FROM = process.env.RESEND_FROM_EMAIL || 'Lacey@LaceyNPrice.com'
+// Normalize: lowercase the domain part so it matches the verified domain in Resend (which is case-sensitive on domains)
+function normalizeFrom(addr: string) {
+  const at = addr.lastIndexOf('@')
+  if (at < 0) return addr
+  return addr.slice(0, at) + '@' + addr.slice(at + 1).toLowerCase()
+}
+const FROM = normalizeFrom(process.env.RESEND_FROM_EMAIL || 'Lacey@laceynprice.com')
+console.log('[resend] FROM normalized to:', FROM)
 const APP = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
 
 function baseHtml(content: string) {
   return `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px">
     <div style="border-radius:12px 12px 0 0;overflow:hidden">
-      <img src="${APP}/email-hero.png" alt="Thank You for the Business" style="width:100%;display:block"/>
+      <img src="${APP}/email-hero.png?v=2" alt="Thank You for the Business" style="width:100%;display:block"/>
     </div>
     <div style="background:#faf7f2;padding:28px;border:1px solid #e2e8f0;border-top:none">
       ${content}
@@ -26,7 +33,7 @@ function baseHtml(content: string) {
 function invoiceHtml(content: string) {
   return `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px">
     <div style="border-radius:12px 12px 0 0;overflow:hidden">
-      <img src="${APP}/email-hero.png" alt="Thank You for the Business" style="width:100%;display:block"/>
+      <img src="${APP}/email-hero.png?v=2" alt="Thank You for the Business" style="width:100%;display:block"/>
     </div>
     <div style="background:#faf7f2;padding:28px;border:1px solid #e2e8f0;border-top:none">
       ${content}
@@ -37,11 +44,16 @@ function invoiceHtml(content: string) {
   </div>`
 }
 
-export async function sendInvoiceEmail({ to, customerName, invoiceNumber, invoiceType, amountDue, dueDate, serviceDescription, jobAddress, jobsiteCity, companyName, paymentUrl, isPaid }: {
+export async function sendInvoiceEmail({ to, customerName, invoiceNumber, invoiceType, amountDue, dueDate, serviceDescription, jobAddress, jobsiteCity, companyName, paymentUrl, isPaid, cc }: {
   to: string; customerName: string; invoiceNumber: string; invoiceType?: string
   amountDue: number; dueDate?: string; serviceDescription?: string; jobAddress?: string
   jobsiteCity?: string; companyName?: string; paymentUrl?: string; isPaid?: boolean
+  cc?: string | string[] | null
 }) {
+  // Normalize cc: accept comma-separated string, array, or null
+  const ccList = !cc
+    ? undefined
+    : (Array.isArray(cc) ? cc : String(cc).split(',').map(s => s.trim()).filter(Boolean))
   const isQuote = invoiceType === 'quote'
   const label = isQuote ? 'Quote' : 'Invoice'
   const subject = isQuote
@@ -54,7 +66,7 @@ export async function sendInvoiceEmail({ to, customerName, invoiceNumber, invoic
       : 'Attached is an invoice for completed services. Please let us know if you have any questions or if we can do anything else to serve you.'
 
   const fullAddress = [jobAddress, jobsiteCity].filter(Boolean).join(', ')
-  const pdfUrl = `${APP}/api/invoice-pdf?id=${invoiceNumber}`
+  const pdfUrl = `${APP}/api/invoice-pdf?id=${encodeURIComponent(invoiceNumber)}`
 
   // Amount row: green PAID badge when paid, brand-colored Amount Due when unpaid
   const amountRow = isPaid
@@ -64,6 +76,7 @@ export async function sendInvoiceEmail({ to, customerName, invoiceNumber, invoic
   return getResend().emails.send({
     from: `L. Price Building Company <${FROM}>`,
     to,
+    cc: ccList,
     subject: subject.trim(),
     html: invoiceHtml(`
       <p style="font-size:16px">Hello,</p>
@@ -89,12 +102,25 @@ export async function sendInvoiceEmail({ to, customerName, invoiceNumber, invoic
       ` : ''}
 
       ${!isQuote && !isPaid && paymentUrl ? `
-      <div style="text-align:center;margin:24px 0"><a href="${paymentUrl}" style="background:#b8895a;color:white;padding:14px 32px;border-radius:8px;text-decoration:none;font-size:16px;font-weight:bold;display:inline-block">Pay Now &mdash; $${amountDue.toFixed(2)}</a></div>
+      <div style="text-align:center;margin:24px 0"><a href="${paymentUrl}" target="_blank" rel="noopener" style="background:#b8895a;color:white;padding:14px 32px;border-radius:8px;text-decoration:none;font-size:16px;font-weight:bold;display:inline-block">Pay Now with Card</a></div>
+      <p style="text-align:center;margin:0 0 16px;font-size:12px;color:#6b7280;font-style:italic">A small card processing fee will be added at checkout. Pay by Cash, Zelle, Venmo, or Check below to avoid the fee.</p>
       ` : ''}
 
       <div style="text-align:center;margin:16px 0">
-        <a href="${pdfUrl}" style="color:#2f5a5e;font-size:14px;text-decoration:underline">Download PDF ${label}</a>
+        <a href="${pdfUrl}" target="_blank" rel="noopener" style="color:#2f5a5e;font-size:14px;text-decoration:underline">View PDF ${label}</a>
       </div>
+
+      ${!isPaid ? `
+      <div style="background:#f3ede3;border:1px solid #e2d5b8;border-radius:8px;padding:16px;margin:20px 0">
+        <p style="margin:0 0 10px;font-weight:bold;color:#2f5a5e;font-size:14px">Payment Options</p>
+        <p style="margin:0 0 6px;font-size:13px;color:#374151">💵 <strong>Cash</strong> &mdash; Preferred</p>
+        <p style="margin:0 0 6px;font-size:13px;color:#374151">📱 <strong>Zelle</strong> &mdash; Lacey@LaceyNPrice.com</p>
+        <p style="margin:0 0 6px;font-size:13px;color:#374151">💜 <strong>Venmo</strong> &mdash; @laceynprice</p>
+        <p style="margin:0 0 6px;font-size:13px;color:#374151">🅿️ <strong>PayPal</strong> &mdash; Lacey@LaceyNPrice.com (Friends &amp; Family)</p>
+        <p style="margin:0 0 10px;font-size:13px;color:#374151">✉️ <strong>Check</strong> &mdash; 4231 Country Breeze Lane, Crestview, FL 32539</p>
+        <p style="margin:0;font-size:12px;color:#6b7280;font-style:italic">Please include your invoice number in the memo/notes.</p>
+      </div>
+      ` : ''}
 
       <p>We greatly appreciate the business!</p>
 
@@ -104,7 +130,7 @@ export async function sendInvoiceEmail({ to, customerName, invoiceNumber, invoic
         <p style="margin:2px 0;color:#6b7280">L. Price Building Company</p>
         <p style="margin:2px 0"><a href="tel:8505989128" style="color:#2f5a5e;text-decoration:none">850-598-9128</a></p>
         <p style="margin:2px 0"><a href="mailto:Lacey@LaceyNPrice.com" style="color:#2f5a5e;text-decoration:none">Lacey@LaceyNPrice.com</a></p>
-        <img src="${APP}/email-logo.png" alt="L. Price Building Company" style="height:100px;margin-top:10px"/>
+        <img src="${APP}/email-logo.png?v=2" alt="L. Price Building Company" style="height:100px;margin-top:10px"/>
       </div>
     `),
   })

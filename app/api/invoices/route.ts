@@ -3,6 +3,35 @@ export const dynamic = 'force-dynamic'
 import { createServerClient } from '@/lib/supabase'
 import { basicGrammarFix, generateInvoiceNumber } from '@/lib/utils'
 
+// Auto-upsert a worksite when an invoice has a job_address.
+// No-op if no address provided or if a worksite with the same address already exists.
+async function ensureWorksite(supabase: any, opts: { job_address?: string | null; jobsite_city?: string | null; customer_name?: string | null; customer_phone?: string | null }) {
+  const raw = (opts.job_address || '').trim()
+  if (!raw) return
+  try {
+    const { data: existing } = await supabase
+      .from('worksites')
+      .select('id')
+      .ilike('address', raw)
+      .maybeSingle()
+    if (existing?.id) return existing.id
+    const { data: created } = await supabase
+      .from('worksites')
+      .insert({
+        address: raw,
+        city: opts.jobsite_city || null,
+        state: 'FL',
+        notes: opts.customer_name ? `Auto-created from invoice for ${opts.customer_name}` : null,
+      })
+      .select('id')
+      .single()
+    return created?.id
+  } catch (e) {
+    console.error('Auto-create worksite failed:', e)
+    return null
+  }
+}
+
 export async function GET(req: NextRequest) {
   const supabase = createServerClient()
   const status = req.nextUrl.searchParams.get('status')
@@ -31,9 +60,12 @@ export async function POST(req: NextRequest) {
     invoice_status: body.invoice_status || 'draft',
     customer_name: body.customer_name,
     customer_email: body.customer_email || null,
+    cc_email: body.cc_email || null,
     customer_phone: body.customer_phone || null,
     customer_address: body.customer_address || body.job_address || null,
+    company_name: body.company_name || null,
     job_address: body.job_address || null,
+    jobsite_city: body.jobsite_city || null,
     service_type: body.service_type || null,
     service_date: body.service_date || null,
     payment_type: body.payment_type || null,
@@ -81,6 +113,14 @@ export async function POST(req: NextRequest) {
       }
     }
   } catch (e) { console.error('Auto-upsert contact failed:', e) }
+
+  // Auto-create worksite if address provided
+  await ensureWorksite(supabase, {
+    job_address: body.job_address,
+    jobsite_city: body.jobsite_city,
+    customer_name: body.customer_name,
+    customer_phone: body.customer_phone,
+  })
 
   return NextResponse.json(data, { status: 201 })
 }
@@ -136,6 +176,14 @@ export async function PATCH(req: NextRequest) {
       }
     }
   } catch (e) { console.error('Auto-update contact failed:', e) }
+
+  // Auto-create worksite if address present
+  await ensureWorksite(supabase, {
+    job_address: data.job_address,
+    jobsite_city: data.jobsite_city,
+    customer_name: data.customer_name,
+    customer_phone: data.customer_phone,
+  })
 
   return NextResponse.json(data)
 }

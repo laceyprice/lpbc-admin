@@ -820,6 +820,7 @@ export default function InvoicesPage() {
                   {l:'Customer Name *',k:'customer_name'},
                   {l:'Company Name',k:'company_name',r:false},
                   {l:'Email *',k:'customer_email',t:'email'},
+                  {l:'CC Emails (optional, comma-separated)',k:'cc_email',t:'text',r:false},
                   {l:'Phone *',k:'customer_phone',t:'tel'},
                   {l:'Job Address *',k:'job_address'},
                   {l:'Jobsite City *',k:'jobsite_city'},

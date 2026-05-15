@@ -106,7 +106,38 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // Update invoice — preserve paid status if already paid
+  // SEND FIRST — DB update second. That way Resend always runs and shows in logs.
+  let resendResult: any = null
+  let resendError: string | null = null
+  try {
+    resendResult = await sendInvoiceEmail({
+      to: invoice.customer_email,
+      customerName: invoice.customer_name,
+      invoiceNumber: invoice.invoice_number,
+      invoiceType: invoice.invoice_type || 'invoice',
+      amountDue: invoice.amount_due,
+      dueDate: invoice.due_date,
+      serviceDescription: invoice.service_description,
+      jobAddress: invoice.job_address,
+      jobsiteCity: invoice.jobsite_city,
+      companyName: invoice.company_name,
+      paymentUrl,
+      isPaid: invoice.invoice_status === 'paid',
+      cc: invoice.cc_email,
+    })
+    // Resend's SDK returns { data, error } — error field is set on failure
+    if (resendResult?.error) {
+      resendError = `${resendResult.error.name || 'Error'}: ${resendResult.error.message || JSON.stringify(resendResult.error)}`
+      console.error('Resend returned error:', resendResult.error)
+    } else {
+      console.log('Resend ✅ sent', resendResult?.data?.id)
+    }
+  } catch (e: any) {
+    resendError = e?.message || String(e)
+    console.error('Resend threw exception:', e)
+  }
+
+  // Now update invoice — preserve paid status if already paid
   const now = new Date().toISOString()
   const updates: Record<string, any> = {
     last_sent_at: now,
@@ -120,27 +151,12 @@ export async function POST(req: NextRequest) {
     updates.invoice_status = 'sent'
   }
 
-  await supabase.from('invoices').update(updates).eq('id', invoiceId)
-
-  // Send invoice email via Resend
-  try {
-    await sendInvoiceEmail({
-      to: invoice.customer_email,
-      customerName: invoice.customer_name,
-      invoiceNumber: invoice.invoice_number,
-      invoiceType: invoice.invoice_type || 'invoice',
-      amountDue: invoice.amount_due,
-      dueDate: invoice.due_date,
-      serviceDescription: invoice.service_description,
-      jobAddress: invoice.job_address,
-      jobsiteCity: invoice.jobsite_city,
-      companyName: invoice.company_name,
-      paymentUrl,
-      isPaid: invoice.invoice_status === 'paid',
-    })
-  } catch (e) {
-    console.error('Resend error:', e)
-    // Don't fail the whole request if email fails — payment link is still created
+  let dbError: string | null = null
+  const { error: updateErr } = await supabase.from('invoices').update(updates).eq('id', invoiceId)
+  if (updateErr) {
+    dbError = updateErr.message
+    console.error('Failed to update invoice status:', updateErr)
+    // Don't 500 — Resend may have succeeded already, return diagnostic info instead
   }
 
   // Copy to Gmail Sent folder (fire-and-forget)
@@ -176,5 +192,11 @@ export async function POST(req: NextRequest) {
     }
   } catch (e) { console.error('Auto-upsert contact failed:', e) }
 
-  return NextResponse.json({ success: true, paymentUrl })
+  return NextResponse.json({
+    success: !resendError,
+    paymentUrl,
+    resendId: resendResult?.data?.id || null,
+    resendError,
+    dbError,
+  })
 }
