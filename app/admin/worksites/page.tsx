@@ -475,7 +475,7 @@ export default function WorksitesPage() {
               {([
                 ['history', 'History'],
                 ['contacts', 'Contacts / Owners'],
-                ['photos', 'Photos'],
+                ['photos', 'Photos & Docs'],
                 ['permits', 'Permits'],
               ] as const).map(([k, l]) => {
                 const s = selected as any
@@ -646,7 +646,7 @@ export default function WorksitesPage() {
                                   </label>
                                   <label className={`flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded-lg border border-gray-200 cursor-pointer hover:bg-gray-50 ${uploadingPhoto?'opacity-50':''}`}>
                                     {uploadingPhoto?<Loader2 size={10} className="animate-spin"/>:<Upload size={10}/>} Upload
-                                    <input type="file" accept="image/*" className="hidden" disabled={uploadingPhoto} onChange={e=>{const f=e.target.files?.[0];if(f)uploadPhoto(f,v.id)}} />
+                                    <input type="file" accept="image/*,.pdf,.doc,.docx" className="hidden" disabled={uploadingPhoto} onChange={e=>{const f=e.target.files?.[0];if(f)uploadPhoto(f,v.id)}} />
                                   </label>
                                   <button onClick={()=>deleteVisit(v.id)} className="text-gray-300 hover:text-red-500 ml-auto"><Trash2 size={13}/></button>
                                 </div>
@@ -908,7 +908,7 @@ export default function WorksitesPage() {
                   </label>
                   <label className={`flex items-center gap-2 px-3 py-2 rounded-xl border-2 text-sm font-bold cursor-pointer hover:bg-blue-50 ${uploadingPhoto?'opacity-50 cursor-not-allowed':''}`} style={{ borderColor:'#b8895a', color:'#b8895a' }}>
                     {uploadingPhoto?<Loader2 size={14} className="animate-spin"/>:<Upload size={14}/>} Upload
-                    <input type="file" accept="image/*" className="hidden" disabled={uploadingPhoto} onChange={e=>{const f=e.target.files?.[0];if(f)uploadPhoto(f,null)}} />
+                    <input type="file" accept="image/*,.pdf,.doc,.docx" className="hidden" disabled={uploadingPhoto} onChange={e=>{const f=e.target.files?.[0];if(f)uploadPhoto(f,null)}} />
                   </label>
                 </div>
                 {selected.photos?.length === 0 ? (

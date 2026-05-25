@@ -307,6 +307,12 @@ export default function BookkeepingPage() {
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(false)
   const [search, setSearch] = useState('')
+  const [sortCol, setSortCol] = useState<string>('date')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
+  function toggleSort(col: string) {
+    if (sortCol === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+    else { setSortCol(col); setSortDir('desc') }
+  }
   const [editing, setEditing] = useState<Tx | null>(null)
   const [imgUploading, setImgUploading] = useState<null | 'receipt' | 'check'>(null)
   const [showAddAccount, setShowAddAccount] = useState(false)
@@ -326,6 +332,54 @@ export default function BookkeepingPage() {
   const [selectedUploads, setSelectedUploads] = useState<Set<string>>(new Set())
   const [bulkUploadAccountId, setBulkUploadAccountId] = useState('')
   const [showDrivePicker, setShowDrivePicker] = useState(false)
+  const [showAddTx, setShowAddTx] = useState(false)
+  const [addTxSaving, setAddTxSaving] = useState(false)
+  const [addTxForm, setAddTxForm] = useState({
+    transaction_date: new Date().toISOString().split('T')[0],
+    description: '',
+    payee: '',
+    amount: '',
+    financial_account_id: '',
+    account_id: '',
+    check_number: '',
+  })
+
+  async function saveAddTx() {
+    if (!addTxForm.description || !addTxForm.amount || !addTxForm.transaction_date) {
+      alert('Date, description, and amount are required')
+      return
+    }
+    setAddTxSaving(true)
+    try {
+      const res = await fetch('/api/bookkeeping', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          table: 'bank_transactions',
+          transaction_date: addTxForm.transaction_date,
+          description: addTxForm.description,
+          payee: addTxForm.payee || null,
+          amount: parseFloat(addTxForm.amount),
+          financial_account_id: addTxForm.financial_account_id || selectedAccountId || null,
+          account_id: addTxForm.account_id || null,
+          check_number: addTxForm.check_number || null,
+          source: 'manual',
+        }),
+      })
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}))
+        alert('Failed to save: ' + (j.error || 'Unknown error'))
+        return
+      }
+      setShowAddTx(false)
+      setAddTxForm({
+        transaction_date: new Date().toISOString().split('T')[0],
+        description: '', payee: '', amount: '',
+        financial_account_id: '', account_id: '', check_number: '',
+      })
+      await load()
+    } finally { setAddTxSaving(false) }
+  }
   const [bulkUploadSaving, setBulkUploadSaving] = useState(false)
   const [ocrResults, setOcrResults] = useState<Record<string, OcrResult>>({})
   const [modalOcr, setModalOcr] = useState<{ imageId: string; data: OcrResult } | null>(null)
@@ -960,12 +1014,7 @@ export default function BookkeepingPage() {
     return acc
   }, {} as Record<string, Account[]>)
 
-  const filtered = txs.filter(t => {
-    if (!search) return true
-    const accName = accountName(t.account_id) || ''
-    return `${t.description} ${t.payee} ${t.category} ${accName} ${t.check_number||''}`.toLowerCase().includes(search.toLowerCase())
-  })
-  // Compute date range bounds for summary cards
+  // Compute date range bounds (applied to BOTH summary and table)
   const today = new Date()
   const summaryFrom = dateMode === 'ytd'
     ? new Date(today.getFullYear(), 0, 1).toISOString().split('T')[0]
@@ -974,16 +1023,40 @@ export default function BookkeepingPage() {
     : customFrom
   const summaryTo = dateMode === 'custom' ? customTo : today.toISOString().split('T')[0]
 
-  const summaryFiltered = filtered.filter(t => {
-    if (!summaryFrom && !summaryTo) return true
-    const d = t.transaction_date
-    if (summaryFrom && d < summaryFrom) return false
-    if (summaryTo && d > summaryTo) return false
-    return true
+  // Apply date range + search in one pass so the table, summary, CSV export, and select-all all match
+  const filtered = txs.filter(t => {
+    // Date range filter
+    if (summaryFrom || summaryTo) {
+      const d = t.transaction_date
+      if (summaryFrom && d < summaryFrom) return false
+      if (summaryTo && d > summaryTo) return false
+    }
+    // Search filter
+    if (!search) return true
+    const accName = accountName(t.account_id) || ''
+    return `${t.description} ${t.payee} ${t.category} ${accName} ${t.check_number||''}`.toLowerCase().includes(search.toLowerCase())
   })
 
-  const income = summaryFiltered.filter(t => t.amount > 0).reduce((s,t) => s+t.amount, 0)
-  const expenses = summaryFiltered.filter(t => t.amount < 0).reduce((s,t) => s+Math.abs(t.amount), 0)
+  // ── Sorting ──────────────────────────────────────────────
+  const sortedFiltered = [...filtered].sort((a, b) => {
+    const dir = sortDir === 'asc' ? 1 : -1
+    let av: any, bv: any
+    switch (sortCol) {
+      case 'date': av = a.transaction_date || ''; bv = b.transaction_date || ''; break
+      case 'description': av = (a.description || '').toLowerCase(); bv = (b.description || '').toLowerCase(); break
+      case 'payee': av = (a.payee || '').toLowerCase(); bv = (b.payee || '').toLowerCase(); break
+      case 'amount': av = Number(a.amount) || 0; bv = Number(b.amount) || 0; break
+      case 'account': av = accountName(a.account_id) || ''; bv = accountName(b.account_id) || ''; break
+      case 'check': av = a.check_number || ''; bv = b.check_number || ''; break
+      default: av = a.transaction_date || ''; bv = b.transaction_date || ''
+    }
+    if (av < bv) return -1 * dir
+    if (av > bv) return 1 * dir
+    return 0
+  })
+
+  const income = filtered.filter(t => t.amount > 0).reduce((s,t) => s+t.amount, 0)
+  const expenses = filtered.filter(t => t.amount < 0).reduce((s,t) => s+Math.abs(t.amount), 0)
   const net = income - expenses
 
   const inputCls = 'w-full px-3 py-2.5 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:border-blue-400'
@@ -1009,11 +1082,64 @@ export default function BookkeepingPage() {
               {syncing ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}{syncing ? 'Syncing...' : 'Sync Bank'}
             </button>
           )}
+          <button onClick={() => setShowAddTx(true)} className="flex items-center gap-2 border-2 font-semibold px-4 py-2.5 rounded-xl hover:bg-blue-50" style={{ borderColor: '#b8895a', color: '#b8895a' }}>
+            <Plus size={14} />Add Transaction
+          </button>
           <button onClick={connectBank} disabled={connecting} className="flex items-center gap-2 border-2 font-semibold px-4 py-2.5 rounded-xl hover:bg-blue-50 disabled:opacity-60" style={{ borderColor: '#b8895a', color: '#b8895a' }}>
             {connecting ? <Loader2 size={14} className="animate-spin" /> : <Link2 size={14} />}{connecting ? 'Connecting...' : bankConnections.length > 0 ? 'Add Bank' : 'Connect Bank'}
           </button>
         </div>
       </div>
+
+      {showAddTx && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setShowAddTx(false)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6" onClick={e => e.stopPropagation()}>
+            <h3 className="font-bold text-lg mb-4" style={{ color: '#2f5a5e' }}>Add Manual Transaction</h3>
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs font-semibold text-gray-700">Date</label>
+                <input type="date" value={addTxForm.transaction_date} onChange={e => setAddTxForm({ ...addTxForm, transaction_date: e.target.value })} className={inputCls} />
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-gray-700">Description</label>
+                <input type="text" value={addTxForm.description} onChange={e => setAddTxForm({ ...addTxForm, description: e.target.value })} className={inputCls} placeholder="e.g. Lowes purchase" />
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-gray-700">Payee</label>
+                <input type="text" value={addTxForm.payee} onChange={e => setAddTxForm({ ...addTxForm, payee: e.target.value })} className={inputCls} placeholder="e.g. Lowes" />
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-gray-700">Amount (negative for expense)</label>
+                <input type="number" step="0.01" value={addTxForm.amount} onChange={e => setAddTxForm({ ...addTxForm, amount: e.target.value })} className={inputCls} placeholder="-50.00" />
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-gray-700">Account</label>
+                <select value={addTxForm.financial_account_id} onChange={e => setAddTxForm({ ...addTxForm, financial_account_id: e.target.value })} className={inputCls}>
+                  <option value="">— Select bank account —</option>
+                  {financialAccounts.filter(a => a.is_active).map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-gray-700">Category (optional)</label>
+                <select value={addTxForm.account_id} onChange={e => setAddTxForm({ ...addTxForm, account_id: e.target.value })} className={inputCls}>
+                  <option value="">— Uncategorized —</option>
+                  {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-gray-700">Check # (optional)</label>
+                <input type="text" value={addTxForm.check_number} onChange={e => setAddTxForm({ ...addTxForm, check_number: e.target.value })} className={inputCls} />
+              </div>
+            </div>
+            <div className="flex gap-2 mt-5">
+              <button onClick={() => setShowAddTx(false)} className="flex-1 py-2.5 rounded-xl border border-gray-300 text-sm font-semibold text-gray-700 hover:bg-gray-50">Cancel</button>
+              <button onClick={saveAddTx} disabled={addTxSaving} className="flex-1 py-2.5 rounded-xl text-white text-sm font-semibold disabled:opacity-50" style={{ background: '#b8895a' }}>
+                {addTxSaving ? 'Saving...' : 'Save Transaction'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Account Selector */}
       <div className="flex items-center gap-2 mb-4 flex-wrap">
@@ -1578,17 +1704,22 @@ export default function BookkeepingPage() {
                 </th>
               )}
               {(tab === 'accounting'
-                ? ['Date','Description','Payee','Amount','Category','Check #','Files']
-                : ['Date','Description','Payee','Amount','Account','Check #','Status']
-              ).map(h => (
-                <th key={h} className="text-left px-5 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider">{h}</th>
+                ? [['date','Date'],['description','Description'],['payee','Payee'],['amount','Amount'],['account','Category'],['check','Check #'],['files','Files']] as const
+                : [['date','Date'],['description','Description'],['payee','Payee'],['amount','Amount'],['account','Account'],['check','Check #'],['status','Status']] as const
+              ).map(([col, label]) => (
+                <th key={col} className="text-left px-5 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider">
+                  <button onClick={() => toggleSort(col)} className="flex items-center gap-1 hover:text-gray-900">
+                    {label}
+                    {sortCol === col ? <span style={{ color: '#b8895a' }}>{sortDir === 'asc' ? '↑' : '↓'}</span> : <span className="opacity-30">↕</span>}
+                  </button>
+                </th>
               ))}
               {tab === 'bank' && <th className="px-3 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider text-center">Post</th>}
             </tr></thead>
             <tbody className="divide-y divide-gray-50">
               {loading ? <tr><td colSpan={tab === 'bank' ? 9 : 7} className="text-center py-12"><Loader2 size={22} className="animate-spin mx-auto" style={{ color:'#b8895a' }} /></td></tr>
                 : filtered.length === 0 ? <tr><td colSpan={tab === 'bank' ? 9 : 7} className="text-center py-12 text-gray-400 text-sm"><FileText size={30} className="mx-auto mb-2 opacity-30" />No transactions · Import a CSV to get started</td></tr>
-                : filtered.map(tx => {
+                : sortedFiltered.map(tx => {
                     const accName = accountName(tx.account_id)
                     const hasReceipt = !!tx.receipt_image
                     const hasCheck = !!tx.check_image
@@ -1604,8 +1735,8 @@ export default function BookkeepingPage() {
                       </td>
                     )}
                     <td className="px-5 py-3 text-gray-600 text-xs whitespace-nowrap">{formatDateShort(tx.transaction_date)}</td>
-                    <td className="px-5 py-3"><div className="text-gray-900 font-medium text-xs truncate max-w-48">{tx.description}</div></td>
-                    <td className="px-5 py-3 text-gray-600 text-xs">{tx.payee||'—'}</td>
+                    <td className="px-5 py-3"><div className="text-gray-900 font-medium text-xs truncate max-w-48" title={tx.description}>{tx.description}</div></td>
+                    <td className="px-5 py-3 text-gray-600 text-xs" title={tx.payee || ''}>{tx.payee||'—'}</td>
                     <td className={`px-5 py-3 font-bold text-sm ${tx.amount>=0?'text-green-700':'text-red-600'}`}>{tx.amount>=0?'+':''}{formatCurrency(tx.amount)}</td>
                     <td className="px-5 py-3">{accName || tx.category ? <span className="text-xs px-2 py-0.5 rounded-full font-medium" style={{ background:'rgba(184,137,90,0.1)', color:'#b8895a' }}>{accName || tx.category}</span> : <span className="text-xs text-gray-400 italic">Uncategorized</span>}</td>
                     <td className="px-5 py-3 text-gray-600 text-xs">{tx.check_number||'—'}</td>

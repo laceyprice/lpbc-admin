@@ -216,6 +216,30 @@ export async function PATCH(req: NextRequest) {
   if (!id) return NextResponse.json({ error: 'Missing id' }, { status: 400 })
 
   const tableName = table === 'accounting_entries' ? 'accounting_entries' : 'bank_transactions'
+
+  // Auto-categorize: if updating payee on a bank_transaction (and no account_id is being set),
+  // look up the most-common account assigned to that payee historically and apply it.
+  if (tableName === 'bank_transactions' && updates.payee && !updates.account_id) {
+    const { data: history } = await supabase
+      .from('bank_transactions')
+      .select('account_id')
+      .eq('payee', updates.payee)
+      .not('account_id', 'is', null)
+      .limit(50)
+    if (history && history.length > 0) {
+      // Find most common account_id
+      const counts: Record<string, number> = {}
+      for (const row of history) {
+        const k = row.account_id as string
+        counts[k] = (counts[k] || 0) + 1
+      }
+      const sorted = Object.entries(counts).sort(([, a], [, b]) => b - a)
+      if (sorted.length > 0) {
+        updates.account_id = sorted[0][0]
+      }
+    }
+  }
+
   const { data, error } = await supabase.from(tableName).update(updates).eq('id', id).select().single()
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 

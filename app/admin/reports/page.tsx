@@ -25,6 +25,10 @@ export default function ReportsPage() {
   const [genMonth, setGenMonth] = useState(() => MONTHS[new Date().getMonth()])
   const [genYear, setGenYear] = useState(() => new Date().getFullYear())
   const [genType, setGenType] = useState('pnl')
+  const [genPeriod, setGenPeriod] = useState<'month' | 'quarter' | 'ytd' | 'lastyear' | 'custom'>('month')
+  const [genQuarter, setGenQuarter] = useState(() => Math.floor(new Date().getMonth() / 3) + 1)
+  const [genCustomFrom, setGenCustomFrom] = useState('')
+  const [genCustomTo, setGenCustomTo] = useState('')
   const [generating, setGenerating] = useState(false)
   const [savedReports, setSavedReports] = useState<any[]>([])
   const [savedLoading, setSavedLoading] = useState(false)
@@ -49,10 +53,22 @@ export default function ReportsPage() {
   async function generateReport() {
     setGenerating(true)
     try {
+      if (!periodFrom || !periodTo) { alert('Please select a valid date range'); return }
       const res = await fetch('/api/saved-reports', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ report_type: genType, month: genMonth, year: genYear }),
+        body: JSON.stringify({
+          report_type: genType,
+          month: genMonth,
+          year: genYear,
+          period_from: periodFrom,
+          period_to: periodTo,
+          period_label: genPeriod === 'month' ? `${genMonth} ${genYear}`
+            : genPeriod === 'quarter' ? `Q${genQuarter} ${genYear}`
+            : genPeriod === 'ytd' ? `YTD ${today.getFullYear()}`
+            : genPeriod === 'lastyear' ? `Year ${today.getFullYear() - 1}`
+            : `${periodFrom} → ${periodTo}`,
+        }),
       })
       if (!res.ok) { const e = await res.json(); alert(e.error || 'Failed to generate report'); return }
       await loadSavedReports()
@@ -67,8 +83,24 @@ export default function ReportsPage() {
   }
 
   async function downloadSavedReport(report: any) {
-    // Reuse the in-page downloadPDF by temporarily passing the saved report's data
-    await downloadPDFWith(report.report_type, report.report_data, report.period_from, report.period_to)
+    try {
+      if (!report.report_data || (typeof report.report_data === 'object' && Object.keys(report.report_data).length === 0)) {
+        alert('This saved report has no data attached. It may have been generated when the reports API failed. Please delete it and regenerate.')
+        return
+      }
+      await downloadPDFWith(report.report_type, report.report_data, report.period_from, report.period_to)
+    } catch (e: any) {
+      console.error('PDF download error:', e)
+      alert('Failed to generate PDF: ' + (e?.message || String(e)))
+    }
+  }
+
+  function viewSavedReport(report: any) {
+    // Switch to the appropriate tab and load the saved data into view
+    setData(report.report_data)
+    setFrom(report.period_from)
+    setTo(report.period_to)
+    setTab(report.report_type as Tab)
   }
 
   async function load() {
@@ -92,8 +124,35 @@ export default function ReportsPage() {
 
   // Computed period for generate tab
   const monthIndex = MONTHS.indexOf(genMonth)
-  const periodFrom = new Date(genYear, monthIndex, 1).toISOString().split('T')[0]
-  const periodTo = new Date(genYear, monthIndex + 1, 0).toISOString().split('T')[0]
+  const today = new Date()
+  const { periodFrom, periodTo } = (() => {
+    if (genPeriod === 'month') {
+      return {
+        periodFrom: new Date(genYear, monthIndex, 1).toISOString().split('T')[0],
+        periodTo: new Date(genYear, monthIndex + 1, 0).toISOString().split('T')[0],
+      }
+    }
+    if (genPeriod === 'quarter') {
+      const qStart = (genQuarter - 1) * 3
+      return {
+        periodFrom: new Date(genYear, qStart, 1).toISOString().split('T')[0],
+        periodTo: new Date(genYear, qStart + 3, 0).toISOString().split('T')[0],
+      }
+    }
+    if (genPeriod === 'ytd') {
+      return {
+        periodFrom: new Date(today.getFullYear(), 0, 1).toISOString().split('T')[0],
+        periodTo: today.toISOString().split('T')[0],
+      }
+    }
+    if (genPeriod === 'lastyear') {
+      return {
+        periodFrom: `${today.getFullYear() - 1}-01-01`,
+        periodTo: `${today.getFullYear() - 1}-12-31`,
+      }
+    }
+    return { periodFrom: genCustomFrom, periodTo: genCustomTo }
+  })()
 
   const inputCls = 'px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:border-blue-400'
 
@@ -104,7 +163,7 @@ export default function ReportsPage() {
 
   async function downloadPDFWith(reportTab: string, reportData: any, reportFrom: string, reportTo: string) {
     const { default: jsPDF } = await import('jspdf')
-    await import('jspdf-autotable')
+    const { default: autoTable } = await import('jspdf-autotable')
     const tabLabels: Record<string, string> = { pnl: 'Profit & Loss', 'balance-sheet': 'Balance Sheet', 'cash-flow': 'Cash Flow Statement', reconciliation: 'Reconciliation Report' }
     const doc = new jsPDF('p', 'pt', 'letter') as any
     const pageW = doc.internal.pageSize.getWidth()
@@ -142,7 +201,7 @@ export default function ReportsPage() {
     if (reportTab === 'pnl') {
       // Revenue
       curY = addSectionLabel(doc, 'REVENUE', curY, pageW)
-      doc.autoTable({
+      autoTable(doc, {
         startY: curY,
         head: [['Account', 'Amount']],
         body: [...(reportData.revenue || []).map((l: any) => [l.name, fmtMoney(l.total)]),
@@ -156,7 +215,7 @@ export default function ReportsPage() {
 
       // Expenses
       curY = addSectionLabel(doc, 'EXPENSES', curY, pageW)
-      doc.autoTable({
+      autoTable(doc, {
         startY: curY,
         head: [['Account', 'Amount']],
         body: [...(reportData.expenses || []).map((l: any) => [l.name, fmtMoney(l.total)]),
@@ -171,7 +230,7 @@ export default function ReportsPage() {
       // Distributions
       if ((reportData.distributions || []).length > 0) {
         curY = addSectionLabel(doc, 'OWNER DISTRIBUTIONS', curY, pageW)
-        doc.autoTable({
+        autoTable(doc, {
           startY: curY,
           head: [['Account', 'Amount']],
           body: (reportData.distributions || []).map((l: any) => [l.name, fmtMoney(l.total)]),
@@ -185,7 +244,7 @@ export default function ReportsPage() {
 
       // Net Income
       curY = addSectionLabel(doc, 'SUMMARY', curY, pageW)
-      doc.autoTable({
+      autoTable(doc, {
         startY: curY,
         body: [
           ['Total Revenue', fmtMoney(reportData.totalRevenue ?? 0)],
@@ -206,7 +265,7 @@ export default function ReportsPage() {
         const lines = (reportData[key] || []).map((l: any) => [l.name, fmtMoney(l.opening), fmtMoney(l.activity), fmtMoney(l.balance)])
         if (key === 'equity') lines.push(['Net Income (Current Period)', '—', '—', fmtMoney(reportData.netIncome ?? 0)])
         const totalVal = key === 'equity' ? (reportData.totalEquity ?? 0) + (reportData.netIncome ?? 0) : (reportData[`total${label.charAt(0) + label.slice(1).toLowerCase()}`] ?? 0)
-        doc.autoTable({
+        autoTable(doc, {
           startY: curY,
           head: [['Account', 'Opening', 'Activity', 'Balance']],
           body: lines,
@@ -218,7 +277,7 @@ export default function ReportsPage() {
         curY = doc.lastAutoTable.finalY + 20
       }
 
-      doc.autoTable({
+      autoTable(doc, {
         startY: curY,
         body: [
           ['Total Assets', fmtMoney(reportData.totalAssets ?? 0)],
@@ -233,7 +292,7 @@ export default function ReportsPage() {
 
     if (reportTab === 'cash-flow') {
       curY = addSectionLabel(doc, 'MONTHLY CASH FLOW', curY, pageW)
-      doc.autoTable({
+      autoTable(doc, {
         startY: curY,
         head: [['Month', 'Inflows', 'Outflows', 'Net']],
         body: (reportData.monthly || []).map((m: any) => [m.month, fmtMoney(m.inflows), fmtMoney(m.outflows), fmtMoney(m.net)]),
@@ -246,7 +305,7 @@ export default function ReportsPage() {
 
       if ((reportData.byAccount || []).length > 0) {
         curY = addSectionLabel(doc, 'CASH FLOW BY ACCOUNT', curY, pageW)
-        doc.autoTable({
+        autoTable(doc, {
           startY: curY,
           head: [['Account', 'Type', 'Net Amount']],
           body: (reportData.byAccount || []).map((a: any) => [a.name, a.type, fmtMoney(a.total)]),
@@ -259,7 +318,7 @@ export default function ReportsPage() {
 
     if (reportTab === 'reconciliation') {
       curY = addSectionLabel(doc, 'RECONCILIATION SUMMARY', curY, pageW)
-      doc.autoTable({
+      autoTable(doc, {
         startY: curY,
         head: [['Metric', 'Value']],
         body: [
@@ -280,7 +339,7 @@ export default function ReportsPage() {
 
       if ((reportData.unreconciled || []).length > 0) {
         curY = addSectionLabel(doc, `UNRECONCILED TRANSACTIONS (${reportData.unreconciledCount})`, curY, pageW)
-        doc.autoTable({
+        autoTable(doc, {
           startY: curY,
           head: [['Date', 'Description', 'Payee', 'Amount']],
           body: (reportData.unreconciled || []).map((tx: any) => [tx.transaction_date, tx.description, tx.payee || '—', fmtMoney(tx.amount)]),
@@ -293,7 +352,7 @@ export default function ReportsPage() {
 
       if ((reportData.uncategorized || []).length > 0) {
         curY = addSectionLabel(doc, `UNCATEGORIZED TRANSACTIONS (${reportData.uncategorizedCount})`, curY, pageW)
-        doc.autoTable({
+        autoTable(doc, {
           startY: curY,
           head: [['Date', 'Description', 'Payee', 'Amount']],
           body: (reportData.uncategorized || []).map((tx: any) => [tx.transaction_date, tx.description, tx.payee || '—', fmtMoney(tx.amount)]),
@@ -324,7 +383,7 @@ export default function ReportsPage() {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-extrabold text-gray-900">Financial Reports</h1>
-          <p className="text-gray-500 text-sm mt-0.5">P&amp;L · Balance Sheet · Cash Flow · Reconciliation</p>
+          <p className="text-gray-500 text-sm mt-0.5">P&L · Balance Sheet · Cash Flow · Reconciliation</p>
         </div>
         {data && !data.error && (
           <button onClick={downloadPDF} className="flex items-center gap-2 text-white font-semibold px-4 py-2.5 rounded-xl shadow-md" style={{ background: '#b8895a' }}>
@@ -358,6 +417,38 @@ export default function ReportsPage() {
       {/* Date Range — hidden on Generate tab (it has its own period selector) */}
       {tab !== 'generate' && (
         <div className="flex flex-wrap items-center gap-3 mb-5">
+          {/* Quick presets */}
+          <div className="flex items-center bg-gray-100 rounded-xl p-1">
+            {([
+              ['month', 'This Month'],
+              ['ytd', 'YTD'],
+              ['lastyear', 'Last Year'],
+              ['custom', 'Custom'],
+            ] as const).map(([k, l]) => {
+              const today = new Date()
+              const isActive = (() => {
+                if (k === 'month') return from === new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split('T')[0] && to === today.toISOString().split('T')[0]
+                if (k === 'ytd') return from === new Date(today.getFullYear(), 0, 1).toISOString().split('T')[0] && to === today.toISOString().split('T')[0]
+                if (k === 'lastyear') return from === `${today.getFullYear() - 1}-01-01` && to === `${today.getFullYear() - 1}-12-31`
+                return false
+              })()
+              return (
+                <button key={k} onClick={() => {
+                  if (k === 'month') {
+                    setFrom(new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split('T')[0])
+                    setTo(today.toISOString().split('T')[0])
+                  } else if (k === 'ytd') {
+                    setFrom(new Date(today.getFullYear(), 0, 1).toISOString().split('T')[0])
+                    setTo(today.toISOString().split('T')[0])
+                  } else if (k === 'lastyear') {
+                    setFrom(`${today.getFullYear() - 1}-01-01`)
+                    setTo(`${today.getFullYear() - 1}-12-31`)
+                  }
+                }} className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${isActive ? 'bg-white shadow-sm' : 'text-gray-500'}`}
+                  style={{ color: isActive ? '#b8895a' : undefined }}>{l}</button>
+              )
+            })}
+          </div>
           <label className="text-sm font-semibold text-gray-600">From</label>
           <input type="date" value={from} onChange={e => setFrom(e.target.value)} className={inputCls} />
           <label className="text-sm font-semibold text-gray-600">To</label>
@@ -378,34 +469,73 @@ export default function ReportsPage() {
         <div className="space-y-6">
           {/* Generate panel */}
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
-            <h2 className="font-bold text-gray-900 mb-1 text-lg">Generate &amp; Save Report</h2>
-            <p className="text-sm text-gray-500 mb-4">Snapshot a report for a specific month/year and save it for historical reference.</p>
-            <div className="flex flex-wrap items-end gap-3">
+            <h2 className="font-bold text-gray-900 mb-1 text-lg">Generate & Save Report</h2>
+            <p className="text-sm text-gray-500 mb-4">Pick a report type and period, then save a snapshot for historical reference.</p>
+            <div className="flex flex-wrap items-end gap-3 mb-3">
               <div>
                 <label className="block text-xs font-semibold text-gray-600 mb-1">Type</label>
                 <select value={genType} onChange={e => setGenType(e.target.value)} className={inputCls}>
-                  <option value="pnl">Profit &amp; Loss</option>
+                  <option value="pnl">Profit & Loss</option>
                   <option value="balance-sheet">Balance Sheet</option>
                   <option value="cash-flow">Cash Flow</option>
                   <option value="reconciliation">Reconciliation</option>
                 </select>
               </div>
               <div>
-                <label className="block text-xs font-semibold text-gray-600 mb-1">Month</label>
-                <select value={genMonth} onChange={e => setGenMonth(e.target.value)} className={inputCls}>
-                  {MONTHS.map(m => <option key={m} value={m}>{m}</option>)}
-                </select>
+                <label className="block text-xs font-semibold text-gray-600 mb-1">Period</label>
+                <div className="flex items-center bg-gray-100 rounded-xl p-1 gap-1">
+                  {([['month','Month'],['quarter','Quarter'],['ytd','YTD'],['lastyear','Last Year'],['custom','Custom']] as const).map(([k, l]) => (
+                    <button key={k} onClick={() => setGenPeriod(k)}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${genPeriod === k ? 'bg-white shadow-sm' : 'text-gray-500'}`}
+                      style={{ color: genPeriod === k ? '#b8895a' : undefined }}>{l}</button>
+                  ))}
+                </div>
               </div>
-              <div>
-                <label className="block text-xs font-semibold text-gray-600 mb-1">Year</label>
-                <input type="number" value={genYear} onChange={e => setGenYear(Number(e.target.value))} className={inputCls + ' w-28'} />
-              </div>
+            </div>
+            <div className="flex flex-wrap items-end gap-3">
+              {genPeriod === 'month' && (<>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">Month</label>
+                  <select value={genMonth} onChange={e => setGenMonth(e.target.value)} className={inputCls}>
+                    {MONTHS.map(m => <option key={m} value={m}>{m}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">Year</label>
+                  <input type="number" value={genYear} onChange={e => setGenYear(Number(e.target.value))} className={inputCls + ' w-28'} />
+                </div>
+              </>)}
+              {genPeriod === 'quarter' && (<>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">Quarter</label>
+                  <select value={genQuarter} onChange={e => setGenQuarter(Number(e.target.value))} className={inputCls}>
+                    <option value={1}>Q1 (Jan–Mar)</option>
+                    <option value={2}>Q2 (Apr–Jun)</option>
+                    <option value={3}>Q3 (Jul–Sep)</option>
+                    <option value={4}>Q4 (Oct–Dec)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">Year</label>
+                  <input type="number" value={genYear} onChange={e => setGenYear(Number(e.target.value))} className={inputCls + ' w-28'} />
+                </div>
+              </>)}
+              {genPeriod === 'custom' && (<>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">From</label>
+                  <input type="date" value={genCustomFrom} onChange={e => setGenCustomFrom(e.target.value)} className={inputCls} />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">To</label>
+                  <input type="date" value={genCustomTo} onChange={e => setGenCustomTo(e.target.value)} className={inputCls} />
+                </div>
+              </>)}
               <div className="text-xs text-gray-400 pb-3">{periodFrom} → {periodTo}</div>
-              <button onClick={generateReport} disabled={generating}
+              <button onClick={generateReport} disabled={generating || !periodFrom || !periodTo}
                 className="flex items-center gap-2 text-white font-semibold px-5 py-2 rounded-xl shadow-sm disabled:opacity-60"
                 style={{ background: '#b8895a' }}>
                 {generating ? <Loader2 size={14} className="animate-spin" /> : <FileBarChart2 size={14} />}
-                {generating ? 'Generating…' : 'Generate &amp; Save'}
+                {generating ? 'Generating…' : 'Generate & Save'}
               </button>
             </div>
           </div>
@@ -435,6 +565,9 @@ export default function ReportsPage() {
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
+                      <button onClick={() => viewSavedReport(r)} className="flex items-center gap-1 text-xs font-semibold px-3 py-1.5 rounded-lg border" style={{ borderColor: '#b8895a', color: '#b8895a' }}>
+                        View
+                      </button>
                       <button onClick={() => downloadSavedReport(r)} className="flex items-center gap-1 text-xs font-semibold px-3 py-1.5 rounded-lg text-white" style={{ background: '#b8895a' }}>
                         <Download size={12} />PDF
                       </button>
@@ -528,7 +661,7 @@ function BalanceSheetReport({ data }: { data: any }) {
 
       <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5">
         <div className="flex items-center justify-between">
-          <span className="text-lg font-extrabold text-gray-900">Total Liabilities &amp; Equity</span>
+          <span className="text-lg font-extrabold text-gray-900">Total Liabilities & Equity</span>
           <span className="text-2xl font-extrabold" style={{ color: '#b8895a' }}>{formatCurrency(data.totalLiabilitiesAndEquity)}</span>
         </div>
         {Math.abs(data.totalAssets - data.totalLiabilitiesAndEquity) > 0.01 && (

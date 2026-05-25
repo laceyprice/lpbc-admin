@@ -14,22 +14,31 @@ export async function GET() {
 }
 
 // POST /api/saved-reports — generate and save a report
-// Body: { report_type, month, year }
+// Body: { report_type, month?, year?, period_from?, period_to?, period_label? }
 export async function POST(req: NextRequest) {
   const supabase = createServerClient()
-  const { report_type, month, year } = await req.json()
-  if (!report_type || !month || !year) {
-    return NextResponse.json({ error: 'report_type, month, year required' }, { status: 400 })
+  const body = await req.json()
+  const { report_type, month, year, period_from, period_to, period_label } = body
+  if (!report_type) {
+    return NextResponse.json({ error: 'report_type required' }, { status: 400 })
   }
 
-  // Build date range for the selected month
-  const monthIndex = new Date(`${month} 1, ${year}`).getMonth()
-  const from = new Date(year, monthIndex, 1).toISOString().split('T')[0]
-  const to = new Date(year, monthIndex + 1, 0).toISOString().split('T')[0]
+  // Prefer explicit period_from/period_to (custom/YTD/quarter); fall back to month/year
+  let from: string, to: string
+  if (period_from && period_to) {
+    from = period_from
+    to = period_to
+  } else if (month && year) {
+    const monthIndex = new Date(`${month} 1, ${year}`).getMonth()
+    from = new Date(year, monthIndex, 1).toISOString().split('T')[0]
+    to = new Date(year, monthIndex + 1, 0).toISOString().split('T')[0]
+  } else {
+    return NextResponse.json({ error: 'Either period_from/period_to or month/year required' }, { status: 400 })
+  }
 
   // Fetch the report data from the existing reports API
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
-  const params = new URLSearchParams({ type: report_type, from, to, year: String(year) })
+  const params = new URLSearchParams({ type: report_type, from, to, year: String(year || new Date(from).getFullYear()) })
   const res = await fetch(`${appUrl}/api/reports?${params}`)
   if (!res.ok) return NextResponse.json({ error: 'Failed to generate report' }, { status: 500 })
   const report_data = await res.json()
@@ -46,9 +55,11 @@ export async function POST(req: NextRequest) {
     .from('saved_reports')
     .insert({
       report_type,
-      report_label: label_map[report_type] || report_type,
-      month,
-      year,
+      report_label: period_label
+        ? `${label_map[report_type] || report_type} · ${period_label}`
+        : label_map[report_type] || report_type,
+      month: month || null,
+      year: year || new Date(from).getFullYear(),
       period_from: from,
       period_to: to,
       report_data,
