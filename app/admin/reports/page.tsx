@@ -1,7 +1,8 @@
 'use client'
 import { useEffect, useState } from 'react'
-import { Loader2, TrendingUp, TrendingDown, DollarSign, Scale, ArrowRightLeft, Download, AlertTriangle, FileBarChart2, FileText, Trash2 } from 'lucide-react'
+import { Loader2, TrendingUp, TrendingDown, DollarSign, Scale, ArrowRightLeft, Download, AlertTriangle, FileBarChart2, FileText, Trash2, Link2 } from 'lucide-react'
 import { formatCurrency, formatDateShort } from '@/lib/utils'
+import { getLocked, setLocked, getSharedRange, setSharedRange, subscribeSharedRange } from '@/lib/shared-date'
 
 type Tab = 'pnl' | 'balance-sheet' | 'cash-flow' | 'reconciliation' | 'generate'
 
@@ -20,6 +21,31 @@ export default function ReportsPage() {
   const [to, setTo] = useState(() => new Date().toISOString().split('T')[0])
   const [financialAccounts, setFinancialAccounts] = useState<FinancialAccount[]>([])
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null)
+  const [dateLocked, setDateLocked] = useState(false)
+
+  // Initialize from shared storage if locked
+  useEffect(() => {
+    const locked = getLocked()
+    setDateLocked(locked)
+    if (locked) {
+      const shared = getSharedRange()
+      if (shared) {
+        setFrom(shared.from)
+        setTo(shared.to)
+      }
+    }
+    return subscribeSharedRange(range => {
+      if (!getLocked() || !range) return
+      setFrom(range.from)
+      setTo(range.to)
+    })
+  }, [])
+
+  // Publish to shared storage when from/to changes (if locked)
+  useEffect(() => {
+    if (!dateLocked) return
+    setSharedRange({ mode: 'custom', from, to })
+  }, [dateLocked, from, to])
 
   // Generate Reports tab state
   const [genMonth, setGenMonth] = useState(() => MONTHS[new Date().getMonth()])
@@ -453,6 +479,15 @@ export default function ReportsPage() {
           <input type="date" value={from} onChange={e => setFrom(e.target.value)} className={inputCls} />
           <label className="text-sm font-semibold text-gray-600">To</label>
           <input type="date" value={to} onChange={e => setTo(e.target.value)} className={inputCls} />
+          <button
+            onClick={() => { const v = !dateLocked; setDateLocked(v); setLocked(v) }}
+            title={dateLocked ? 'Dates locked with Bookkeeping page — click to unlink' : 'Lock dates with Bookkeeping page so changes here sync there'}
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all border ${dateLocked ? 'text-white' : 'text-gray-500 border-gray-200 hover:bg-gray-50'}`}
+            style={{ background: dateLocked ? '#b8895a' : 'white', borderColor: dateLocked ? '#b8895a' : undefined }}
+          >
+            <Link2 size={12} />
+            {dateLocked ? 'Linked to Bookkeeping' : 'Link to Bookkeeping'}
+          </button>
         </div>
       )}
 

@@ -4,6 +4,7 @@ import { Upload, Search, Download, TrendingUp, TrendingDown, DollarSign, FileTex
 import { formatCurrency, formatDateShort } from '@/lib/utils'
 import Script from 'next/script'
 import DrivePicker from '@/components/admin/DrivePicker'
+import { getLocked, setLocked, getSharedRange, setSharedRange, subscribeSharedRange } from '@/lib/shared-date'
 
 const ACCT_TYPES = ['asset', 'liability', 'equity', 'revenue', 'expense', 'distribution']
 
@@ -270,6 +271,45 @@ export default function BookkeepingPage() {
   const [dateMode, setDateMode] = useState<'month' | 'ytd' | 'custom'>('month')
   const [customFrom, setCustomFrom] = useState('')
   const [customTo, setCustomTo] = useState('')
+  const [dateLocked, setDateLocked] = useState(false)
+
+  // Initialize from shared storage if locked
+  useEffect(() => {
+    const locked = getLocked()
+    setDateLocked(locked)
+    if (locked) {
+      const shared = getSharedRange()
+      if (shared) {
+        setDateMode((shared.mode === 'lastyear' ? 'custom' : shared.mode) as 'month' | 'ytd' | 'custom')
+        if (shared.mode === 'custom' || shared.mode === 'lastyear') {
+          setCustomFrom(shared.from)
+          setCustomTo(shared.to)
+        }
+      }
+    }
+    // Subscribe to changes from Reports page
+    return subscribeSharedRange(range => {
+      if (!getLocked() || !range) return
+      setDateMode((range.mode === 'lastyear' ? 'custom' : range.mode) as 'month' | 'ytd' | 'custom')
+      if (range.mode === 'custom' || range.mode === 'lastyear') {
+        setCustomFrom(range.from)
+        setCustomTo(range.to)
+      }
+    })
+  }, [])
+
+  // Publish to shared storage when date changes (if locked)
+  useEffect(() => {
+    if (!dateLocked) return
+    const today = new Date()
+    const from = dateMode === 'ytd'
+      ? new Date(today.getFullYear(), 0, 1).toISOString().split('T')[0]
+      : dateMode === 'month'
+      ? new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split('T')[0]
+      : customFrom
+    const to = dateMode === 'custom' ? customTo : today.toISOString().split('T')[0]
+    if (from && to) setSharedRange({ mode: dateMode, from, to })
+  }, [dateLocked, dateMode, customFrom, customTo])
 
   // Bank ledger: track which transactions have been posted to accounting ledger
   const [postedIds, setPostedIds] = useState<Set<string>>(new Set())
@@ -1318,6 +1358,15 @@ export default function BookkeepingPage() {
                   style={{ color: dateMode === k ? '#b8895a' : undefined }}>{l}</button>
               ))}
             </div>
+            <button
+              onClick={() => { const v = !dateLocked; setDateLocked(v); setLocked(v) }}
+              title={dateLocked ? 'Dates locked with Reports page — click to unlink' : 'Lock dates with Reports page so changes here sync there'}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition-all border ${dateLocked ? 'text-white' : 'text-gray-500 border-gray-200 hover:bg-gray-50'}`}
+              style={{ background: dateLocked ? '#b8895a' : 'white', borderColor: dateLocked ? '#b8895a' : undefined }}
+            >
+              <Link2 size={12} />
+              {dateLocked ? 'Linked to Reports' : 'Link to Reports'}
+            </button>
             {dateMode === 'custom' && (
               <>
                 <input type="date" value={customFrom} onChange={e => setCustomFrom(e.target.value)}
@@ -1336,7 +1385,7 @@ export default function BookkeepingPage() {
           <div className="grid grid-cols-3 gap-4">
             <div className="bg-green-50 border border-green-100 rounded-2xl p-4"><div className="flex items-center gap-2 mb-2"><TrendingUp size={15} className="text-green-600" /><span className="text-xs font-bold text-green-700 uppercase tracking-wider">Income</span></div><div className="text-2xl font-extrabold text-green-700">{formatCurrency(income)}</div></div>
             <div className="bg-red-50 border border-red-100 rounded-2xl p-4"><div className="flex items-center gap-2 mb-2"><TrendingDown size={15} className="text-red-600" /><span className="text-xs font-bold text-red-700 uppercase tracking-wider">Expenses</span></div><div className="text-2xl font-extrabold text-red-700">{formatCurrency(expenses)}</div></div>
-            <div className={`${net>=0?'bg-blue-50 border-blue-100':'bg-orange-50 border-orange-100'} border rounded-2xl p-4`}><div className="flex items-center gap-2 mb-2"><DollarSign size={15} className={net>=0?'text-blue-600':'text-orange-600'} /><span className={`text-xs font-bold uppercase tracking-wider ${net>=0?'text-blue-700':'text-orange-700'}`}>Net</span></div><div className={`text-2xl font-extrabold ${net>=0?'text-blue-700':'text-orange-700'}`}>{formatCurrency(Math.abs(net))}</div></div>
+            <div className={`${net>=0?'bg-blue-50 border-blue-100':'bg-orange-50 border-orange-100'} border rounded-2xl p-4`}><div className="flex items-center gap-2 mb-2"><DollarSign size={15} className={net>=0?'text-blue-600':'text-orange-600'} /><span className={`text-xs font-bold uppercase tracking-wider ${net>=0?'text-blue-700':'text-orange-700'}`}>Net</span></div><div className={`text-2xl font-extrabold ${net>=0?'text-blue-700':'text-orange-700'}`}>{net < 0 ? '-' : ''}{formatCurrency(Math.abs(net))}</div></div>
           </div>
         </div>
       )}
