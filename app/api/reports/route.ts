@@ -12,13 +12,14 @@ export async function GET(req: NextRequest) {
   const type = req.nextUrl.searchParams.get('type') || 'pnl'
   const from = req.nextUrl.searchParams.get('from')
   const to = req.nextUrl.searchParams.get('to')
+  const accountId = req.nextUrl.searchParams.get('account_id')
   const year = parseInt(req.nextUrl.searchParams.get('year') || String(new Date().getFullYear()), 10)
 
   try {
-    if (type === 'pnl') return NextResponse.json(await getPnL(supabase, from, to))
-    if (type === 'balance-sheet') return NextResponse.json(await getBalanceSheet(supabase, year, to))
-    if (type === 'cash-flow') return NextResponse.json(await getCashFlow(supabase, from, to))
-    if (type === 'reconciliation') return NextResponse.json(await getReconciliation(supabase, from, to))
+    if (type === 'pnl') return NextResponse.json(await getPnL(supabase, from, to, accountId))
+    if (type === 'balance-sheet') return NextResponse.json(await getBalanceSheet(supabase, year, to, accountId))
+    if (type === 'cash-flow') return NextResponse.json(await getCashFlow(supabase, from, to, accountId))
+    if (type === 'reconciliation') return NextResponse.json(await getReconciliation(supabase, from, to, accountId))
     return NextResponse.json({ error: 'Unknown report type' }, { status: 400 })
   } catch (err: any) {
     console.error('Report error:', err)
@@ -27,7 +28,7 @@ export async function GET(req: NextRequest) {
 }
 
 // ─── PROFIT & LOSS ──────────────────────────────────────────
-async function getPnL(supabase: any, from: string | null, to: string | null) {
+async function getPnL(supabase: any, from: string | null, to: string | null, accountId?: string | null) {
   // Get all accounts
   const { data: accounts } = await supabase
     .from('chart_of_accounts')
@@ -39,6 +40,7 @@ async function getPnL(supabase: any, from: string | null, to: string | null) {
   let query = supabase.from('accounting_entries').select('*')
   if (from) query = query.gte('transaction_date', from)
   if (to) query = query.lte('transaction_date', to)
+  if (accountId) query = query.eq('financial_account_id', accountId)
   const { data: entries } = await query
 
   const txs = entries || []
@@ -92,7 +94,7 @@ async function getPnL(supabase: any, from: string | null, to: string | null) {
 }
 
 // ─── BALANCE SHEET ──────────────────────────────────────────
-async function getBalanceSheet(supabase: any, year: number, asOf: string | null) {
+async function getBalanceSheet(supabase: any, year: number, asOf: string | null, accountId?: string | null) {
   const { data: accounts } = await supabase
     .from('chart_of_accounts')
     .select('*')
@@ -108,6 +110,7 @@ async function getBalanceSheet(supabase: any, year: number, asOf: string | null)
   // All accounting entries up to asOf date (or all time)
   let query = supabase.from('accounting_entries').select('*')
   if (asOf) query = query.lte('transaction_date', asOf)
+  if (accountId) query = query.eq('financial_account_id', accountId)
   const { data: entries } = await query
 
   const txs = entries || []
@@ -169,10 +172,11 @@ async function getBalanceSheet(supabase: any, year: number, asOf: string | null)
 }
 
 // ─── CASH FLOW ──────────────────────────────────────────────
-async function getCashFlow(supabase: any, from: string | null, to: string | null) {
+async function getCashFlow(supabase: any, from: string | null, to: string | null, accountId?: string | null) {
   let query = supabase.from('bank_transactions').select('*')
   if (from) query = query.gte('transaction_date', from)
   if (to) query = query.lte('transaction_date', to)
+  if (accountId) query = query.eq('financial_account_id', accountId)
   query = query.order('transaction_date', { ascending: true })
   const { data: txs } = await query
 
@@ -225,17 +229,19 @@ async function getCashFlow(supabase: any, from: string | null, to: string | null
 }
 
 // ─── RECONCILIATION ─────────────────────────────────────────
-async function getReconciliation(supabase: any, from: string | null, to: string | null) {
+async function getReconciliation(supabase: any, from: string | null, to: string | null, accountId?: string | null) {
   // Bank transactions
   let bankQ = supabase.from('bank_transactions').select('*')
   if (from) bankQ = bankQ.gte('transaction_date', from)
   if (to) bankQ = bankQ.lte('transaction_date', to)
+  if (accountId) bankQ = bankQ.eq('financial_account_id', accountId)
   const { data: bankTxs } = await bankQ
 
   // Accounting entries
   let acctQ = supabase.from('accounting_entries').select('*')
   if (from) acctQ = acctQ.gte('transaction_date', from)
   if (to) acctQ = acctQ.lte('transaction_date', to)
+  if (accountId) acctQ = acctQ.eq('financial_account_id', accountId)
   const { data: acctTxs } = await acctQ
 
   const bank = bankTxs || []
