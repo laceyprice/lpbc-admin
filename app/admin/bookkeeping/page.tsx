@@ -371,6 +371,10 @@ export default function BookkeepingPage() {
   // Multi-select state for the Checks & Receipts table
   const [selectedUploads, setSelectedUploads] = useState<Set<string>>(new Set())
   const [bulkUploadAccountId, setBulkUploadAccountId] = useState('')
+  const [lightboxImage, setLightboxImage] = useState<{ url: string; name?: string } | null>(null)
+  const [autoMatching, setAutoMatching] = useState(false)
+  const [uploadSortCol, setUploadSortCol] = useState<'vendor' | 'amount' | 'receipt_date' | 'created_at'>('created_at')
+  const [uploadSortDir, setUploadSortDir] = useState<'asc' | 'desc'>('desc')
   const [showDrivePicker, setShowDrivePicker] = useState(false)
   const [showAddTx, setShowAddTx] = useState(false)
   const [addTxSaving, setAddTxSaving] = useState(false)
@@ -1451,6 +1455,32 @@ export default function BookkeepingPage() {
             onImported={() => { load() }}
           />
 
+          {/* Auto-match button — runs the bulk auto-match endpoint */}
+          <div className="mb-4">
+            <button
+              onClick={async () => {
+                setAutoMatching(true)
+                try {
+                  const res = await fetch('/api/transaction-images?action=auto-match-all', { method: 'POST' })
+                  const d = await res.json()
+                  if (res.ok) {
+                    alert(`Checked ${d.checked} unmatched receipts · matched ${d.matched} to bank transactions`)
+                    await load()
+                  } else {
+                    alert(d.error || 'Auto-match failed')
+                  }
+                } finally { setAutoMatching(false) }
+              }}
+              disabled={autoMatching}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl border-2 border-dashed text-sm font-semibold disabled:opacity-60"
+              style={{ borderColor: '#b8895a', color: '#b8895a' }}
+            >
+              {autoMatching ? <Loader2 size={14} className="animate-spin" /> : <Link2 size={14} />}
+              {autoMatching ? 'Matching…' : 'Auto-Match Receipts to Bank Transactions'}
+            </button>
+            <p className="text-xs text-gray-400 mt-1">Matches by amount, vendor, and date proximity (±14 days). Only links unmatched pairs.</p>
+          </div>
+
           {/* Uploaded files list */}
           {loading ? (
             <div className="flex justify-center py-20"><Loader2 size={22} className="animate-spin" style={{ color: '#b8895a' }} /></div>
@@ -1503,12 +1533,48 @@ export default function BookkeepingPage() {
                         : <Square size={15} />}
                     </button>
                   </th>
-                  {['Type', 'File', 'Vendor / Payee', 'Amount', 'Date', 'Account', 'Matched To', 'Actions'].map(h => (
-                    <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider whitespace-nowrap">{h}</th>
+                  {([
+                    { label: 'Type', col: null },
+                    { label: 'File', col: null },
+                    { label: 'Vendor / Payee', col: 'vendor' },
+                    { label: 'Amount', col: 'amount' },
+                    { label: 'Date', col: 'receipt_date' },
+                    { label: 'Account', col: null },
+                    { label: 'Matched To', col: null },
+                    { label: 'Actions', col: null },
+                  ] as const).map(h => (
+                    <th key={h.label} className="text-left px-4 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider whitespace-nowrap">
+                      {h.col ? (
+                        <button
+                          onClick={() => {
+                            if (uploadSortCol === h.col) setUploadSortDir(uploadSortDir === 'asc' ? 'desc' : 'asc')
+                            else { setUploadSortCol(h.col as any); setUploadSortDir('asc') }
+                          }}
+                          className="flex items-center gap-1 hover:text-gray-800"
+                        >
+                          {h.label}
+                          <span className="opacity-50 text-[10px]">
+                            {uploadSortCol === h.col ? (uploadSortDir === 'asc' ? '↑' : '↓') : '↕'}
+                          </span>
+                        </button>
+                      ) : h.label}
+                    </th>
                   ))}
                 </tr></thead>
                 <tbody className="divide-y divide-gray-50">
-                  {uploads.map(u => {
+                  {[...uploads].sort((a: any, b: any) => {
+                    const dir = uploadSortDir === 'asc' ? 1 : -1
+                    let av: any, bv: any
+                    switch (uploadSortCol) {
+                      case 'vendor': av = (a.vendor || '').toLowerCase(); bv = (b.vendor || '').toLowerCase(); break
+                      case 'amount': av = Number(a.amount) || 0; bv = Number(b.amount) || 0; break
+                      case 'receipt_date': av = a.receipt_date || ''; bv = b.receipt_date || ''; break
+                      case 'created_at': default: av = a.created_at || ''; bv = b.created_at || ''
+                    }
+                    if (av < bv) return -1 * dir
+                    if (av > bv) return 1 * dir
+                    return 0
+                  }).map(u => {
                     const analyzing = ocrAnalyzing[u.id]
                     const ocrLive = ocrResults[u.id]
                     const vendor = ocrLive?.vendor ?? u.vendor
@@ -1786,7 +1852,24 @@ export default function BookkeepingPage() {
                     <td className="px-5 py-3 text-gray-600 text-xs whitespace-nowrap">{formatDateShort(tx.transaction_date)}</td>
                     <td className="px-5 py-3"><div className="text-gray-900 font-medium text-xs truncate max-w-48" title={tx.description}>{tx.description}</div></td>
                     <td className="px-5 py-3 text-gray-600 text-xs" title={tx.payee || ''}>{tx.payee||'—'}</td>
-                    <td className={`px-5 py-3 font-bold text-sm ${tx.amount>=0?'text-green-700':'text-red-600'}`}>{tx.amount>=0?'+':''}{formatCurrency(tx.amount)}</td>
+                    <td className={`px-5 py-3 font-bold text-sm ${tx.amount>=0?'text-green-700':'text-red-600'}`}>
+                      {hasReceipt || hasCheck ? (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            const img = tx.receipt_image || tx.check_image
+                            if (img?.file_url) setLightboxImage({ url: img.file_url, name: img.file_name })
+                          }}
+                          className="inline-flex items-center gap-1 hover:underline"
+                          title={`View ${tx.receipt_image ? 'receipt' : 'check'}`}
+                        >
+                          {tx.amount>=0?'+':''}{formatCurrency(tx.amount)}
+                          <Paperclip size={11} className="inline-block opacity-70" />
+                        </button>
+                      ) : (
+                        <>{tx.amount>=0?'+':''}{formatCurrency(tx.amount)}</>
+                      )}
+                    </td>
                     <td className="px-5 py-3">{accName || tx.category ? <span className="text-xs px-2 py-0.5 rounded-full font-medium" style={{ background:'rgba(184,137,90,0.1)', color:'#b8895a' }}>{accName || tx.category}</span> : <span className="text-xs text-gray-400 italic">Uncategorized</span>}</td>
                     <td className="px-5 py-3 text-gray-600 text-xs">{tx.check_number||'—'}</td>
                     {tab === 'bank' ? (
@@ -2298,6 +2381,25 @@ function ReconciliationTab({ accounts, selectedAccountId, onSelectAccount }: {
           </table>
         </div>
       </div>
+
+      {/* Receipt/Check lightbox */}
+      {lightboxImage && (
+        <div onClick={() => setLightboxImage(null)} className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4 cursor-pointer">
+          <div className="relative max-w-4xl max-h-[90vh]" onClick={e => e.stopPropagation()}>
+            <button onClick={() => setLightboxImage(null)} className="absolute -top-10 right-0 text-white hover:text-gray-300 flex items-center gap-1 text-sm font-semibold">
+              <X size={18} /> Close
+            </button>
+            {lightboxImage.url.match(/\.(pdf)$/i) ? (
+              <iframe src={lightboxImage.url} className="w-[85vw] h-[85vh] bg-white rounded-lg" />
+            ) : (
+              <img src={lightboxImage.url} alt={lightboxImage.name || 'Receipt'} className="max-w-full max-h-[85vh] rounded-lg shadow-2xl" />
+            )}
+            {lightboxImage.name && (
+              <p className="text-white text-center text-sm mt-2 font-medium">{lightboxImage.name}</p>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

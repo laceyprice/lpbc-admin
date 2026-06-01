@@ -63,6 +63,8 @@ export default function UsersPage() {
         display_name: fd.get('display_name'),
         role: fd.get('role'),
         assigned_account_id: fd.get('assigned_account_id') || null,
+        send_welcome_email: fd.get('send_welcome_email') === 'on',
+        welcome_message: fd.get('welcome_message') || null,
       }),
     })
     const d = await res.json()
@@ -227,6 +229,18 @@ export default function UsersPage() {
                   )}
                 </div>
               )}
+
+              <div className="border-t border-gray-100 pt-4 mt-2">
+                <label className="flex items-center gap-2 cursor-pointer mb-3">
+                  <input type="checkbox" name="send_welcome_email" defaultChecked className="w-4 h-4 rounded border-gray-300" style={{ accentColor: '#b8895a' }} />
+                  <span className="text-sm font-semibold text-gray-700">Send welcome email with login details</span>
+                </label>
+                <label className="block text-xs font-semibold text-gray-600 mb-1">Custom message (optional)</label>
+                <textarea name="welcome_message" rows={3} className={inputCls}
+                  placeholder="e.g. Welcome, Wendell! Here's access to your Causey Seascape 119 account where you can view invoices and statements." />
+                <p className="text-xs text-gray-400 mt-1">Appears at the top of the welcome email. Leave blank for default message.</p>
+              </div>
+
               <button type="submit" disabled={saving}
                 className="w-full text-white font-bold py-3 rounded-xl flex items-center justify-center gap-2" style={{ background: '#b8895a' }}>
                 {saving && <Loader2 size={14} className="animate-spin" />}

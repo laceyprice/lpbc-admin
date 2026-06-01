@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 export const dynamic = 'force-dynamic'
 import { createServerClient } from '@/lib/supabase'
+import { sendUserWelcomeEmail } from '@/lib/resend'
 
 export async function GET() {
   const supabase = createServerClient()
@@ -16,7 +17,7 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   const supabase = createServerClient()
   const body = await req.json()
-  const { email, password, display_name, role, assigned_account_id } = body
+  const { email, password, display_name, role, assigned_account_id, send_welcome_email, welcome_message } = body
 
   if (!email || !password || !role) {
     return NextResponse.json({ error: 'email, password, and role are required' }, { status: 400 })
@@ -43,7 +44,35 @@ export async function POST(req: NextRequest) {
   }).select().single()
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-  return NextResponse.json(data, { status: 201 })
+  // Send welcome email (optional, fire-and-forget so DB success isn't gated on email)
+  let emailError: string | null = null
+  if (send_welcome_email !== false) {
+    try {
+      let assignedAccountName: string | null = null
+      if (assigned_account_id) {
+        const { data: acct } = await supabase
+          .from('financial_accounts')
+          .select('name')
+          .eq('id', assigned_account_id)
+          .single()
+        assignedAccountName = acct?.name || null
+      }
+      const result: any = await sendUserWelcomeEmail({
+        to: email,
+        displayName: display_name || email.split('@')[0],
+        temporaryPassword: password,
+        role,
+        assignedAccountName,
+        customMessage: welcome_message || null,
+      })
+      if (result?.error) emailError = result.error.message || String(result.error)
+    } catch (e: any) {
+      emailError = e?.message || String(e)
+      console.error('Welcome email send failed:', e)
+    }
+  }
+
+  return NextResponse.json({ ...data, emailError }, { status: 201 })
 }
 
 export async function PATCH(req: NextRequest) {

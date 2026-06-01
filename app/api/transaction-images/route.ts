@@ -6,6 +6,68 @@ import { attachSignedUrls, signedUrlFor } from '@/lib/signed-url'
 const BUCKET = 'bookkeeping-images'
 
 // ------------------------------------------------------------
+// Receipt auto-match helper
+// Finds a bank transaction matching the given receipt by amount + vendor + date proximity
+// Returns the matched tx id (and links both records) or null
+// ------------------------------------------------------------
+async function autoMatchReceipt(supabase: any, receipt: any): Promise<string | null> {
+  if (!receipt.amount || !receipt.vendor) return null
+  const targetAmount = Math.abs(Number(receipt.amount))
+  if (!targetAmount) return null
+
+  // Look for unmatched bank transactions where:
+  //   - abs(amount) == abs(receipt.amount) within $0.01
+  //   - payee or description contains the vendor (case-insensitive)
+  //   - no receipt already attached
+  //   - same financial_account if receipt has one
+  //   - within ±14 days of receipt_date if present
+  let query = supabase
+    .from('bank_transactions')
+    .select('id, transaction_date, amount, payee, description, financial_account_id, receipt_image_id')
+    .is('receipt_image_id', null)
+
+  if (receipt.financial_account_id) {
+    query = query.eq('financial_account_id', receipt.financial_account_id)
+  }
+  if (receipt.receipt_date) {
+    const d = new Date(receipt.receipt_date)
+    const from = new Date(d.getTime() - 14 * 86400000).toISOString().split('T')[0]
+    const to = new Date(d.getTime() + 14 * 86400000).toISOString().split('T')[0]
+    query = query.gte('transaction_date', from).lte('transaction_date', to)
+  }
+
+  const { data: candidates } = await query.limit(50)
+  if (!candidates || candidates.length === 0) return null
+
+  const vendorLower = String(receipt.vendor).toLowerCase().trim()
+  // Score candidates: amount must match, vendor must appear in payee or description
+  const scored = candidates
+    .map((tx: any) => {
+      const absMatch = Math.abs(Math.abs(Number(tx.amount)) - targetAmount) < 0.01
+      if (!absMatch) return null
+      const haystack = `${tx.payee || ''} ${tx.description || ''}`.toLowerCase()
+      // Either side contains the other (handles "Lowe's #123" vs "Lowes")
+      const vendorMatch = haystack.includes(vendorLower) || vendorLower.split(/\s+/).some((w: string) => w.length >= 3 && haystack.includes(w))
+      if (!vendorMatch) return null
+      const dateDiff = receipt.receipt_date
+        ? Math.abs(new Date(tx.transaction_date).getTime() - new Date(receipt.receipt_date).getTime()) / 86400000
+        : 999
+      return { tx, dateDiff }
+    })
+    .filter(Boolean)
+    .sort((a: any, b: any) => a.dateDiff - b.dateDiff)
+
+  if (scored.length === 0) return null
+  const matchedTxId = scored[0].tx.id
+
+  // Link both directions
+  await supabase.from('transaction_images').update({ matched_bank_transaction_id: matchedTxId }).eq('id', receipt.id)
+  await supabase.from('bank_transactions').update({ receipt_image_id: receipt.id }).eq('id', matchedTxId)
+
+  return matchedTxId
+}
+
+// ------------------------------------------------------------
 // GET  /api/transaction-images?type=receipt|check&matched=true|false
 // ------------------------------------------------------------
 export async function GET(req: NextRequest) {
@@ -103,6 +165,14 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // ── Auto-match: if this is a receipt with vendor + amount already, try to link ─
+    if (image_type === 'receipt' && row.amount && row.vendor) {
+      const autoMatchedTxId = await autoMatchReceipt(supabase, row)
+      if (autoMatchedTxId) {
+        return NextResponse.json({ ...row, auto_matched_bank_transaction_id: autoMatchedTxId }, { status: 201 })
+      }
+    }
+
     // ── Auto-OCR: call parse-receipt in the background ──────────
     // We fire-and-forget so the upload response is fast.
     // The OCR result updates the row and returns suggestions via
@@ -115,6 +185,24 @@ export async function POST(req: NextRequest) {
     }).catch(() => { /* non-blocking — UI polls separately */ })
 
     return NextResponse.json(row, { status: 201 })
+  }
+
+  // ── Bulk auto-match: try to link all unmatched receipts to bank transactions ─
+  if (action === 'auto-match-all') {
+    const { data: unmatched } = await supabase
+      .from('transaction_images')
+      .select('*')
+      .eq('image_type', 'receipt')
+      .is('matched_bank_transaction_id', null)
+      .not('amount', 'is', null)
+      .not('vendor', 'is', null)
+
+    let matched = 0
+    for (const receipt of (unmatched || [])) {
+      const txId = await autoMatchReceipt(supabase, receipt)
+      if (txId) matched++
+    }
+    return NextResponse.json({ checked: (unmatched || []).length, matched })
   }
 
   if (action === 'match') {
@@ -197,6 +285,16 @@ export async function PATCH(req: NextRequest) {
     .select()
     .single()
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+  // If vendor or amount changed and receipt isn't matched yet, try auto-match
+  if ((clean.vendor !== undefined || clean.amount !== undefined)
+      && data.image_type === 'receipt'
+      && !data.matched_bank_transaction_id
+      && data.vendor && data.amount) {
+    const txId = await autoMatchReceipt(supabase, data)
+    if (txId) return NextResponse.json({ ...data, auto_matched_bank_transaction_id: txId })
+  }
+
   return NextResponse.json(data)
 }
 

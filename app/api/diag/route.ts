@@ -11,7 +11,7 @@ export async function GET() {
   const raw = process.env.RESEND_FROM_EMAIL || 'Lacey@laceynprice.com (default — not set in env)'
   const normalized = normalizeFrom(process.env.RESEND_FROM_EMAIL || 'Lacey@laceynprice.com')
   return NextResponse.json({
-    version: 'v13-reports-account-filter',
+    version: 'v18-magic-link-login',
     deployedAt: new Date().toISOString(),
     rawEnvValue: raw,
     normalizedValue: normalized,

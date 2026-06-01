@@ -21,6 +21,35 @@ export async function GET(req: NextRequest) {
   const { data, error } = await query
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
+  // For accounting_entries: enrich each row with the receipt_image from its linked bank_transaction
+  if (table === 'accounting_entries' && Array.isArray(data) && data.length > 0) {
+    const bankTxIds = data.map((e: any) => e.bank_transaction_id).filter(Boolean)
+    if (bankTxIds.length > 0) {
+      const { data: bankTxs } = await supabase
+        .from('bank_transactions')
+        .select('id, receipt_image_id, check_image_id')
+        .in('id', bankTxIds)
+      const imageIds = (bankTxs || [])
+        .flatMap((b: any) => [b.receipt_image_id, b.check_image_id])
+        .filter(Boolean)
+      let imagesMap: Record<string, any> = {}
+      if (imageIds.length > 0) {
+        const { data: imgs } = await supabase
+          .from('transaction_images')
+          .select('id, file_url, file_name, image_type')
+          .in('id', imageIds)
+        for (const i of (imgs || [])) imagesMap[i.id] = i
+      }
+      const byTxId: Record<string, any> = {}
+      for (const b of (bankTxs || [])) byTxId[b.id] = b
+      for (const entry of data) {
+        const bt = entry.bank_transaction_id ? byTxId[entry.bank_transaction_id] : null
+        entry.receipt_image = bt?.receipt_image_id ? imagesMap[bt.receipt_image_id] || null : null
+        entry.check_image = bt?.check_image_id ? imagesMap[bt.check_image_id] || null : null
+      }
+    }
+  }
+
   // For bank_transactions, also tag which ones are already posted to accounting
   if (table === 'bank_transactions') {
     const { data: posted } = await supabase
