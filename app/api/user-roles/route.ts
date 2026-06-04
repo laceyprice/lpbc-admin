@@ -60,7 +60,7 @@ export async function POST(req: NextRequest) {
       const result: any = await sendUserWelcomeEmail({
         to: email,
         displayName: display_name || email.split('@')[0],
-        temporaryPassword: password,
+        // Magic-link login — no password to share
         role,
         assignedAccountName,
         customMessage: welcome_message || null,

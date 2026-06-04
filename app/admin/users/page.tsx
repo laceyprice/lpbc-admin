@@ -59,7 +59,8 @@ export default function UsersPage() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         email: fd.get('email'),
-        password: fd.get('password'),
+        // Auto-generated since users sign in via magic link; required by Supabase Auth API
+        password: Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2).toUpperCase() + '!',
         display_name: fd.get('display_name'),
         role: fd.get('role'),
         assigned_account_id: fd.get('assigned_account_id') || null,
@@ -204,9 +205,8 @@ export default function UsersPage() {
                 <label className="block text-sm font-semibold text-gray-700 mb-1">Email</label>
                 <input name="email" type="email" required className={inputCls} placeholder="user@example.com" />
               </div>
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-1">Password</label>
-                <input name="password" type="password" required minLength={8} className={inputCls} placeholder="Min 8 characters" />
+              <div className="bg-blue-50 border border-blue-100 rounded-xl px-3 py-2 text-xs text-blue-800">
+                🔑 New users sign in via emailed magic link — no password needed.
               </div>
               <div>
                 <label className="block text-sm font-semibold text-gray-700 mb-1">Role</label>

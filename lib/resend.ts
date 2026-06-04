@@ -226,7 +226,7 @@ export async function sendScheduleRequestAutoReply({ to, customerName }: { to: s
 export async function sendUserWelcomeEmail({ to, displayName, temporaryPassword, role, assignedAccountName, customMessage }: {
   to: string
   displayName: string
-  temporaryPassword: string
+  temporaryPassword?: string
   role: string
   assignedAccountName?: string | null
   customMessage?: string | null
@@ -248,18 +248,21 @@ export async function sendUserWelcomeEmail({ to, displayName, temporaryPassword,
 
       <table style="width:100%;border-collapse:collapse;margin:20px 0;border-radius:8px;overflow:hidden">
         <tr style="background:#f3ede3"><td style="padding:12px;font-weight:bold;color:#2f5a5e;width:160px">Login Email</td><td style="padding:12px"><a href="mailto:${to}" style="color:#2f5a5e;text-decoration:none">${to}</a></td></tr>
-        <tr><td style="padding:12px;font-weight:bold;color:#2f5a5e">Temporary Password</td><td style="padding:12px;font-family:monospace;font-size:15px;color:#1f2a2e">${temporaryPassword}</td></tr>
-        <tr style="background:#f3ede3"><td style="padding:12px;font-weight:bold;color:#2f5a5e">Access Level</td><td style="padding:12px">${roleLabel[role] || role}</td></tr>
-        ${assignedAccountName ? `<tr><td style="padding:12px;font-weight:bold;color:#2f5a5e">Assigned Account</td><td style="padding:12px">${assignedAccountName}</td></tr>` : ''}
+        <tr><td style="padding:12px;font-weight:bold;color:#2f5a5e">Access Level</td><td style="padding:12px">${roleLabel[role] || role}</td></tr>
+        ${assignedAccountName ? `<tr style="background:#f3ede3"><td style="padding:12px;font-weight:bold;color:#2f5a5e">Assigned Account</td><td style="padding:12px">${assignedAccountName}</td></tr>` : ''}
       </table>
 
-      <div style="text-align:center;margin:24px 0"><a href="${loginUrl}" target="_blank" rel="noopener" style="background:#b8895a;color:white;padding:14px 32px;border-radius:8px;text-decoration:none;font-size:16px;font-weight:bold;display:inline-block">Log In Now</a></div>
-
-      <div style="background:#fff8e1;border:1px solid #ffe082;border-radius:8px;padding:14px;margin:20px 0;font-size:13px;color:#5d4e1a">
-        <strong>🔒 Security tip:</strong> Please change your password after your first login. Keep your credentials private.
+      <div style="background:#f3ede3;border-left:4px solid #b8895a;border-radius:4px;padding:16px 18px;margin:20px 0">
+        <p style="margin:0 0 8px;font-weight:bold;color:#2f5a5e;font-size:15px">🔑 How to sign in</p>
+        <p style="margin:0;font-size:14px;color:#1f2a2e;line-height:1.5">
+          We use passwordless sign-in. Just go to the login page, enter your email, and we'll send you a one-click sign-in link.
+          No password to remember!
+        </p>
       </div>
 
-      <p style="font-size:14px;color:#4a5568">If you have any trouble logging in or weren't expecting this email, reply directly and we'll get you sorted out.</p>
+      <div style="text-align:center;margin:24px 0"><a href="${loginUrl}" target="_blank" rel="noopener" style="background:#b8895a;color:white;padding:14px 32px;border-radius:8px;text-decoration:none;font-size:16px;font-weight:bold;display:inline-block">Go to Login</a></div>
+
+      <p style="font-size:14px;color:#4a5568">If you have any trouble signing in or weren't expecting this email, reply directly and we'll get you sorted out.</p>
 
       <div style="border-top:1px solid #e2e8f0;padding-top:16px;margin-top:24px">
         <p style="margin:0 0 8px">Best,</p>

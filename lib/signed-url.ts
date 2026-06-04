@@ -10,7 +10,7 @@
 // Usage:
 //   const signed = await attachSignedUrls(supabase, BUCKET, rows, 'file_path', 'file_url')
 
-export const SIGNED_URL_TTL_SECONDS = 60 * 60 // 1 hour — long enough to view/download but limits leak window
+export const SIGNED_URL_TTL_SECONDS = 60 * 60 * 24 // 24 hours — admin-only tool, longer TTL prevents "InvalidJWT" errors after you've had the page open a while
 
 export async function signedUrlFor(
   supabase: any,

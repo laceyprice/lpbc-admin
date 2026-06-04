@@ -254,6 +254,8 @@ interface FinancialAccount {
   description: string | null
   account_number: string | null
   is_active: boolean
+  closed_period_start: string | null
+  closed_period_end: string | null
 }
 
 export default function BookkeepingPage() {
@@ -268,7 +270,7 @@ export default function BookkeepingPage() {
   const [showArchivedAccounts, setShowArchivedAccounts] = useState(false)
 
   // Date range for summary cards
-  const [dateMode, setDateMode] = useState<'month' | 'ytd' | 'custom'>('month')
+  const [dateMode, setDateMode] = useState<'month' | 'ytd' | 'custom'>('ytd')
   const [customFrom, setCustomFrom] = useState('')
   const [customTo, setCustomTo] = useState('')
   const [dateLocked, setDateLocked] = useState(false)
@@ -297,6 +299,17 @@ export default function BookkeepingPage() {
       }
     })
   }, [])
+
+  // When a closed account is selected, auto-snap to its closed period
+  useEffect(() => {
+    if (!selectedAccountId) return
+    const acct = financialAccounts.find(a => a.id === selectedAccountId)
+    if (acct?.closed_period_start && acct?.closed_period_end) {
+      setDateMode('custom')
+      setCustomFrom(acct.closed_period_start)
+      setCustomTo(acct.closed_period_end)
+    }
+  }, [selectedAccountId, financialAccounts])
 
   // Publish to shared storage when date changes (if locked)
   useEffect(() => {
@@ -487,6 +500,8 @@ export default function BookkeepingPage() {
           name: fd.get('edit_name'),
           description: fd.get('edit_desc'),
           account_number: fd.get('edit_number'),
+          closed_period_start: fd.get('edit_closed_start'),
+          closed_period_end: fd.get('edit_closed_end'),
         }),
       })
       const d = await res.json()
@@ -1248,14 +1263,23 @@ export default function BookkeepingPage() {
             ) : (
             <div className="divide-y divide-gray-50">
               {visible.map(a => editingAccountId === a.id ? (
-                <form key={a.id} onSubmit={(e) => saveFinancialAccountEdit(e, a.id)} className="grid grid-cols-12 gap-2 py-2">
-                  <input name="edit_name" defaultValue={a.name} required placeholder="Account name" className="col-span-4 px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:border-blue-400" />
-                  <input name="edit_desc" defaultValue={a.description || ''} placeholder="Description" className="col-span-4 px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:border-blue-400" />
-                  <input name="edit_number" defaultValue={a.account_number || ''} placeholder="Account #" className="col-span-2 px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:border-blue-400" />
-                  <button type="submit" disabled={accountSaving} className="col-span-1 px-3 py-2 rounded-xl text-white text-sm font-semibold" style={{ background: '#b8895a' }}>
-                    {accountSaving ? <Loader2 size={14} className="animate-spin" /> : 'Save'}
-                  </button>
-                  <button type="button" onClick={() => setEditingAccountId(null)} className="col-span-1 px-3 py-2 rounded-xl border border-gray-200 text-sm text-gray-500">Cancel</button>
+                <form key={a.id} onSubmit={(e) => saveFinancialAccountEdit(e, a.id)} className="py-2 space-y-2">
+                  <div className="grid grid-cols-12 gap-2">
+                    <input name="edit_name" defaultValue={a.name} required placeholder="Account name" className="col-span-4 px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:border-blue-400" />
+                    <input name="edit_desc" defaultValue={a.description || ''} placeholder="Description" className="col-span-4 px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:border-blue-400" />
+                    <input name="edit_number" defaultValue={a.account_number || ''} placeholder="Account #" className="col-span-2 px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:border-blue-400" />
+                    <button type="submit" disabled={accountSaving} className="col-span-1 px-3 py-2 rounded-xl text-white text-sm font-semibold" style={{ background: '#b8895a' }}>
+                      {accountSaving ? <Loader2 size={14} className="animate-spin" /> : 'Save'}
+                    </button>
+                    <button type="button" onClick={() => setEditingAccountId(null)} className="col-span-1 px-3 py-2 rounded-xl border border-gray-200 text-sm text-gray-500">Cancel</button>
+                  </div>
+                  <div className="grid grid-cols-12 gap-2 items-center bg-amber-50 rounded-xl px-3 py-2 border border-amber-100">
+                    <label className="col-span-3 text-xs font-semibold text-amber-800">📅 Closed Period (optional)</label>
+                    <input name="edit_closed_start" type="date" defaultValue={a.closed_period_start || ''} className="col-span-3 px-2 py-1.5 rounded-lg border border-amber-200 text-xs bg-white focus:outline-none focus:ring-2 focus:border-amber-400" />
+                    <span className="col-span-1 text-center text-xs text-amber-700">→</span>
+                    <input name="edit_closed_end" type="date" defaultValue={a.closed_period_end || ''} className="col-span-3 px-2 py-1.5 rounded-lg border border-amber-200 text-xs bg-white focus:outline-none focus:ring-2 focus:border-amber-400" />
+                    <span className="col-span-2 text-[10px] text-amber-700">Locks date range when selected</span>
+                  </div>
                 </form>
               ) : (
                 <div key={a.id} className={`flex items-center gap-3 py-2 ${!a.is_active ? 'opacity-50' : ''}`}>
@@ -1264,6 +1288,11 @@ export default function BookkeepingPage() {
                       <span className="text-sm font-medium text-gray-800">{a.name}</span>
                       {a.account_number && <span className="text-xs text-gray-500 font-mono">#{a.account_number}</span>}
                       {!a.is_active && <span className="text-[10px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded bg-gray-200 text-gray-600">Archived</span>}
+                      {a.closed_period_start && a.closed_period_end && (
+                        <span className="text-[10px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">
+                          Closed {a.closed_period_start.slice(0,7)} → {a.closed_period_end.slice(0,7)}
+                        </span>
+                      )}
                     </div>
                     {a.description && <div className="text-xs text-gray-400">{a.description}</div>}
                   </div>
@@ -1829,11 +1858,10 @@ export default function BookkeepingPage() {
                   </button>
                 </th>
               ))}
-              {tab === 'bank' && <th className="px-3 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider text-center">Post</th>}
             </tr></thead>
             <tbody className="divide-y divide-gray-50">
-              {loading ? <tr><td colSpan={tab === 'bank' ? 9 : 7} className="text-center py-12"><Loader2 size={22} className="animate-spin mx-auto" style={{ color:'#b8895a' }} /></td></tr>
-                : filtered.length === 0 ? <tr><td colSpan={tab === 'bank' ? 9 : 7} className="text-center py-12 text-gray-400 text-sm"><FileText size={30} className="mx-auto mb-2 opacity-30" />No transactions · Import a CSV to get started</td></tr>
+              {loading ? <tr><td colSpan={tab === 'bank' ? 8 : 7} className="text-center py-12"><Loader2 size={22} className="animate-spin mx-auto" style={{ color:'#b8895a' }} /></td></tr>
+                : filtered.length === 0 ? <tr><td colSpan={tab === 'bank' ? 8 : 7} className="text-center py-12 text-gray-400 text-sm"><FileText size={30} className="mx-auto mb-2 opacity-30" />No transactions · Import a CSV to get started</td></tr>
                 : sortedFiltered.map(tx => {
                     const accName = accountName(tx.account_id)
                     const hasReceipt = !!tx.receipt_image
@@ -1873,39 +1901,28 @@ export default function BookkeepingPage() {
                     <td className="px-5 py-3">{accName || tx.category ? <span className="text-xs px-2 py-0.5 rounded-full font-medium" style={{ background:'rgba(184,137,90,0.1)', color:'#b8895a' }}>{accName || tx.category}</span> : <span className="text-xs text-gray-400 italic">Uncategorized</span>}</td>
                     <td className="px-5 py-3 text-gray-600 text-xs">{tx.check_number||'—'}</td>
                     {tab === 'bank' ? (
-                      <>
-                        <td className="px-5 py-3">
-                          <div className="flex items-center gap-1.5">
-                            {isPosted && (
-                              <span className="flex items-center gap-1 text-xs font-bold px-2 py-0.5 rounded-full bg-green-100 text-green-700">
-                                <CheckCircle2 size={11} />Posted
-                              </span>
-                            )}
-                            {hasReceipt && <Receipt size={14} className="text-emerald-600" />}
-                            {hasCheck && <FileImage size={14} className="text-blue-600" />}
-                            {!isPosted && !hasReceipt && !hasCheck && <span className="text-xs text-gray-300">—</span>}
-                          </div>
-                        </td>
-                        <td className="px-3 py-3 text-center" onClick={e => e.stopPropagation()}>
+                      <td className="px-5 py-3" onClick={e => e.stopPropagation()}>
+                        <div className="flex items-center gap-2">
                           {isPosted ? (
-                            <button title="Already posted to accounting ledger" disabled
-                              className="p-1.5 rounded-lg bg-green-100 text-green-600 cursor-default">
-                              <CheckCircle2 size={14} />
-                            </button>
+                            <span className="flex items-center gap-1 text-xs font-bold px-2 py-0.5 rounded-full bg-green-100 text-green-700" title="Already posted to accounting ledger">
+                              <CheckCircle2 size={11} />Posted
+                            </span>
                           ) : tx.account_id ? (
                             <button onClick={() => acceptTx(tx)} disabled={accepting.has(tx.id)}
                               title="Post this transaction to the accounting ledger"
-                              className="p-1.5 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-100 disabled:opacity-50">
-                              {accepting.has(tx.id) ? <Loader2 size={14} className="animate-spin" /> : <CheckSquare size={14} />}
+                              className="flex items-center gap-1 text-xs font-bold px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 hover:bg-blue-100 disabled:opacity-50">
+                              {accepting.has(tx.id) ? <Loader2 size={11} className="animate-spin" /> : <CheckSquare size={11} />}
+                              Post →
                             </button>
                           ) : (
-                            <button title="Categorize first (assign an account) before posting" disabled
-                              className="p-1.5 rounded-lg bg-gray-50 text-gray-300 cursor-not-allowed">
-                              <Square size={14} />
-                            </button>
+                            <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-gray-100 text-gray-400" title="Categorize first (assign an account) before posting">
+                              Uncategorized
+                            </span>
                           )}
-                        </td>
-                      </>
+                          {hasReceipt && <Receipt size={14} className="text-emerald-600" />}
+                          {hasCheck && <FileImage size={14} className="text-blue-600" />}
+                        </div>
+                      </td>
                     ) : (
                       <td className="px-5 py-3">
                         <div className="flex gap-1.5">

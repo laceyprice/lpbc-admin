@@ -33,7 +33,7 @@ export async function PATCH(req: NextRequest) {
   const supabase = createServerClient()
   const body = await req.json()
   // Whitelist editable fields
-  const { id, name, description, account_number, color, is_active } = body
+  const { id, name, description, account_number, color, is_active, closed_period_start, closed_period_end } = body
   if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 })
   const updates: Record<string, any> = {}
   if (name !== undefined) updates.name = name
@@ -41,6 +41,8 @@ export async function PATCH(req: NextRequest) {
   if (account_number !== undefined) updates.account_number = account_number || null
   if (color !== undefined) updates.color = color
   if (is_active !== undefined) updates.is_active = !!is_active
+  if (closed_period_start !== undefined) updates.closed_period_start = closed_period_start || null
+  if (closed_period_end !== undefined) updates.closed_period_end = closed_period_end || null
   const { data, error } = await supabase
     .from('financial_accounts')
     .update(updates)
