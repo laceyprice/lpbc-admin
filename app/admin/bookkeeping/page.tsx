@@ -446,8 +446,26 @@ export default function BookkeepingPage() {
   const receiptRef = useRef<HTMLInputElement>(null)
   const checkRef = useRef<HTMLInputElement>(null)
 
-  useEffect(() => { loadAccounts(); loadBankConnections(); loadFinancialAccounts(); loadPlaidAccounts() }, [])
+  // Combined bootstrap fetch — fires ONE request on mount instead of four
+  // parallel requests (chart-of-accounts, financial-accounts, plaid connections,
+  // plaid account mapping). Cuts API fan-out by 75% and avoids Supabase
+  // "too many connections" 429s on the free tier.
+  useEffect(() => { bootstrap() }, [])
   useEffect(() => { load() }, [tab, selectedAccountId])
+
+  async function bootstrap() {
+    try {
+      const res = await fetch('/api/bootstrap')
+      const d = await res.json()
+      setAccounts(Array.isArray(d.chartOfAccounts) ? d.chartOfAccounts : [])
+      setFinancialAccounts(Array.isArray(d.financialAccounts) ? d.financialAccounts : [])
+      const conns = Array.isArray(d.bankConnections) ? d.bankConnections : []
+      setBankConnections(conns)
+      // Plaid accounts only needed if a bank is actually connected. Skips
+      // the extra call entirely for first-time users with no Plaid connection.
+      if (conns.length > 0) loadPlaidAccounts()
+    } catch {}
+  }
 
   async function loadAccounts() {
     try {
