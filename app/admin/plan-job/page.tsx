@@ -1,6 +1,6 @@
 'use client'
-import { useRef, useState } from 'react'
-import { Sparkles, Loader2, ClipboardList, DollarSign, Clock, AlertTriangle, ListChecks, TrendingUp, History, Hammer, Upload, X, Image as ImageIcon, Film, FileText, Ruler, Eye } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { Sparkles, Loader2, ClipboardList, DollarSign, Clock, AlertTriangle, ListChecks, TrendingUp, History, Hammer, Upload, X, Image as ImageIcon, Film, FileText, Ruler, Save, FolderOpen, Plus, Trash2, Archive } from 'lucide-react'
 
 interface MaterialLine { category: string; estimated_cost: number; notes: string }
 interface ProcessStep { step: number; title: string; description: string; estimated_days: number }
@@ -31,24 +31,125 @@ interface Attachment {
   signed_url: string | null
 }
 
+interface JobPlanSummary {
+  id: string
+  title: string
+  description: string
+  estimate: Estimate | null
+  estimate_generated_at: string | null
+  is_archived: boolean
+  created_at: string
+  updated_at: string
+}
+
+function newSessionId() { return `plan_${Date.now()}_${Math.random().toString(36).slice(2, 8)}` }
+
 export default function PlanJobPage() {
+  const [planId, setPlanId] = useState<string | null>(null)
+  const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const [measurements, setMeasurements] = useState('')
   const [attachments, setAttachments] = useState<Attachment[]>([])
+  const [estimate, setEstimate] = useState<Estimate | null>(null)
+  const [meta, setMeta] = useState<any>(null)
+  const [sessionId, setSessionId] = useState<string>(() => newSessionId())
+
+  const [savedPlans, setSavedPlans] = useState<JobPlanSummary[]>([])
+  const [showLoadPanel, setShowLoadPanel] = useState(false)
+  const [showArchived, setShowArchived] = useState(false)
+
   const [uploading, setUploading] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
-  const [estimate, setEstimate] = useState<Estimate | null>(null)
-  const [meta, setMeta] = useState<{ invoices_considered: number; expenses_considered: number; top_vendors: number; images_analyzed: number; other_files: number } | null>(null)
-  const [sessionId] = useState(() => `plan_${Date.now()}`)
+  const [savedAt, setSavedAt] = useState<Date | null>(null)
   const [previewing, setPreviewing] = useState<Attachment | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => { loadPlansList() }, [showArchived])
+
+  async function loadPlansList() {
+    try {
+      const res = await fetch(`/api/job-plans${showArchived ? '?archived=true' : ''}`)
+      const d = await res.json()
+      setSavedPlans(Array.isArray(d) ? d : [])
+    } catch {}
+  }
+
+  function reset() {
+    setPlanId(null)
+    setTitle('')
+    setDescription('')
+    setMeasurements('')
+    setAttachments([])
+    setEstimate(null)
+    setMeta(null)
+    setSavedAt(null)
+    setError('')
+    setSessionId(newSessionId())
+  }
+
+  async function loadPlan(id: string) {
+    setError('')
+    try {
+      const res = await fetch(`/api/job-plans?id=${id}`)
+      const d = await res.json()
+      if (!res.ok) { setError(d.error || 'Failed to load plan'); return }
+      setPlanId(d.id)
+      setTitle(d.title || '')
+      setDescription(d.description || '')
+      setMeasurements(d.measurements || '')
+      setAttachments(Array.isArray(d.attachments) ? d.attachments : [])
+      setEstimate(d.estimate || null)
+      setSessionId(d.session_id || newSessionId())
+      setShowLoadPanel(false)
+      setSavedAt(d.updated_at ? new Date(d.updated_at) : null)
+      setMeta(null)
+    } catch (e: any) {
+      setError(e?.message || 'Failed to load plan')
+    }
+  }
+
+  async function save() {
+    setSaving(true)
+    setError('')
+    try {
+      const body: any = {
+        title: title || deriveTitle(description) || 'Untitled Plan',
+        description, measurements, session_id: sessionId,
+        attachments, estimate,
+      }
+      const url = '/api/job-plans'
+      const method = planId ? 'PATCH' : 'POST'
+      if (planId) body.id = planId
+      const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      const d = await res.json()
+      if (!res.ok) { setError(d.error || 'Save failed'); setSaving(false); return }
+      if (!planId) setPlanId(d.id)
+      setSavedAt(new Date())
+      await loadPlansList()
+    } catch (e: any) {
+      setError(e?.message || 'Save failed')
+    }
+    setSaving(false)
+  }
+
+  async function deletePlan(id: string, ttl: string) {
+    if (!confirm(`Delete "${ttl}" permanently? This also removes its uploaded files.`)) return
+    await fetch(`/api/job-plans?id=${id}`, { method: 'DELETE' })
+    if (planId === id) reset()
+    await loadPlansList()
+  }
+
+  async function toggleArchive(p: JobPlanSummary) {
+    await fetch('/api/job-plans', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: p.id, is_archived: !p.is_archived }) })
+    await loadPlansList()
+  }
 
   async function handleFiles(files: FileList | File[]) {
     const list = Array.from(files)
     if (!list.length) return
-    setUploading(true)
-    setError('')
+    setUploading(true); setError('')
     try {
       const fd = new FormData()
       fd.append('session_id', sessionId)
@@ -76,8 +177,7 @@ export default function PlanJobPage() {
       const res = await fetch('/api/estimate-job', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          description,
-          measurements,
+          description, measurements,
           attachments: attachments.map(a => ({ path: a.path, name: a.name, type: a.type, size: a.size })),
         }),
       })
@@ -85,16 +185,33 @@ export default function PlanJobPage() {
       if (!res.ok) { setError(d.error || 'Estimate failed'); setLoading(false); return }
       setEstimate(d.estimate)
       setMeta(d.historical_data_used)
+      // Auto-save the estimate against the plan (create the plan if it doesn't exist yet)
+      setTimeout(() => saveAfterEstimate(d.estimate), 0)
     } catch (e: any) {
       setError(e?.message || 'Estimate failed')
     }
     setLoading(false)
   }
 
-  function onDrop(e: React.DragEvent) {
-    e.preventDefault()
-    if (e.dataTransfer.files?.length) handleFiles(e.dataTransfer.files)
+  async function saveAfterEstimate(est: Estimate) {
+    try {
+      const body: any = {
+        title: title || deriveTitle(description) || 'Untitled Plan',
+        description, measurements, session_id: sessionId, attachments, estimate: est,
+      }
+      const method = planId ? 'PATCH' : 'POST'
+      if (planId) body.id = planId
+      const res = await fetch('/api/job-plans', { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      const d = await res.json()
+      if (res.ok) {
+        if (!planId) setPlanId(d.id)
+        setSavedAt(new Date())
+        await loadPlansList()
+      }
+    } catch {}
   }
+
+  function onDrop(e: React.DragEvent) { e.preventDefault(); if (e.dataTransfer.files?.length) handleFiles(e.dataTransfer.files) }
 
   const grandTotal = estimate ? estimate.estimated_total + estimate.design_pm_fee : 0
   const confidenceColor = estimate?.confidence === 'high' ? 'text-green-700 bg-green-50 border-green-200'
@@ -106,9 +223,81 @@ export default function PlanJobPage() {
 
   return (
     <div className="p-6 md:p-8 pt-16 md:pt-8 max-w-5xl mx-auto">
-      <div className="mb-6">
-        <h1 className="text-2xl font-extrabold text-gray-900 flex items-center gap-2"><Sparkles size={22} style={{ color: '#b8895a' }} /> Plan a New Job</h1>
-        <p className="text-gray-500 text-sm mt-0.5">Describe the job, upload photos/measurements — get a cost estimate, process plan, and PM fee anchored to your real historical data</p>
+      {/* Header */}
+      <div className="mb-6 flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <h1 className="text-2xl font-extrabold text-gray-900 flex items-center gap-2"><Sparkles size={22} style={{ color: '#b8895a' }} /> Plan a New Job</h1>
+          <p className="text-gray-500 text-sm mt-0.5">Save drafts, come back later, generate estimates with AI vision + your bookkeeping history</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <button onClick={() => setShowLoadPanel(!showLoadPanel)}
+            className="flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-xl border border-gray-200 hover:bg-gray-50">
+            <FolderOpen size={13} /> My Plans ({savedPlans.length})
+          </button>
+          <button onClick={reset}
+            className="flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-xl border border-gray-200 hover:bg-gray-50">
+            <Plus size={13} /> New
+          </button>
+        </div>
+      </div>
+
+      {/* Saved plans panel */}
+      {showLoadPanel && (
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 mb-5">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="font-bold text-gray-900 text-sm flex items-center gap-2"><FolderOpen size={14} /> Saved plans</h2>
+            <div className="flex items-center gap-3">
+              <label className="flex items-center gap-1 text-[11px] text-gray-500 cursor-pointer">
+                <input type="checkbox" checked={showArchived} onChange={e => setShowArchived(e.target.checked)} /> Show archived
+              </label>
+              <button onClick={() => setShowLoadPanel(false)}><X size={14} className="text-gray-400" /></button>
+            </div>
+          </div>
+          {savedPlans.length === 0 ? (
+            <div className="text-center py-6 text-gray-400 text-sm">No saved plans yet.</div>
+          ) : (
+            <div className="divide-y divide-gray-100">
+              {savedPlans.map(p => (
+                <div key={p.id} className={`py-2.5 flex items-center gap-3 ${p.is_archived ? 'opacity-50' : ''}`}>
+                  <button onClick={() => loadPlan(p.id)} className="flex-1 min-w-0 text-left hover:bg-gray-50 rounded-lg px-2 py-1 -mx-2">
+                    <div className="font-semibold text-gray-900 text-sm truncate flex items-center gap-2">
+                      {p.title}
+                      {p.estimate_generated_at ? (
+                        <span className="text-[10px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded bg-green-100 text-green-700">Estimated</span>
+                      ) : (
+                        <span className="text-[10px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">Draft</span>
+                      )}
+                    </div>
+                    <div className="text-[11px] text-gray-500 truncate">{p.description}</div>
+                    <div className="text-[10px] text-gray-400 mt-0.5">Updated {new Date(p.updated_at).toLocaleDateString()} {new Date(p.updated_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
+                  </button>
+                  <button onClick={() => toggleArchive(p)} title={p.is_archived ? 'Unarchive' : 'Archive'} className="text-gray-300 hover:text-blue-600 p-1"><Archive size={13} /></button>
+                  <button onClick={() => deletePlan(p.id, p.title)} title="Delete" className="text-gray-300 hover:text-red-500 p-1"><Trash2 size={13} /></button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Title + status bar */}
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 px-4 py-3 mb-5 flex items-center gap-3 flex-wrap">
+        <input value={title} onChange={e => setTitle(e.target.value)}
+          placeholder="Plan title (auto-generated from description if blank)"
+          className="flex-1 min-w-[200px] px-3 py-2 rounded-xl border border-gray-200 text-sm font-semibold focus:outline-none focus:ring-2 focus:border-blue-400" />
+        <div className="text-[11px] text-gray-500 flex items-center gap-2">
+          {planId ? (
+            <span className="text-blue-600 font-semibold">Editing saved plan</span>
+          ) : (
+            <span className="text-amber-700 font-semibold">Unsaved draft</span>
+          )}
+          {savedAt && <span>· Saved {savedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>}
+        </div>
+        <button onClick={save} disabled={saving || (!description && !measurements && attachments.length === 0)}
+          className="flex items-center gap-1.5 text-sm font-bold px-4 py-2 rounded-xl border border-gray-200 hover:bg-gray-50 disabled:opacity-50">
+          {saving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
+          {planId ? 'Save Changes' : 'Save Draft'}
+        </button>
       </div>
 
       {/* Input panel */}
@@ -124,23 +313,17 @@ export default function PlanJobPage() {
           />
         </div>
 
-        {/* Measurements */}
         <div>
           <label className="block text-sm font-semibold text-gray-700 mb-2 flex items-center gap-1.5"><Ruler size={13} /> Measurements & scope notes (optional)</label>
           <textarea
             value={measurements}
             onChange={e => setMeasurements(e.target.value)}
             rows={3}
-            placeholder={`Room: 12'×10'×8' ceiling
-Shower wall: 6'×4'
-Window: 36"×48"
-Existing flooring: porcelain tile, mud-set
-Plumbing: PEX, accessible from attic`}
+            placeholder={`Room: 12'×10'×8' ceiling\nShower wall: 6'×4'\nWindow: 36"×48"\nExisting flooring: porcelain tile, mud-set\nPlumbing: PEX, accessible from attic`}
             className="w-full px-4 py-3 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:border-blue-400 font-mono"
           />
         </div>
 
-        {/* Upload zone */}
         <div>
           <label className="block text-sm font-semibold text-gray-700 mb-2 flex items-center gap-1.5"><Upload size={13} /> Photos, videos & documents</label>
           <div
@@ -168,13 +351,11 @@ Plumbing: PEX, accessible from attic`}
                     <img src={att.signed_url} alt={att.name} className="w-full h-24 object-cover cursor-pointer" onClick={() => setPreviewing(att)} />
                   ) : isVideo(att.type) ? (
                     <div className="w-full h-24 flex flex-col items-center justify-center text-gray-500 text-xs">
-                      <Film size={20} />
-                      <span className="mt-1 truncate max-w-[90%] text-[10px]">{att.name}</span>
+                      <Film size={20} /><span className="mt-1 truncate max-w-[90%] text-[10px]">{att.name}</span>
                     </div>
                   ) : (
                     <div className="w-full h-24 flex flex-col items-center justify-center text-gray-500 text-xs">
-                      <FileText size={20} />
-                      <span className="mt-1 truncate max-w-[90%] text-[10px]">{att.name}</span>
+                      <FileText size={20} /><span className="mt-1 truncate max-w-[90%] text-[10px]">{att.name}</span>
                     </div>
                   )}
                   <button onClick={(e) => { e.stopPropagation(); removeAttachment(att) }}
@@ -190,7 +371,7 @@ Plumbing: PEX, accessible from attic`}
 
         <div className="flex items-center justify-between pt-1">
           <div className="text-xs text-gray-400">
-            The more context (description + measurements + photos), the better the estimate.
+            {planId ? 'Changes auto-save when you generate an estimate.' : 'Save your draft now — come back later, generate when ready.'}
           </div>
           <button onClick={generate} disabled={loading || description.trim().length < 10}
             className="flex items-center gap-2 text-sm font-bold px-5 py-2.5 rounded-xl text-white shadow-md disabled:opacity-50"
@@ -202,7 +383,6 @@ Plumbing: PEX, accessible from attic`}
         {error && <div className="bg-red-50 border border-red-100 text-red-700 text-sm px-4 py-3 rounded-xl">{error}</div>}
       </div>
 
-      {/* Loading skeleton */}
       {loading && (
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-8 text-center text-gray-400">
           <Loader2 size={28} className="animate-spin mx-auto mb-3" style={{ color: '#b8895a' }} />
@@ -211,7 +391,6 @@ Plumbing: PEX, accessible from attic`}
         </div>
       )}
 
-      {/* Result */}
       {estimate && !loading && (
         <div className="space-y-5">
           <div className="flex flex-wrap items-center gap-3">
@@ -225,7 +404,6 @@ Plumbing: PEX, accessible from attic`}
             )}
           </div>
 
-          {/* Photo observations */}
           {estimate.photo_observations && estimate.photo_observations.length > 0 && (
             <Section title="What the photos revealed" icon={ImageIcon}>
               <ul className="px-5 py-3 space-y-1.5 text-sm text-gray-700 list-disc list-inside">
@@ -328,13 +506,14 @@ Plumbing: PEX, accessible from attic`}
             </Section>
           </div>
 
-          <div className="text-xs text-gray-500 italic px-1">
-            <strong>Why {estimate.confidence} confidence:</strong> {estimate.confidence_rationale}
-          </div>
+          {estimate.confidence_rationale && (
+            <div className="text-xs text-gray-500 italic px-1">
+              <strong>Why {estimate.confidence} confidence:</strong> {estimate.confidence_rationale}
+            </div>
+          )}
         </div>
       )}
 
-      {/* Image preview */}
       {previewing && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4" onClick={() => setPreviewing(null)}>
           <button className="absolute top-4 right-4 text-white bg-white/10 hover:bg-white/20 rounded-full p-2"><X size={20} /></button>
@@ -343,6 +522,12 @@ Plumbing: PEX, accessible from attic`}
       )}
     </div>
   )
+}
+
+function deriveTitle(d: string): string {
+  if (!d) return ''
+  const firstLine = d.split(/[\n.]/)[0].trim()
+  return firstLine.slice(0, 80)
 }
 
 function Stat({ label, value, sublabel, accent, icon: Icon, big }: { label: string; value: string; sublabel?: string; accent?: string; icon: any; big?: boolean }) {

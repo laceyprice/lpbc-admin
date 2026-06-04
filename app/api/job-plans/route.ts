@@ -1,0 +1,100 @@
+import { NextRequest, NextResponse } from 'next/server'
+export const dynamic = 'force-dynamic'
+import { createServerClient } from '@/lib/supabase'
+import { signedUrlFor } from '@/lib/signed-url'
+
+const BUCKET = 'job-planning'
+
+// GET    /api/job-plans                  → list (?archived=true to include archived)
+// GET    /api/job-plans?id=uuid          → fetch one (refreshes signed URLs on attachments)
+// POST   /api/job-plans                  → create
+// PATCH  /api/job-plans                  → update (id required)
+// DELETE /api/job-plans?id=uuid          → permanent delete (also wipes bucket files)
+
+export async function GET(req: NextRequest) {
+  const supabase = createServerClient()
+  const id = req.nextUrl.searchParams.get('id')
+  const archived = req.nextUrl.searchParams.get('archived') === 'true'
+
+  if (id) {
+    const { data, error } = await supabase.from('job_plans').select('*').eq('id', id).single()
+    if (error) return NextResponse.json({ error: error.message }, { status: 404 })
+    // Refresh signed URLs on each attachment so loading the plan shows working thumbnails
+    if (Array.isArray(data.attachments)) {
+      data.attachments = await Promise.all(
+        data.attachments.map(async (att: any) => ({
+          ...att,
+          signed_url: att?.path ? await signedUrlFor(supabase, BUCKET, att.path, 60 * 60 * 24) : null,
+        }))
+      )
+    }
+    return NextResponse.json(data)
+  }
+
+  let query = supabase
+    .from('job_plans')
+    .select('id, title, description, session_id, estimate, estimate_generated_at, is_archived, created_at, updated_at')
+    .order('updated_at', { ascending: false })
+  if (!archived) query = query.eq('is_archived', false)
+  const { data, error } = await query
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json(data ?? [])
+}
+
+export async function POST(req: NextRequest) {
+  const supabase = createServerClient()
+  const body = await req.json()
+  if (!body.session_id) return NextResponse.json({ error: 'session_id required' }, { status: 400 })
+
+  // Derive title from first non-empty line of description if not provided
+  const title = (body.title?.trim()) || deriveTitle(body.description) || 'Untitled Plan'
+
+  const { data, error } = await supabase.from('job_plans').insert({
+    title,
+    description: body.description || '',
+    measurements: body.measurements || '',
+    session_id: body.session_id,
+    attachments: body.attachments || [],
+    estimate: body.estimate || null,
+    estimate_generated_at: body.estimate ? new Date().toISOString() : null,
+  }).select().single()
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json(data, { status: 201 })
+}
+
+export async function PATCH(req: NextRequest) {
+  const supabase = createServerClient()
+  const body = await req.json()
+  const { id, ...updates } = body
+  if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 })
+  updates.updated_at = new Date().toISOString()
+  // Auto-stamp estimate_generated_at when estimate is added/updated
+  if (updates.estimate && !updates.estimate_generated_at) {
+    updates.estimate_generated_at = new Date().toISOString()
+  }
+  const { data, error } = await supabase.from('job_plans').update(updates).eq('id', id).select().single()
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json(data)
+}
+
+export async function DELETE(req: NextRequest) {
+  const supabase = createServerClient()
+  const id = req.nextUrl.searchParams.get('id')
+  if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 })
+
+  // Fetch the plan to find attachment paths to delete
+  const { data: plan } = await supabase.from('job_plans').select('attachments, session_id').eq('id', id).single()
+  if (plan) {
+    const paths = (plan.attachments as any[] || []).map(a => a?.path).filter(Boolean)
+    if (paths.length) await supabase.storage.from(BUCKET).remove(paths)
+  }
+  const { error } = await supabase.from('job_plans').delete().eq('id', id)
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json({ success: true })
+}
+
+function deriveTitle(description: string | undefined): string {
+  if (!description) return ''
+  const firstLine = description.split(/[\n.]/)[0].trim()
+  return firstLine.slice(0, 80)
+}
