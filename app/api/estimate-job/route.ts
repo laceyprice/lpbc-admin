@@ -1,20 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server'
 export const dynamic = 'force-dynamic'
-export const maxDuration = 60
+export const maxDuration = 120
 import { createServerClient } from '@/lib/supabase'
 import { getAnthropicClient } from '@/lib/anthropic'
 
+const BUCKET = 'job-planning'
+
 // POST /api/estimate-job
-// body: { description: string }
-//
-// Pulls historical job-cost data from bookkeeping (categorized accounting
-// entries + invoice records) and asks Claude to produce an estimate
-// structured as JSON: estimated_total, materials_breakdown, labor_estimate,
-// duration_days, process_steps, design_pm_fee, design_pm_fee_rationale,
-// confidence, similar_past_jobs.
+// body: {
+//   description: string,
+//   measurements?: string,               // free-form measurements / scope notes
+//   attachments?: [{ path, name, type, size }]   // from /api/job-planning upload
+// }
 
 export async function POST(req: NextRequest) {
-  const { description } = await req.json()
+  const { description, measurements, attachments } = await req.json()
   if (!description || description.trim().length < 10) {
     return NextResponse.json({ error: 'Provide a job description (at least 10 characters)' }, { status: 400 })
   }
@@ -22,7 +22,6 @@ export async function POST(req: NextRequest) {
   const supabase = createServerClient()
 
   // ── Historical context ────────────────────────────────────────────────
-  // 1. Past invoices with non-zero amounts — useful for end-customer pricing
   const { data: pastInvoices } = await supabase
     .from('invoices')
     .select('invoice_number, service_type, service_description, amount_due, service_date, job_address')
@@ -30,15 +29,13 @@ export async function POST(req: NextRequest) {
     .order('service_date', { ascending: false })
     .limit(50)
 
-  // 2. Recent expense entries (materials, labor, subs) — useful for job costs
   const { data: pastExpenses } = await supabase
     .from('accounting_entries')
     .select('description, payee, amount, transaction_date, category')
-    .lt('amount', 0)               // outflows = job costs
+    .lt('amount', 0)
     .order('transaction_date', { ascending: false })
     .limit(200)
 
-  // 3. Most-used vendors so the estimate names suppliers Lacey actually uses
   const vendorCounts = new Map<string, { count: number; total: number }>()
   for (const e of pastExpenses ?? []) {
     if (!e.payee) continue
@@ -53,54 +50,85 @@ export async function POST(req: NextRequest) {
     .slice(0, 15)
     .map(([name, v]) => ({ name, transactions: v.count, total_spent: Number(v.total.toFixed(2)) }))
 
-  // Build a compact context block (token budget conscious)
   const invoiceLines = (pastInvoices ?? []).slice(0, 25).map(i =>
     `• ${i.service_date || '?'} | $${Number(i.amount_due).toFixed(2)} | ${i.service_type || 'Service'} | ${(i.service_description || '').slice(0, 120)}`
   ).join('\n')
-
   const expenseLines = (pastExpenses ?? []).slice(0, 60).map(e =>
     `• ${e.transaction_date} | $${Math.abs(Number(e.amount)).toFixed(2)} | ${e.payee || '?'} | ${(e.description || '').slice(0, 80)}`
   ).join('\n')
-
   const vendorLines = topVendors.map(v =>
     `• ${v.name} — ${v.transactions} txns, total $${v.total_spent.toFixed(2)}`
   ).join('\n')
 
-  const systemPrompt = `You are a construction estimator for L. Price Building Co. (LPBC), a residential building contractor in Florida. The owner is asking for a job estimate. Use the historical data provided to anchor your numbers to what THIS contractor actually pays/charges in THIS market. Do not use national averages if local data is available.
+  // ── Attachments: split into images (Claude vision) vs other (referenced) ──
+  const imageAttachments: Array<{ name: string; mediaType: string; base64: string }> = []
+  const otherAttachments: Array<{ name: string; type: string; size: number }> = []
+  if (Array.isArray(attachments)) {
+    for (const att of attachments) {
+      if (!att?.path) continue
+      const isImage = typeof att.type === 'string' && att.type.startsWith('image/')
+      if (isImage) {
+        try {
+          const { data: blob, error } = await supabase.storage.from(BUCKET).download(att.path)
+          if (error || !blob) continue
+          const arrayBuf = await (blob as Blob).arrayBuffer()
+          const base64 = Buffer.from(arrayBuf).toString('base64')
+          // Cap to ~10 images to control token cost + Claude limits
+          if (imageAttachments.length < 10) {
+            imageAttachments.push({ name: att.name, mediaType: att.type || 'image/jpeg', base64 })
+          }
+        } catch { /* skip unreadable file */ }
+      } else {
+        otherAttachments.push({ name: att.name, type: att.type || 'unknown', size: att.size || 0 })
+      }
+    }
+  }
+
+  const systemPrompt = `You are a construction estimator for L. Price Building Co. (LPBC), a residential building contractor in Florida. The owner is asking for a job estimate. Use the historical data + any provided photos and measurements to anchor your numbers to what THIS contractor actually pays/charges in THIS market. Do not use national averages if local data is available.
 
 You MUST respond with a single valid JSON object matching this exact schema (no markdown, no prose outside the JSON):
 {
-  "estimated_total": number,                       // total job cost including materials + labor + subs (NOT including the design/PM fee)
-  "materials_breakdown": [                          // 3-8 line items
+  "estimated_total": number,
+  "materials_breakdown": [
     { "category": "string", "estimated_cost": number, "notes": "string" }
   ],
   "labor_estimate": { "hours": number, "rate_per_hour": number, "total": number },
-  "subcontractor_estimate": number,                 // 0 if none needed
+  "subcontractor_estimate": number,
   "duration_business_days": number,
-  "process_steps": [                                // 3-10 ordered steps
+  "process_steps": [
     { "step": number, "title": "string", "description": "string", "estimated_days": number }
   ],
-  "design_pm_fee": number,                          // recommended dollar amount for design + project management
-  "design_pm_fee_percent": number,                  // as a % of estimated_total (e.g. 12.5)
-  "design_pm_fee_rationale": "string",              // 1-2 sentences explaining why this fee is appropriate
+  "design_pm_fee": number,
+  "design_pm_fee_percent": number,
+  "design_pm_fee_rationale": "string",
   "confidence": "low" | "medium" | "high",
-  "confidence_rationale": "string",                 // why this level of confidence
-  "similar_past_jobs": [                            // 0-3 invoices that informed the estimate
+  "confidence_rationale": "string",
+  "similar_past_jobs": [
     { "service_date": "string", "amount": number, "description": "string" }
   ],
-  "assumptions": ["string"],                        // 2-5 explicit assumptions you made
-  "risks": ["string"]                               // 1-4 things that could blow the budget
+  "assumptions": ["string"],
+  "risks": ["string"],
+  "photo_observations": ["string"]
 }
 
-Pricing guidance:
-- Anchor materials to the Top Vendors list — those are LPBC's actual suppliers (Ferguson, Home Depot, Lowe's, etc.)
-- Labor rate: estimate from past expense entries for "Labor" / "Subcontractor" payees, or use $65-85/hr if no data
-- Design/PM fee should reflect complexity: simple service work might be 8-12% of total; full remodels with permits/coordination 15-22%
-- Be specific and grounded — every number should be defensible from the historical context or a stated assumption.`
+When photos are provided, populate "photo_observations" with 2–5 specific things you SEE in the images that affect pricing (e.g. "existing tile is mud-set — demo will be heavier", "wall behind toilet shows water damage"). If no photos, return an empty array.
 
-  const userPrompt = `JOB DESCRIPTION:
+Pricing guidance:
+- Anchor materials to the Top Vendors list — those are LPBC's actual suppliers
+- Labor rate: estimate from past expense entries for labor/subcontractor payees, or use $65-85/hr if no data
+- Design/PM fee should reflect complexity: simple service work 8-12% of total; full remodels with permits/coordination 15-22%
+- Be specific and grounded — every number defensible from the historical context, the photos, the measurements, or a stated assumption.`
+
+  // Build user content blocks: text + images
+  const userContent: any[] = []
+
+  userContent.push({
+    type: 'text',
+    text: `JOB DESCRIPTION:
 ${description}
 
+${measurements?.trim() ? `MEASUREMENTS / SCOPE NOTES:\n${measurements.trim()}\n` : ''}
+${otherAttachments.length ? `NON-IMAGE ATTACHMENTS (referenced — content not viewable to you):\n${otherAttachments.map(a => `• ${a.name} (${a.type}, ${(a.size/1024/1024).toFixed(1)}MB)`).join('\n')}\n` : ''}
 HISTORICAL CONTEXT FROM LPBC'S BOOKS:
 
 == Past invoices (most recent first) ==
@@ -112,7 +140,21 @@ ${expenseLines || '(none yet)'}
 == Top vendors / cost centers ==
 ${vendorLines || '(none yet)'}
 
+${imageAttachments.length ? `\n${imageAttachments.length} photo(s) of the project follow. Examine them carefully for scope, condition, materials in place, and anything that affects cost.\n` : ''}
+
 Produce the JSON estimate now.`
+  })
+
+  for (const img of imageAttachments) {
+    userContent.push({
+      type: 'image',
+      source: {
+        type: 'base64',
+        media_type: img.mediaType,
+        data: img.base64,
+      },
+    })
+  }
 
   try {
     const client = getAnthropicClient()
@@ -120,14 +162,13 @@ Produce the JSON estimate now.`
       model: 'claude-sonnet-4-5',
       max_tokens: 4000,
       system: systemPrompt,
-      messages: [{ role: 'user', content: userPrompt }],
+      messages: [{ role: 'user', content: userContent }],
     })
     const text = resp.content
       .filter((b: any) => b.type === 'text')
       .map((b: any) => b.text)
       .join('')
 
-    // Extract JSON (Claude sometimes wraps in code fences despite instructions)
     let jsonStr = text.trim()
     const fenceMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)\s*```/)
     if (fenceMatch) jsonStr = fenceMatch[1].trim()
@@ -143,6 +184,8 @@ Produce the JSON estimate now.`
         invoices_considered: pastInvoices?.length ?? 0,
         expenses_considered: pastExpenses?.length ?? 0,
         top_vendors: topVendors.length,
+        images_analyzed: imageAttachments.length,
+        other_files: otherAttachments.length,
       },
     })
   } catch (e: any) {
