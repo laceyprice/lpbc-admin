@@ -17,7 +17,7 @@ interface Contact { id: string; first_name: string; last_name: string; email: st
 interface Invoice { id: string; invoice_number: string; invoice_type: string; customer_name: string; customer_email: string; customer_phone: string; job_address: string; service_date: string; service_type: string; service_description: string; amount_due: number; amount_paid: number; invoice_status: string; payment_type: string; stripe_payment_link: string; contact_id: string; created_at: string; paid_at: string; sent_at?: string; last_sent_at?: string }
 
 const SC: Record<string, string> = { draft:'bg-gray-100 text-gray-600', sent:'bg-blue-100 text-blue-700', paid:'bg-green-100 text-green-700', overdue:'bg-red-100 text-red-700', approved:'bg-emerald-100 text-emerald-700' }
-const SERVICES = ['Service Call','Gas Line Installation','Gas Appliance Connection','Gas Leak Detection','Emergency Repair','Rough-In','Trim-Out','Retrofit','Appliance Installation','Appliance Repair','Pool/Spa Heater','Outdoor Kitchen','Generator Connection','Safety Inspection','Pressure Testing','Inspection & Compliance','Other']
+const SERVICES = ['Service', 'Draw']
 
 export default function InvoicesPage() {
   const [invoices, setInvoices] = useState<Invoice[]>([])

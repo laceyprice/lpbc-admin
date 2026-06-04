@@ -3,11 +3,7 @@ import { useEffect, useState, useRef } from 'react'
 import { MapPin, Plus, Search, X, Loader2, Camera, Image as ImageIcon, ChevronRight, Trash2, Edit3, ClipboardList, Calendar, FileText, Home, Building2, Key, ChevronLeft, Upload, CheckCircle2, AlertCircle, Receipt, DollarSign, Link2, Users, FileCheck, Clock, ExternalLink } from 'lucide-react'
 import { formatDateShort } from '@/lib/utils'
 
-const SERVICE_TYPES = [
-  'Gas Line Installation', 'Gas Line Repair', 'Gas Line Inspection',
-  'Appliance Install', 'Appliance Repair', 'Appliance Inspection',
-  'Meter Set', 'Pressure Test', 'Leak Detection', 'Annual Service', 'Other',
-]
+const SERVICE_TYPES = ['Service', 'Draw']
 
 const PHOTO_TYPES = [
   { value: 'before', label: 'Before' },

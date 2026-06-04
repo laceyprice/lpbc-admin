@@ -28,7 +28,7 @@ interface ScheduleRequest {
   status: 'pending' | 'scheduled' | 'declined'
 }
 
-const SERVICE_TYPES = ['Service Call','Gas Line Installation','Gas Appliance Connection','Gas Leak Detection','Emergency Repair','Rough-In','Trim-Out','Retrofit','Pool/Spa Heater','Outdoor Kitchen','Generator Connection','Inspection & Compliance','Other']
+const SERVICE_TYPES = ['Service', 'Draw']
 
 export default function ScheduleRequestsPage() {
   const router = useRouter()

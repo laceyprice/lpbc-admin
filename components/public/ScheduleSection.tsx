@@ -185,7 +185,7 @@ export default function ScheduleSection() {
               <Field label="Service Type">
                 <select {...register('serviceType')} className={INPUT}>
                   <option value="">Select...</option>
-                  {['Service Call','Gas Line Installation','Gas Appliance Connection','Gas Leak Detection','Emergency Repair','Rough-In','Trim-Out','Retrofit','Appliance Installation','Appliance Repair','Pool/Spa Heater','Outdoor Kitchen','Generator Connection','Safety Inspection','Pressure Testing','Inspection & Compliance','Other'].map(s => <option key={s} value={s}>{s}</option>)}
+                  {['Service', 'Draw'].map(s => <option key={s} value={s}>{s}</option>)}
                 </select>
               </Field>
               <Field label="Preferred Date"><input {...register('preferredDate')} type="date" className={INPUT} /></Field>

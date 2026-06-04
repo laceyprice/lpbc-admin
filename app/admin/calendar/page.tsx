@@ -21,7 +21,7 @@ interface Appointment {
 const HOURS = Array.from({ length: 13 }, (_, i) => i + 7) // 7am - 7pm
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December']
-const SERVICE_TYPES = ['Service Call','Gas Line Installation','Gas Appliance Connection','Gas Leak Detection','Emergency Repair','Rough-In','Trim-Out','Retrofit','Pool/Spa Heater','Outdoor Kitchen','Generator Connection','Inspection & Compliance','Other']
+const SERVICE_TYPES = ['Service', 'Draw']
 
 
 function getWeekDates(date: Date) {
