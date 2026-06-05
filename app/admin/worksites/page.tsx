@@ -85,7 +85,7 @@ export default function WorksitesPage() {
   const [importing, setImporting] = useState(false)
   const [importResult, setImportResult] = useState<{ sitesCreated: number; visitsCreated: number; skipped: number } | null>(null)
   const [merging, setMerging] = useState(false)
-  const [mergeResult, setMergeResult] = useState<{ merged: number; groupsTouched: number; mergedGroups: any[] } | null>(null)
+  const [mergeResult, setMergeResult] = useState<{ merged: number; groupsFound: number; mergedGroups: any[]; failures?: any[] } | null>(null)
   const [financialAccounts, setFinancialAccounts] = useState<Array<{ id: string; name: string; color?: string }>>([])
 
   // New site modal
@@ -1093,18 +1093,34 @@ export default function WorksitesPage() {
 
       {/* Merge result banner */}
       {mergeResult && (
-        <div className="mb-4 flex items-start gap-3 px-4 py-3 bg-amber-50 border border-amber-200 rounded-xl text-sm">
-          <CheckCircle2 size={16} className="text-amber-700 flex-shrink-0 mt-0.5" />
+        <div className={`mb-4 flex items-start gap-3 px-4 py-3 rounded-xl text-sm border ${mergeResult.failures && mergeResult.failures.length > 0 ? 'bg-red-50 border-red-200' : 'bg-amber-50 border-amber-200'}`}>
+          {mergeResult.failures && mergeResult.failures.length > 0 ? (
+            <AlertCircle size={16} className="text-red-700 flex-shrink-0 mt-0.5" />
+          ) : (
+            <CheckCircle2 size={16} className="text-amber-700 flex-shrink-0 mt-0.5" />
+          )}
           <div className="flex-1">
-            <div className="text-amber-900 font-semibold">
-              {mergeResult.merged === 0
+            <div className={`font-semibold ${mergeResult.failures && mergeResult.failures.length > 0 ? 'text-red-900' : 'text-amber-900'}`}>
+              {mergeResult.groupsFound === 0
                 ? 'No duplicate worksites found.'
-                : `Merged ${mergeResult.merged} duplicate worksite${mergeResult.merged === 1 ? '' : 's'} into ${mergeResult.groupsTouched} canonical record${mergeResult.groupsTouched === 1 ? '' : 's'}.`}
+                : mergeResult.merged === 0
+                  ? `Found ${mergeResult.groupsFound} duplicate group${mergeResult.groupsFound === 1 ? '' : 's'} but couldn't merge — see failures below.`
+                  : `Merged ${mergeResult.merged} duplicate worksite${mergeResult.merged === 1 ? '' : 's'} (${mergeResult.groupsFound} group${mergeResult.groupsFound === 1 ? '' : 's'}).`}
             </div>
             {mergeResult.mergedGroups && mergeResult.mergedGroups.length > 0 && (
               <ul className="text-xs text-amber-800 mt-1 space-y-0.5">
-                {mergeResult.mergedGroups.slice(0, 5).map((g: any, i: number) => (
-                  <li key={i}>â€¢ Kept "<strong>{g.kept.address}</strong>" â€" merged: {g.merged_addresses.join(' / ')}</li>
+                {mergeResult.mergedGroups.slice(0, 8).map((g: any, i: number) => (
+                  <li key={i}>· Kept "<strong>{g.kept.address}</strong>" — merged: {g.merged_addresses.join(' / ')}</li>
+                ))}
+              </ul>
+            )}
+            {mergeResult.failures && mergeResult.failures.length > 0 && (
+              <ul className="text-xs text-red-800 mt-2 space-y-1">
+                {mergeResult.failures.slice(0, 8).map((f: any, i: number) => (
+                  <li key={i}>
+                    <div className="font-semibold">{f.addresses?.join(' / ')}</div>
+                    <div className="opacity-80">{f.reason}</div>
+                  </li>
                 ))}
               </ul>
             )}

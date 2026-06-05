@@ -333,14 +333,14 @@ export async function POST(req: NextRequest) {
     }
 
     let merged = 0
-    let groupsTouched = 0
+    let groupsFound = 0
     const mergedGroups: any[] = []
+    const failures: Array<{ key: string; addresses: string[]; reason: string }> = []
 
     for (const [key, group] of Object.entries(groups)) {
       if (group.length < 2) continue
-      groupsTouched++
-      // Pick the most-complete site as survivor: prefer one with a city, then
-      // longest address string, then oldest by created_at
+      groupsFound++
+      // Survivor: prefer one with city, then longest address, then oldest
       const survivor = group.slice().sort((a, b) => {
         const aHasCity = a.city && a.city.trim() ? 1 : 0
         const bHasCity = b.city && b.city.trim() ? 1 : 0
@@ -348,14 +348,23 @@ export async function POST(req: NextRequest) {
         if ((b.address || '').length !== (a.address || '').length) return (b.address || '').length - (a.address || '').length
         return new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
       })[0]
-      const duplicateIds = group.filter(s => s.id !== survivor.id).map(s => s.id)
+      const duplicates = group.filter(s => s.id !== survivor.id)
+      const duplicateIds = duplicates.map(s => s.id)
       if (duplicateIds.length === 0) continue
 
-      // Re-point worksite_visits / worksite_photos to survivor
-      await supabase.from('worksite_visits').update({ worksite_id: survivor.id }).in('worksite_id', duplicateIds)
-      await supabase.from('worksite_photos').update({ worksite_id: survivor.id }).in('worksite_id', duplicateIds)
+      // 1. Re-point known child tables to survivor
+      const visitsUp = await supabase.from('worksite_visits').update({ worksite_id: survivor.id }).in('worksite_id', duplicateIds)
+      if (visitsUp.error) {
+        failures.push({ key, addresses: duplicates.map(d => d.address), reason: `Re-point visits failed: ${visitsUp.error.message}` })
+        continue
+      }
+      const photosUp = await supabase.from('worksite_photos').update({ worksite_id: survivor.id }).in('worksite_id', duplicateIds)
+      if (photosUp.error) {
+        failures.push({ key, addresses: duplicates.map(d => d.address), reason: `Re-point photos failed: ${photosUp.error.message}` })
+        continue
+      }
 
-      // Backfill survivor with any missing city/financial_account from duplicates
+      // 2. Backfill survivor with any missing fields from duplicates
       const updates: Record<string, any> = {}
       if (!survivor.city) {
         const withCity = group.find(s => s.city && s.city.trim())
@@ -365,24 +374,50 @@ export async function POST(req: NextRequest) {
         const withAcct = group.find(s => s.financial_account_id)
         if (withAcct) updates.financial_account_id = withAcct.financial_account_id
       }
+      // Prefer canonical address (without trailing ", Miramar Beach") if survivor's
+      // address contains a comma but a duplicate's doesn't
+      const survivorHasComma = (survivor.address || '').includes(',')
+      const cleanerSibling = group.find(s => s.id !== survivor.id && !(s.address || '').includes(','))
+      if (survivorHasComma && cleanerSibling) {
+        updates.address = cleanerSibling.address
+      }
       if (Object.keys(updates).length) {
-        await supabase.from('worksites').update(updates).eq('id', survivor.id)
+        const upd = await supabase.from('worksites').update(updates).eq('id', survivor.id)
+        if (upd.error) {
+          failures.push({ key, addresses: duplicates.map(d => d.address), reason: `Backfill survivor failed: ${upd.error.message}` })
+          continue
+        }
       }
 
-      // Delete the duplicate worksites
-      const { error: delErr } = await supabase.from('worksites').delete().in('id', duplicateIds)
-      if (!delErr) {
-        merged += duplicateIds.length
-        mergedGroups.push({
-          key,
-          kept: { id: survivor.id, address: survivor.address, city: survivor.city },
-          merged_count: duplicateIds.length,
-          merged_addresses: group.filter(s => s.id !== survivor.id).map(s => s.address),
-        })
+      // 3. Delete duplicates — return=representation surfaces RLS / FK issues
+      const { data: deleted, error: delErr } = await supabase
+        .from('worksites').delete().in('id', duplicateIds).select('id')
+
+      if (delErr) {
+        failures.push({ key, addresses: duplicates.map(d => d.address), reason: `Delete failed: ${delErr.message}` })
+        continue
       }
+      const deletedCount = (deleted || []).length
+      if (deletedCount === 0) {
+        // RLS silently blocked the delete — surface this
+        failures.push({
+          key,
+          addresses: duplicates.map(d => d.address),
+          reason: 'Delete returned 0 rows — likely blocked by RLS policy on worksites. Run the merge from SQL or grant service-role bypass.',
+        })
+        continue
+      }
+
+      merged += deletedCount
+      mergedGroups.push({
+        key,
+        kept: { id: survivor.id, address: updates.address || survivor.address, city: updates.city || survivor.city },
+        merged_count: deletedCount,
+        merged_addresses: duplicates.map(s => s.address),
+      })
     }
 
-    return NextResponse.json({ success: true, groupsTouched, merged, mergedGroups })
+    return NextResponse.json({ success: true, groupsFound, merged, mergedGroups, failures })
   }
 
   return NextResponse.json({ error: 'Unknown action' }, { status: 400 })
