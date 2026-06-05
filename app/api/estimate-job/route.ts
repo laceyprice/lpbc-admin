@@ -1,22 +1,23 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest } from 'next/server'
 export const dynamic = 'force-dynamic'
-export const maxDuration = 120
+export const maxDuration = 300
 import { createServerClient } from '@/lib/supabase'
 import { getAnthropicClient } from '@/lib/anthropic'
 
 const BUCKET = 'job-planning'
 
 // POST /api/estimate-job
-// body: {
-//   description: string,
-//   measurements?: string,               // free-form measurements / scope notes
-//   attachments?: [{ path, name, type, size }]   // from /api/job-planning upload
-// }
-
+// Streams Server-Sent Events. Keeps the connection alive past nginx's 60s
+// timeout because bytes flow continuously while Claude generates tokens.
+//
+// Event types:
+//   event: progress   data: { tokens_so_far }
+//   event: result     data: { estimate, historical_data_used }
+//   event: error      data: { error }
 export async function POST(req: NextRequest) {
   const { description, measurements, attachments } = await req.json()
   if (!description || description.trim().length < 10) {
-    return NextResponse.json({ error: 'Provide a job description (at least 10 characters)' }, { status: 400 })
+    return new Response(JSON.stringify({ error: 'Provide a job description (at least 10 characters)' }), { status: 400, headers: { 'Content-Type': 'application/json' } })
   }
 
   const supabase = createServerClient()
@@ -60,7 +61,7 @@ export async function POST(req: NextRequest) {
     `• ${v.name} — ${v.transactions} txns, total $${v.total_spent.toFixed(2)}`
   ).join('\n')
 
-  // ── Attachments: split into images (Claude vision) vs other (referenced) ──
+  // ── Attachments ────────────────────────────────────────────────────────
   const imageAttachments: Array<{ name: string; mediaType: string; base64: string }> = []
   const otherAttachments: Array<{ name: string; type: string; size: number }> = []
   if (Array.isArray(attachments)) {
@@ -73,7 +74,6 @@ export async function POST(req: NextRequest) {
           if (error || !blob) continue
           const arrayBuf = await (blob as Blob).arrayBuffer()
           const base64 = Buffer.from(arrayBuf).toString('base64')
-          // Cap to ~10 images to control token cost + Claude limits
           if (imageAttachments.length < 10) {
             imageAttachments.push({ name: att.name, mediaType: att.type || 'image/jpeg', base64 })
           }
@@ -111,17 +111,15 @@ You MUST respond with a single valid JSON object matching this exact schema (no 
   "photo_observations": ["string"]
 }
 
-When photos are provided, populate "photo_observations" with 2–5 specific things you SEE in the images that affect pricing (e.g. "existing tile is mud-set — demo will be heavier", "wall behind toilet shows water damage"). If no photos, return an empty array.
+When photos are provided, populate "photo_observations" with 2–5 specific things you SEE in the images that affect pricing. If no photos, return an empty array.
 
 Pricing guidance:
 - Anchor materials to the Top Vendors list — those are LPBC's actual suppliers
 - Labor rate: estimate from past expense entries for labor/subcontractor payees, or use $65-85/hr if no data
 - Design/PM fee should reflect complexity: simple service work 8-12% of total; full remodels with permits/coordination 15-22%
-- Be specific and grounded — every number defensible from the historical context, the photos, the measurements, or a stated assumption.`
+- Be specific and grounded.`
 
-  // Build user content blocks: text + images
   const userContent: any[] = []
-
   userContent.push({
     type: 'text',
     text: `JOB DESCRIPTION:
@@ -140,73 +138,89 @@ ${expenseLines || '(none yet)'}
 == Top vendors / cost centers ==
 ${vendorLines || '(none yet)'}
 
-${imageAttachments.length ? `\n${imageAttachments.length} photo(s) of the project follow. Examine them carefully for scope, condition, materials in place, and anything that affects cost.\n` : ''}
+${imageAttachments.length ? `\n${imageAttachments.length} photo(s) of the project follow.\n` : ''}
 
 Produce the JSON estimate now.`
   })
-
   for (const img of imageAttachments) {
     userContent.push({
       type: 'image',
-      source: {
-        type: 'base64',
-        media_type: img.mediaType,
-        data: img.base64,
-      },
+      source: { type: 'base64', media_type: img.mediaType, data: img.base64 },
     })
   }
 
-  try {
-    const client = getAnthropicClient()
-    // Use Haiku for speed — FluxCloud's ingress times out connections at 60s,
-    // and Sonnet vision with bookkeeping context routinely takes 70-90s.
-    // Haiku 4.5 supports vision and produces structured JSON reliably.
-    const resp = await client.messages.create({
-      model: 'claude-haiku-4-5',
-      max_tokens: 3000,
-      system: systemPrompt,
-      messages: [{ role: 'user', content: userContent }],
-    })
-    const text = resp.content
-      .filter((b: any) => b.type === 'text')
-      .map((b: any) => b.text)
-      .join('')
+  // ── Stream response ────────────────────────────────────────────────────
+  const encoder = new TextEncoder()
+  const stream = new ReadableStream({
+    async start(controller) {
+      const send = (event: string, data: any) => {
+        controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`))
+      }
+      const heartbeat = setInterval(() => {
+        try { controller.enqueue(encoder.encode(':keepalive\n\n')) } catch {}
+      }, 5000)
 
-    let jsonStr = text.trim()
-    const fenceMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)\s*```/)
-    if (fenceMatch) jsonStr = fenceMatch[1].trim()
-    let estimate: any
-    try { estimate = JSON.parse(jsonStr) }
-    catch (e) {
-      return NextResponse.json({ error: 'AI returned malformed JSON', raw: text }, { status: 502 })
-    }
+      try {
+        send('start', { images: imageAttachments.length, expenses: pastExpenses?.length || 0, invoices: pastInvoices?.length || 0 })
 
-    return NextResponse.json({
-      estimate,
-      historical_data_used: {
-        invoices_considered: pastInvoices?.length ?? 0,
-        expenses_considered: pastExpenses?.length ?? 0,
-        top_vendors: topVendors.length,
-        images_analyzed: imageAttachments.length,
-        other_files: otherAttachments.length,
-      },
-    })
-  } catch (e: any) {
-    // Surface as much detail as possible — Anthropic SDK errors have status,
-    // error, and headers properties that explain network vs API failures.
-    console.error('estimate-job failed', {
-      message: e?.message, status: e?.status, type: e?.error?.type,
-      cause: e?.cause?.code, name: e?.name,
-      images: imageAttachments.length,
-      imageBytesTotal: imageAttachments.reduce((s, i) => s + i.base64.length, 0),
-    })
-    const detail = e?.error?.message || e?.cause?.code || e?.cause?.message || ''
-    return NextResponse.json({
-      error: e?.message || 'Estimate failed',
-      detail,
-      status: e?.status,
-      name: e?.name,
-      type: e?.error?.type,
-    }, { status: 500 })
-  }
+        const client = getAnthropicClient()
+        let fullText = ''
+        let tokensSoFar = 0
+        const claudeStream = await client.messages.stream({
+          model: 'claude-haiku-4-5',
+          max_tokens: 3000,
+          system: systemPrompt,
+          messages: [{ role: 'user', content: userContent }],
+        })
+
+        for await (const event of claudeStream) {
+          if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
+            const chunk = event.delta.text
+            fullText += chunk
+            tokensSoFar += Math.ceil(chunk.length / 4)
+            send('progress', { tokens_so_far: tokensSoFar })
+          }
+        }
+
+        // Parse the JSON from the accumulated text
+        let jsonStr = fullText.trim()
+        const fenceMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)\s*```/)
+        if (fenceMatch) jsonStr = fenceMatch[1].trim()
+        let estimate: any
+        try { estimate = JSON.parse(jsonStr) }
+        catch {
+          send('error', { error: 'AI returned malformed JSON', raw: fullText.slice(0, 500) })
+          clearInterval(heartbeat)
+          controller.close()
+          return
+        }
+
+        send('result', {
+          estimate,
+          historical_data_used: {
+            invoices_considered: pastInvoices?.length ?? 0,
+            expenses_considered: pastExpenses?.length ?? 0,
+            top_vendors: topVendors.length,
+            images_analyzed: imageAttachments.length,
+            other_files: otherAttachments.length,
+          },
+        })
+      } catch (e: any) {
+        console.error('estimate-job stream failed', { message: e?.message, status: e?.status, type: e?.error?.type, cause: e?.cause?.code })
+        send('error', { error: e?.message || 'Estimate failed', status: e?.status, type: e?.error?.type })
+      } finally {
+        clearInterval(heartbeat)
+        try { controller.close() } catch {}
+      }
+    },
+  })
+
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache, no-transform',
+      'X-Accel-Buffering': 'no',          // disable nginx response buffering
+      'Connection': 'keep-alive',
+    },
+  })
 }

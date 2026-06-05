@@ -65,6 +65,7 @@ export default function PlanJobPage() {
   const [savedAt, setSavedAt] = useState<Date | null>(null)
   const [previewing, setPreviewing] = useState<Attachment | null>(null)
   const [drivePickerOpen, setDrivePickerOpen] = useState(false)
+  const [progressTokens, setProgressTokens] = useState(0)
   const fileRef = useRef<HTMLInputElement>(null)
 
   async function importFromDrive(files: Array<{ fileId: string; fileName: string; mimeType: string }>) {
@@ -203,7 +204,7 @@ export default function PlanJobPage() {
 
   async function generate() {
     if (description.trim().length < 10) { setError('Add at least a sentence or two describing the job'); return }
-    setError(''); setLoading(true); setEstimate(null); setMeta(null)
+    setError(''); setLoading(true); setEstimate(null); setMeta(null); setProgressTokens(0)
     try {
       const res = await fetch('/api/estimate-job', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -213,17 +214,58 @@ export default function PlanJobPage() {
         }),
       })
       const ct = res.headers.get('content-type') || ''
-      if (!ct.includes('application/json')) {
-        setError(res.status === 504
-          ? 'Estimate timed out (took longer than 60s). Try removing some photos and generating again.'
-          : `Estimate request failed (status ${res.status})`)
+      if (!ct.includes('text/event-stream')) {
+        // Non-streaming error path (validation failed, JSON error body)
+        try {
+          const d = await res.json()
+          setError(d.error || `Request failed (status ${res.status})`)
+        } catch {
+          setError(`Estimate request failed (status ${res.status})`)
+        }
         setLoading(false); return
       }
-      const d = await res.json()
-      if (!res.ok) { setError(d.error || 'Estimate failed'); setLoading(false); return }
-      setEstimate(d.estimate)
-      setMeta(d.historical_data_used)
-      setTimeout(() => saveAfterEstimate(d.estimate), 0)
+
+      // Parse SSE stream
+      const reader = res.body!.getReader()
+      const decoder = new TextDecoder()
+      let buf = ''
+      let finalEstimate: Estimate | null = null
+      let finalMeta: any = null
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buf += decoder.decode(value, { stream: true })
+        // SSE events separated by \n\n
+        let idx
+        while ((idx = buf.indexOf('\n\n')) !== -1) {
+          const block = buf.slice(0, idx)
+          buf = buf.slice(idx + 2)
+          if (block.startsWith(':')) continue   // keepalive comment
+          const lines = block.split('\n')
+          let evt = 'message', data = ''
+          for (const line of lines) {
+            if (line.startsWith('event: ')) evt = line.slice(7).trim()
+            else if (line.startsWith('data: ')) data += line.slice(6)
+          }
+          if (!data) continue
+          let payload: any
+          try { payload = JSON.parse(data) } catch { continue }
+          if (evt === 'progress') setProgressTokens(payload.tokens_so_far || 0)
+          else if (evt === 'result') {
+            finalEstimate = payload.estimate
+            finalMeta = payload.historical_data_used
+          } else if (evt === 'error') {
+            setError(payload.error || 'Estimate failed')
+          }
+        }
+      }
+
+      if (finalEstimate) {
+        setEstimate(finalEstimate)
+        setMeta(finalMeta)
+        setTimeout(() => saveAfterEstimate(finalEstimate!), 0)
+      }
     } catch (e: any) {
       setError(e?.message || 'Estimate failed')
     }
@@ -430,7 +472,11 @@ export default function PlanJobPage() {
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-8 text-center text-gray-400">
           <Loader2 size={28} className="animate-spin mx-auto mb-3" style={{ color: '#b8895a' }} />
           <p className="text-sm">Reading invoice history, examining photos, analyzing scope…</p>
-          <p className="text-xs mt-1">This usually takes 20–60 seconds (longer with many photos).</p>
+          {progressTokens > 0 ? (
+            <p className="text-xs mt-2 text-blue-600 font-semibold">~{progressTokens.toLocaleString()} tokens generated · streaming response</p>
+          ) : (
+            <p className="text-xs mt-1">Calling Claude — first tokens arrive in 2–5 seconds.</p>
+          )}
         </div>
       )}
 
