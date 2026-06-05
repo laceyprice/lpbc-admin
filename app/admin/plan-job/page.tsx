@@ -573,11 +573,12 @@ function DrivePickerLite({ onClose, onImport }: { onClose: () => void; onImport:
 
   useEffect(() => { load('root', 'My Drive', true) }, [])
 
-  async function load(id: string, name: string, resetStack = false) {
+  async function load(id: string, name: string, resetStack = false, overrideSearch?: string) {
     setLoading(true); setError('')
     try {
+      const q = overrideSearch !== undefined ? overrideSearch : search
       const params = new URLSearchParams({ action: 'list', folderId: id })
-      if (search) params.set('q', search)
+      if (q) params.set('q', q)
       const res = await fetch(`/api/google-drive?${params}`)
       const d = await res.json()
       if (!res.ok) throw new Error(d.error || 'Failed to load')
@@ -594,7 +595,8 @@ function DrivePickerLite({ onClose, onImport }: { onClose: () => void; onImport:
   function openFolder(f: any) {
     setStack(prev => [...prev, { id: folderId, name: folderName }])
     setSelected(new Set())
-    load(f.id, f.name)
+    setSearch('')                        // clear search so we list children of the folder
+    load(f.id, f.name, false, '')         // explicitly pass empty search to avoid stale state
   }
 
   function goBack() {
@@ -634,7 +636,13 @@ function DrivePickerLite({ onClose, onImport }: { onClose: () => void; onImport:
           {stack.length > 0 && (
             <button onClick={goBack} className="flex items-center gap-1 text-sm px-2 py-1 rounded hover:bg-gray-200"><ChevronLeft size={14} /> Back</button>
           )}
-          <div className="flex-1 font-semibold text-gray-800 text-sm">{folderName}</div>
+          <div className="flex-1 font-semibold text-gray-800 text-sm">
+            {search ? <span>Search results for <em className="text-gray-500 font-normal">"{search}"</em></span> : folderName}
+          </div>
+          {search && (
+            <button onClick={() => { setSearch(''); load(folderId, folderName, false, '') }}
+              className="text-xs text-gray-500 hover:text-gray-800 px-2 py-1">Clear search</button>
+          )}
           {(() => {
             const selectable = files.filter(f => !isFolder(f) && isMedia(f))
             const allSelected = selectable.length > 0 && selectable.every(f => selected.has(f.id))

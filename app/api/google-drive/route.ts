@@ -35,11 +35,13 @@ export async function GET(req: NextRequest) {
       const search = req.nextUrl.searchParams.get('q') || ''
       const pageToken = req.nextUrl.searchParams.get('pageToken') || undefined
 
-      // Build the query — children of folderId, not trashed, optional name search
-      let q = `'${folderId}' in parents and trashed = false`
-      if (search) {
-        q += ` and name contains '${search.replace(/'/g, "\\'")}'`
-      }
+      // Build the query — when searching, search globally (across all of Drive)
+      // so users can find folders / files anywhere. When not searching, list
+      // children of the current folder for normal browsing.
+      const safeSearch = search.replace(/'/g, "\\'")
+      const q = search
+        ? `name contains '${safeSearch}' and trashed = false`
+        : `'${folderId}' in parents and trashed = false`
 
       const res = await drive.files.list({
         q,
