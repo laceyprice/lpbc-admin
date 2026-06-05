@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 export const dynamic = 'force-dynamic'
+export const maxDuration = 120
 import { createServerClient } from '@/lib/supabase'
+import { signedUrlFor } from '@/lib/signed-url'
 
 const BUCKET = 'bookkeeping-images'
+const JOB_PLANNING_BUCKET = 'job-planning'
 
 // Build a Google Drive client using stored refresh token
 async function getDriveClient() {
@@ -96,6 +99,40 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const action = req.nextUrl.searchParams.get('action')
   const body = await req.json().catch(() => ({})) as any
+
+  // Bulk import to the job-planning bucket (used by Plan New Job page)
+  if (action === 'import-to-job-planning') {
+    const { session_id, files } = body
+    if (!session_id) return NextResponse.json({ error: 'session_id required' }, { status: 400 })
+    if (!Array.isArray(files) || !files.length) return NextResponse.json({ error: 'No files' }, { status: 400 })
+    try {
+      const drive = await getDriveClient()
+      const supabase = createServerClient()
+      const uploaded: Array<{ path: string; name: string; type: string; size: number; signed_url: string | null }> = []
+      for (const f of files) {
+        const fileId = f.fileId
+        if (!fileId) continue
+        const meta = await drive.files.get({ fileId, fields: 'name, mimeType, size' })
+        const safeName = (f.fileName || meta.data.name || `drive-${fileId}`).replace(/[^a-z0-9._-]+/gi, '_')
+        const safeMime = f.mimeType || meta.data.mimeType || 'application/octet-stream'
+        // Skip Workspace docs — they aren't usable as image input
+        if (safeMime.startsWith('application/vnd.google-apps')) continue
+        const fileRes = await drive.files.get({ fileId, alt: 'media' }, { responseType: 'arraybuffer' })
+        const buf = Buffer.from(fileRes.data as ArrayBuffer)
+        const storagePath = `${session_id}/${Date.now()}_${safeName}`
+        const { error: upErr } = await supabase.storage.from(JOB_PLANNING_BUCKET).upload(storagePath, buf, {
+          contentType: safeMime,
+          upsert: false,
+        })
+        if (upErr) continue
+        const signed = await signedUrlFor(supabase, JOB_PLANNING_BUCKET, storagePath, 60 * 60 * 24)
+        uploaded.push({ path: storagePath, name: safeName, type: safeMime, size: buf.length, signed_url: signed })
+      }
+      return NextResponse.json({ uploaded })
+    } catch (err: any) {
+      return NextResponse.json({ error: err.message || 'Drive import failed' }, { status: 500 })
+    }
+  }
 
   if (action !== 'import') {
     return NextResponse.json({ error: 'Unknown action' }, { status: 400 })

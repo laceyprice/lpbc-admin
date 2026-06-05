@@ -1,6 +1,6 @@
 'use client'
 import { useEffect, useRef, useState } from 'react'
-import { Sparkles, Loader2, ClipboardList, DollarSign, Clock, AlertTriangle, ListChecks, TrendingUp, History, Hammer, Upload, X, Image as ImageIcon, Film, FileText, Ruler, Save, FolderOpen, Plus, Trash2, Archive } from 'lucide-react'
+import { Sparkles, Loader2, ClipboardList, DollarSign, Clock, AlertTriangle, ListChecks, TrendingUp, History, Hammer, Upload, X, Image as ImageIcon, Film, FileText, Ruler, Save, FolderOpen, Plus, Trash2, Archive, Cloud, Folder, ChevronLeft, Search, Download } from 'lucide-react'
 
 interface MaterialLine { category: string; estimated_cost: number; notes: string }
 interface ProcessStep { step: number; title: string; description: string; estimated_days: number }
@@ -64,7 +64,25 @@ export default function PlanJobPage() {
   const [error, setError] = useState('')
   const [savedAt, setSavedAt] = useState<Date | null>(null)
   const [previewing, setPreviewing] = useState<Attachment | null>(null)
+  const [drivePickerOpen, setDrivePickerOpen] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
+
+  async function importFromDrive(files: Array<{ fileId: string; fileName: string; mimeType: string }>) {
+    if (!files.length) return
+    setUploading(true); setError('')
+    try {
+      const res = await fetch('/api/google-drive?action=import-to-job-planning', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: sessionId, files }),
+      })
+      const d = await res.json()
+      if (!res.ok) { setError(d.error || 'Drive import failed'); setUploading(false); return }
+      setAttachments(prev => [...prev, ...(d.uploaded || [])])
+    } catch (e: any) {
+      setError(e?.message || 'Drive import failed')
+    }
+    setUploading(false)
+  }
 
   useEffect(() => { loadPlansList() }, [showArchived])
 
@@ -325,7 +343,13 @@ export default function PlanJobPage() {
         </div>
 
         <div>
-          <label className="block text-sm font-semibold text-gray-700 mb-2 flex items-center gap-1.5"><Upload size={13} /> Photos, videos & documents</label>
+          <div className="flex items-center justify-between mb-2">
+            <label className="block text-sm font-semibold text-gray-700 flex items-center gap-1.5"><Upload size={13} /> Photos, videos & documents</label>
+            <button type="button" onClick={() => setDrivePickerOpen(true)}
+              className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg border border-gray-200 hover:bg-gray-50">
+              <Cloud size={12} /> Import from Google Drive
+            </button>
+          </div>
           <div
             onDragOver={e => e.preventDefault()}
             onDrop={onDrop}
@@ -520,6 +544,150 @@ export default function PlanJobPage() {
           <img src={previewing.signed_url || ''} alt={previewing.name} className="max-w-full max-h-full rounded-2xl shadow-2xl" />
         </div>
       )}
+
+      {drivePickerOpen && (
+        <DrivePickerLite
+          onClose={() => setDrivePickerOpen(false)}
+          onImport={async (files) => {
+            setDrivePickerOpen(false)
+            await importFromDrive(files)
+          }}
+        />
+      )}
+    </div>
+  )
+}
+
+// Lightweight Google Drive picker for plan-job — supports image-only browsing,
+// multi-select, and bulk import into the job-planning bucket.
+function DrivePickerLite({ onClose, onImport }: { onClose: () => void; onImport: (files: Array<{ fileId: string; fileName: string; mimeType: string }>) => Promise<void> }) {
+  const [folderId, setFolderId] = useState<string>('root')
+  const [folderName, setFolderName] = useState<string>('My Drive')
+  const [stack, setStack] = useState<Array<{ id: string; name: string }>>([])
+  const [files, setFiles] = useState<any[]>([])
+  const [loading, setLoading] = useState(false)
+  const [search, setSearch] = useState('')
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [importing, setImporting] = useState(false)
+  const [error, setError] = useState('')
+
+  useEffect(() => { load('root', 'My Drive', true) }, [])
+
+  async function load(id: string, name: string, resetStack = false) {
+    setLoading(true); setError('')
+    try {
+      const params = new URLSearchParams({ action: 'list', folderId: id })
+      if (search) params.set('q', search)
+      const res = await fetch(`/api/google-drive?${params}`)
+      const d = await res.json()
+      if (!res.ok) throw new Error(d.error || 'Failed to load')
+      setFiles(d.files || [])
+      setFolderId(id)
+      setFolderName(d.folderName || name)
+      if (resetStack) setStack([])
+    } catch (e: any) {
+      setError(e.message)
+    }
+    setLoading(false)
+  }
+
+  function openFolder(f: any) {
+    setStack(prev => [...prev, { id: folderId, name: folderName }])
+    setSelected(new Set())
+    load(f.id, f.name)
+  }
+
+  function goBack() {
+    const prev = stack[stack.length - 1]
+    if (!prev) return
+    setStack(s => s.slice(0, -1))
+    setSelected(new Set())
+    load(prev.id, prev.name)
+  }
+
+  function toggle(id: string) {
+    setSelected(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
+  }
+
+  function isFolder(f: any) { return f.mimeType === 'application/vnd.google-apps.folder' }
+  function isMedia(f: any) {
+    return typeof f.mimeType === 'string' && (f.mimeType.startsWith('image/') || f.mimeType.startsWith('video/') || f.mimeType === 'application/pdf')
+  }
+
+  async function doImport() {
+    if (selected.size === 0) return
+    setImporting(true)
+    const payload = files.filter(f => selected.has(f.id)).map(f => ({ fileId: f.id, fileName: f.name, mimeType: f.mimeType }))
+    await onImport(payload)
+    setImporting(false)
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-4 border-b" style={{ background: '#2f5a5e', color: 'white', borderRadius: '1rem 1rem 0 0' }}>
+          <div className="flex items-center gap-2"><Cloud size={18} /><h2 className="font-bold">Import from Google Drive</h2></div>
+          <button onClick={onClose} className="hover:bg-white/10 rounded p-1"><X size={18} /></button>
+        </div>
+
+        <div className="px-5 py-3 border-b bg-gray-50 flex flex-wrap items-center gap-3">
+          {stack.length > 0 && (
+            <button onClick={goBack} className="flex items-center gap-1 text-sm px-2 py-1 rounded hover:bg-gray-200"><ChevronLeft size={14} /> Back</button>
+          )}
+          <div className="flex-1 font-semibold text-gray-800 text-sm">{folderName}</div>
+          <div className="relative">
+            <Search size={12} className="absolute left-2 top-2 text-gray-400" />
+            <input value={search} onChange={e => setSearch(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') load(folderId, folderName) }}
+              placeholder="Search…"
+              className="pl-7 pr-2 py-1 text-xs border rounded w-44" />
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-5 py-2">
+          {loading ? (
+            <div className="flex items-center justify-center py-10 text-gray-500 text-sm"><Loader2 className="animate-spin mr-2" size={16} /> Loading…</div>
+          ) : error ? (
+            <div className="py-4 text-sm text-red-600">{error}</div>
+          ) : files.length === 0 ? (
+            <div className="text-gray-400 text-sm text-center py-10">Empty folder.</div>
+          ) : (
+            <ul className="divide-y">
+              {files.map(f => {
+                const folder = isFolder(f)
+                const sel = selected.has(f.id)
+                const selectable = !folder && isMedia(f)
+                return (
+                  <li key={f.id} className="flex items-center gap-3 py-2 hover:bg-gray-50">
+                    {selectable ? (
+                      <input type="checkbox" checked={sel} onChange={() => toggle(f.id)} className="ml-1" />
+                    ) : <span className="ml-1 w-4 inline-block" />}
+                    <button onClick={() => folder ? openFolder(f) : (selectable && toggle(f.id))}
+                      className="flex items-center gap-2 flex-1 text-left text-sm">
+                      {folder ? <Folder size={16} className="text-amber-500" /> :
+                        f.mimeType?.startsWith('image/') ? <ImageIcon size={16} className="text-blue-500" /> :
+                        f.mimeType?.startsWith('video/') ? <Film size={16} className="text-purple-500" /> :
+                        <FileText size={16} className="text-gray-400" />}
+                      <span className={folder ? 'font-medium text-gray-800' : selectable ? 'text-gray-700' : 'text-gray-400'}>{f.name}</span>
+                      {f.size && <span className="text-[10px] text-gray-400 ml-auto">{Math.round(Number(f.size) / 1024)} KB</span>}
+                    </button>
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+        </div>
+
+        <div className="border-t bg-gray-50 px-5 py-3 flex items-center gap-3">
+          <span className="text-xs text-gray-500">Selectable: photos, videos, PDFs</span>
+          <div className="flex-1" />
+          <span className="text-sm text-gray-600">{selected.size} selected</span>
+          <button onClick={doImport} disabled={selected.size === 0 || importing}
+            className="px-4 py-2 rounded-xl text-white font-bold text-sm disabled:opacity-40 flex items-center gap-1.5" style={{ background: '#b8895a' }}>
+            {importing ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />} Import
+          </button>
+        </div>
+      </div>
     </div>
   )
 }
