@@ -84,6 +84,9 @@ export default function WorksitesPage() {
   // Import from invoices
   const [importing, setImporting] = useState(false)
   const [importResult, setImportResult] = useState<{ sitesCreated: number; visitsCreated: number; skipped: number } | null>(null)
+  const [merging, setMerging] = useState(false)
+  const [mergeResult, setMergeResult] = useState<{ merged: number; groupsTouched: number; mergedGroups: any[] } | null>(null)
+  const [financialAccounts, setFinancialAccounts] = useState<Array<{ id: string; name: string; color?: string }>>([])
 
   // New site modal
   const [showNewSite, setShowNewSite] = useState(false)
@@ -114,7 +117,15 @@ export default function WorksitesPage() {
   // Lightbox
   const [lightbox, setLightbox] = useState<Photo | null>(null)
 
-  useEffect(() => { loadSites() }, [])
+  useEffect(() => { loadSites(); loadFinancialAccounts() }, [])
+
+  async function loadFinancialAccounts() {
+    try {
+      const res = await fetch('/api/financial-accounts')
+      const d = await res.json()
+      setFinancialAccounts(Array.isArray(d) ? d : [])
+    } catch {}
+  }
 
   async function loadSites() {
     setLoading(true)
@@ -153,6 +164,29 @@ export default function WorksitesPage() {
       setImportResult(d)
       await loadSites()
     } finally { setImporting(false) }
+  }
+
+  async function mergeDuplicates() {
+    if (!confirm('Find worksites with the same street address + unit (regardless of city/format differences) and merge them into one canonical record? Visits, photos, and bookkeeping links from duplicates are reassigned to the surviving site, then the duplicates are deleted.')) return
+    setMerging(true)
+    setMergeResult(null)
+    try {
+      const res = await fetch('/api/worksites?action=merge-duplicates', { method: 'POST' })
+      const d = await res.json()
+      if (!res.ok) { alert(d.error || 'Merge failed'); return }
+      setMergeResult(d)
+      await loadSites()
+    } finally { setMerging(false) }
+  }
+
+  async function setWorksiteAccount(financialAccountId: string | null) {
+    if (!selected) return
+    await fetch('/api/worksites', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: selected.id, table: 'worksites', financial_account_id: financialAccountId }),
+    })
+    await refreshDetail()
+    await loadSites()
   }
 
   async function openSite(site: Worksite) {
@@ -465,6 +499,28 @@ export default function WorksitesPage() {
                 </div>
               )
             })()}
+
+            {/* Linked Bookkeeping Account */}
+            <div className="bg-white rounded-2xl border border-gray-100 p-4 shadow-sm mb-5 flex items-center gap-3 flex-wrap">
+              <DollarSign size={16} style={{ color: '#b8895a' }} />
+              <div className="flex-1 min-w-[160px]">
+                <div className="text-xs font-bold uppercase tracking-wider text-gray-500">Linked Bookkeeping Account</div>
+                <div className="text-xs text-gray-400 mt-0.5">Job costs and draws posted to this account roll up here automatically.</div>
+              </div>
+              <select
+                value={(selected as any).financial_account_id || ''}
+                onChange={e => setWorksiteAccount(e.target.value || null)}
+                className="px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:border-blue-400 min-w-[220px]"
+              >
+                <option value="">— Not linked —</option>
+                {financialAccounts.map(a => (
+                  <option key={a.id} value={a.id}>{a.name}</option>
+                ))}
+              </select>
+              {(selected as any).financial_account && (
+                <a href={`/admin/bookkeeping`} className="text-xs font-semibold px-3 py-2 rounded-lg border border-gray-200 hover:bg-gray-50">View ledger →</a>
+              )}
+            </div>
 
             {/* Tabs */}
             <div className="flex gap-1 bg-gray-100 rounded-xl p-1 w-fit mb-5 flex-wrap">
@@ -1015,6 +1071,12 @@ export default function WorksitesPage() {
           <p className="text-gray-500 text-sm mt-0.5">Property history</p>
         </div>
         <div className="flex items-center gap-2">
+          <button onClick={mergeDuplicates} disabled={merging}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-sm border border-gray-200 hover:bg-gray-50 disabled:opacity-60 transition-all"
+            title="Find worksites with the same street+unit and merge them into one">
+            {merging ? <Loader2 size={14} className="animate-spin" /> : <Link2 size={14} />}
+            {merging ? 'Mergingâ€¦' : 'Merge Duplicates'}
+          </button>
           <button onClick={importFromInvoices} disabled={importing}
             className="flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-sm border border-gray-200 hover:bg-gray-50 disabled:opacity-60 transition-all"
             style={{ color: '#b8895a' }}>
@@ -1028,6 +1090,28 @@ export default function WorksitesPage() {
           </button>
         </div>
       </div>
+
+      {/* Merge result banner */}
+      {mergeResult && (
+        <div className="mb-4 flex items-start gap-3 px-4 py-3 bg-amber-50 border border-amber-200 rounded-xl text-sm">
+          <CheckCircle2 size={16} className="text-amber-700 flex-shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <div className="text-amber-900 font-semibold">
+              {mergeResult.merged === 0
+                ? 'No duplicate worksites found.'
+                : `Merged ${mergeResult.merged} duplicate worksite${mergeResult.merged === 1 ? '' : 's'} into ${mergeResult.groupsTouched} canonical record${mergeResult.groupsTouched === 1 ? '' : 's'}.`}
+            </div>
+            {mergeResult.mergedGroups && mergeResult.mergedGroups.length > 0 && (
+              <ul className="text-xs text-amber-800 mt-1 space-y-0.5">
+                {mergeResult.mergedGroups.slice(0, 5).map((g: any, i: number) => (
+                  <li key={i}>â€¢ Kept "<strong>{g.kept.address}</strong>" â€" merged: {g.merged_addresses.join(' / ')}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+          <button onClick={() => setMergeResult(null)} className="text-amber-700 hover:text-amber-900"><X size={14} /></button>
+        </div>
+      )}
 
       {/* Import result banner */}
       {importResult && (
@@ -1074,7 +1158,7 @@ export default function WorksitesPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-gray-50 border-b border-gray-100">
-                  {['', 'Address', 'Type', 'Visits', 'Open Tasks', ''].map((h, i) => (
+                  {['', 'Address', 'Type', 'Account', 'Visits', 'Open Tasks', ''].map((h, i) => (
                     <th key={i} className="text-left px-5 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider">{h}</th>
                   ))}
                 </tr>
@@ -1095,6 +1179,14 @@ export default function WorksitesPage() {
                       </td>
                       <td className="px-5 py-3">
                         <span className="text-xs capitalize text-gray-500">{site.property_type}</span>
+                      </td>
+                      <td className="px-5 py-3">
+                        {(site as any).financial_account ? (
+                          <span className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full"
+                            style={{ background: 'rgba(184,137,90,0.12)', color: (site as any).financial_account.color || '#b8895a' }}>
+                            <DollarSign size={10} />{(site as any).financial_account.name}
+                          </span>
+                        ) : <span className="text-xs text-gray-300">—</span>}
                       </td>
                       <td className="px-5 py-3">
                         <span className={`text-sm font-bold ${site.visit_count > 0 ? '' : 'text-gray-400'}`} style={{ color: site.visit_count > 0 ? '#b8895a' : undefined }}>{site.visit_count}</span>

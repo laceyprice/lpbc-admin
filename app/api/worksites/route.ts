@@ -29,9 +29,9 @@ export async function GET(req: NextRequest) {
 
   // Single worksite with full detail
   if (id) {
-    // Step 1: fetch site + worksite-specific data
+    // Step 1: fetch site + worksite-specific data (+ linked financial_account)
     const [siteRes, visitsRes, photosRes] = await Promise.all([
-      supabase.from('worksites').select('*').eq('id', id).single(),
+      supabase.from('worksites').select('*, financial_account:financial_accounts(id, name, color)').eq('id', id).single(),
       supabase.from('worksite_visits').select('*').eq('worksite_id', id).order('visit_date', { ascending: false }),
       supabase.from('worksite_photos').select('*').eq('worksite_id', id).order('created_at', { ascending: false }),
     ])
@@ -116,8 +116,10 @@ export async function GET(req: NextRequest) {
     })
   }
 
-  // List all worksites
-  let query = supabase.from('worksites').select('*').order('created_at', { ascending: false })
+  // List all worksites (+ linked financial_account name for sidebar/list display)
+  let query = supabase.from('worksites')
+    .select('*, financial_account:financial_accounts(id, name, color)')
+    .order('created_at', { ascending: false })
   if (search) query = query.ilike('address', `%${search}%`)
 
   const { data: sites, error } = await query
@@ -312,7 +314,100 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(data, { status: 201 })
   }
 
+  // ── Merge worksites with duplicate (normalized) addresses ───────────────
+  // "171 S Driftwood Bay Unit 104" and "171 S Driftwood Bay Unit 104, Miramar Beach"
+  // collapse into one canonical site. Visits, photos, and bookkeeping refs
+  // re-point to the survivor; duplicates are deleted.
+  if (action === 'merge-duplicates') {
+    const { data: sites, error: listErr } = await supabase
+      .from('worksites').select('*').order('created_at', { ascending: true })
+    if (listErr) return NextResponse.json({ error: listErr.message }, { status: 500 })
+
+    // Group by normalized key (street + unit number, no city/state)
+    const groups: Record<string, any[]> = {}
+    for (const s of sites || []) {
+      const key = normalizeAddressForMatch(s.address)
+      if (!key) continue
+      if (!groups[key]) groups[key] = []
+      groups[key].push(s)
+    }
+
+    let merged = 0
+    let groupsTouched = 0
+    const mergedGroups: any[] = []
+
+    for (const [key, group] of Object.entries(groups)) {
+      if (group.length < 2) continue
+      groupsTouched++
+      // Pick the most-complete site as survivor: prefer one with a city, then
+      // longest address string, then oldest by created_at
+      const survivor = group.slice().sort((a, b) => {
+        const aHasCity = a.city && a.city.trim() ? 1 : 0
+        const bHasCity = b.city && b.city.trim() ? 1 : 0
+        if (aHasCity !== bHasCity) return bHasCity - aHasCity
+        if ((b.address || '').length !== (a.address || '').length) return (b.address || '').length - (a.address || '').length
+        return new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+      })[0]
+      const duplicateIds = group.filter(s => s.id !== survivor.id).map(s => s.id)
+      if (duplicateIds.length === 0) continue
+
+      // Re-point worksite_visits / worksite_photos to survivor
+      await supabase.from('worksite_visits').update({ worksite_id: survivor.id }).in('worksite_id', duplicateIds)
+      await supabase.from('worksite_photos').update({ worksite_id: survivor.id }).in('worksite_id', duplicateIds)
+
+      // Backfill survivor with any missing city/financial_account from duplicates
+      const updates: Record<string, any> = {}
+      if (!survivor.city) {
+        const withCity = group.find(s => s.city && s.city.trim())
+        if (withCity) updates.city = withCity.city
+      }
+      if (!survivor.financial_account_id) {
+        const withAcct = group.find(s => s.financial_account_id)
+        if (withAcct) updates.financial_account_id = withAcct.financial_account_id
+      }
+      if (Object.keys(updates).length) {
+        await supabase.from('worksites').update(updates).eq('id', survivor.id)
+      }
+
+      // Delete the duplicate worksites
+      const { error: delErr } = await supabase.from('worksites').delete().in('id', duplicateIds)
+      if (!delErr) {
+        merged += duplicateIds.length
+        mergedGroups.push({
+          key,
+          kept: { id: survivor.id, address: survivor.address, city: survivor.city },
+          merged_count: duplicateIds.length,
+          merged_addresses: group.filter(s => s.id !== survivor.id).map(s => s.address),
+        })
+      }
+    }
+
+    return NextResponse.json({ success: true, groupsTouched, merged, mergedGroups })
+  }
+
   return NextResponse.json({ error: 'Unknown action' }, { status: 400 })
+}
+
+// Normalize an address for fuzzy matching: strip city/state suffixes, punctuation,
+// case, common abbreviations. Keeps street + unit identifier so we can detect
+// "171 S Driftwood Bay Unit 104" == "171 S Driftwood Bay Unit 104, Miramar Beach"
+function normalizeAddressForMatch(addr: string | null | undefined): string {
+  if (!addr) return ''
+  let s = addr.toLowerCase().trim()
+  // Drop everything after a comma (city/state usually)
+  const comma = s.indexOf(',')
+  if (comma > -1) s = s.slice(0, comma)
+  s = s
+    .replace(/\bapt\b\.?|\bapartment\b/g, 'unit')
+    .replace(/\bste\b\.?|\bsuite\b/g, 'unit')
+    .replace(/\b#\s*/g, 'unit ')
+    .replace(/\bstreet\b/g, 'st').replace(/\bavenue\b/g, 'ave').replace(/\bboulevard\b/g, 'blvd')
+    .replace(/\broad\b/g, 'rd').replace(/\bdrive\b/g, 'dr').replace(/\blane\b/g, 'ln')
+    .replace(/\bnorth\b/g, 'n').replace(/\bsouth\b/g, 's').replace(/\beast\b/g, 'e').replace(/\bwest\b/g, 'w')
+    .replace(/[^a-z0-9 ]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  return s
 }
 
 // ── PATCH /api/worksites
