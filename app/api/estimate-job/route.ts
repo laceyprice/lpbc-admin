@@ -27,14 +27,14 @@ export async function POST(req: NextRequest) {
     .select('invoice_number, service_type, service_description, amount_due, service_date, job_address')
     .gt('amount_due', 0)
     .order('service_date', { ascending: false })
-    .limit(50)
+    .limit(20)
 
   const { data: pastExpenses } = await supabase
     .from('accounting_entries')
     .select('description, payee, amount, transaction_date, category')
     .lt('amount', 0)
     .order('transaction_date', { ascending: false })
-    .limit(200)
+    .limit(80)
 
   const vendorCounts = new Map<string, { count: number; total: number }>()
   for (const e of pastExpenses ?? []) {
@@ -50,11 +50,11 @@ export async function POST(req: NextRequest) {
     .slice(0, 15)
     .map(([name, v]) => ({ name, transactions: v.count, total_spent: Number(v.total.toFixed(2)) }))
 
-  const invoiceLines = (pastInvoices ?? []).slice(0, 25).map(i =>
-    `• ${i.service_date || '?'} | $${Number(i.amount_due).toFixed(2)} | ${i.service_type || 'Service'} | ${(i.service_description || '').slice(0, 120)}`
+  const invoiceLines = (pastInvoices ?? []).slice(0, 15).map(i =>
+    `• ${i.service_date || '?'} | $${Number(i.amount_due).toFixed(2)} | ${i.service_type || 'Service'} | ${(i.service_description || '').slice(0, 100)}`
   ).join('\n')
-  const expenseLines = (pastExpenses ?? []).slice(0, 60).map(e =>
-    `• ${e.transaction_date} | $${Math.abs(Number(e.amount)).toFixed(2)} | ${e.payee || '?'} | ${(e.description || '').slice(0, 80)}`
+  const expenseLines = (pastExpenses ?? []).slice(0, 40).map(e =>
+    `• ${e.transaction_date} | $${Math.abs(Number(e.amount)).toFixed(2)} | ${e.payee || '?'} | ${(e.description || '').slice(0, 60)}`
   ).join('\n')
   const vendorLines = topVendors.map(v =>
     `• ${v.name} — ${v.transactions} txns, total $${v.total_spent.toFixed(2)}`
@@ -158,9 +158,12 @@ Produce the JSON estimate now.`
 
   try {
     const client = getAnthropicClient()
+    // Use Haiku for speed — FluxCloud's ingress times out connections at 60s,
+    // and Sonnet vision with bookkeeping context routinely takes 70-90s.
+    // Haiku 4.5 supports vision and produces structured JSON reliably.
     const resp = await client.messages.create({
-      model: 'claude-sonnet-4-5',
-      max_tokens: 4000,
+      model: 'claude-haiku-4-5',
+      max_tokens: 3000,
       system: systemPrompt,
       messages: [{ role: 'user', content: userContent }],
     })
