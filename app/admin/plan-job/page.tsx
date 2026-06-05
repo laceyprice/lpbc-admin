@@ -635,6 +635,30 @@ function DrivePickerLite({ onClose, onImport }: { onClose: () => void; onImport:
             <button onClick={goBack} className="flex items-center gap-1 text-sm px-2 py-1 rounded hover:bg-gray-200"><ChevronLeft size={14} /> Back</button>
           )}
           <div className="flex-1 font-semibold text-gray-800 text-sm">{folderName}</div>
+          {(() => {
+            const selectable = files.filter(f => !isFolder(f) && isMedia(f))
+            const allSelected = selectable.length > 0 && selectable.every(f => selected.has(f.id))
+            const someSelected = selectable.some(f => selected.has(f.id))
+            return selectable.length > 0 ? (
+              <button onClick={() => {
+                setSelected(prev => {
+                  if (allSelected) {
+                    // Deselect everything visible
+                    const n = new Set(prev)
+                    for (const f of selectable) n.delete(f.id)
+                    return n
+                  } else {
+                    // Select everything visible
+                    const n = new Set(prev)
+                    for (const f of selectable) n.add(f.id)
+                    return n
+                  }
+                })
+              }} className="text-xs font-semibold px-2 py-1 rounded border border-gray-200 hover:bg-gray-100 whitespace-nowrap">
+                {allSelected ? `Deselect all (${selectable.length})` : someSelected ? `Select all ${selectable.length}` : `Select all ${selectable.length}`}
+              </button>
+            ) : null
+          })()}
           <div className="relative">
             <Search size={12} className="absolute left-2 top-2 text-gray-400" />
             <input value={search} onChange={e => setSearch(e.target.value)}

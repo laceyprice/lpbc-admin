@@ -11,7 +11,7 @@ export async function GET() {
   const raw = process.env.RESEND_FROM_EMAIL || 'Lacey@laceynprice.com (default — not set in env)'
   const normalized = normalizeFrom(process.env.RESEND_FROM_EMAIL || 'Lacey@laceynprice.com')
   return NextResponse.json({
-    version: 'v27-plan-job-google-drive-import',
+    version: 'v28-drive-picker-select-all',
     deployedAt: new Date().toISOString(),
     rawEnvValue: raw,
     normalizedValue: normalized,
