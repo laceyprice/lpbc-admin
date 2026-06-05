@@ -75,9 +75,22 @@ export default function PlanJobPage() {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ session_id: sessionId, files }),
       })
+      const ct = res.headers.get('content-type') || ''
+      if (!ct.includes('application/json')) {
+        // 504 ingress timeout or other proxy error returns HTML — translate to plain English
+        setError(res.status === 504
+          ? 'Drive import timed out. Try selecting fewer files, or smaller files (videos and >15MB files are skipped).'
+          : `Drive import failed (status ${res.status})`)
+        setUploading(false); return
+      }
       const d = await res.json()
       if (!res.ok) { setError(d.error || 'Drive import failed'); setUploading(false); return }
       setAttachments(prev => [...prev, ...(d.uploaded || [])])
+      if (Array.isArray(d.skipped) && d.skipped.length > 0) {
+        const summary = d.skipped.slice(0, 5).map((s: any) => `• ${s.name}: ${s.reason}`).join('\n')
+        const extra = d.skipped.length > 5 ? `\n…and ${d.skipped.length - 5} more` : ''
+        setError(`Some files were skipped:\n${summary}${extra}`)
+      }
     } catch (e: any) {
       setError(e?.message || 'Drive import failed')
     }
@@ -199,11 +212,17 @@ export default function PlanJobPage() {
           attachments: attachments.map(a => ({ path: a.path, name: a.name, type: a.type, size: a.size })),
         }),
       })
+      const ct = res.headers.get('content-type') || ''
+      if (!ct.includes('application/json')) {
+        setError(res.status === 504
+          ? 'Estimate timed out (took longer than 60s). Try removing some photos and generating again.'
+          : `Estimate request failed (status ${res.status})`)
+        setLoading(false); return
+      }
       const d = await res.json()
       if (!res.ok) { setError(d.error || 'Estimate failed'); setLoading(false); return }
       setEstimate(d.estimate)
       setMeta(d.historical_data_used)
-      // Auto-save the estimate against the plan (create the plan if it doesn't exist yet)
       setTimeout(() => saveAfterEstimate(d.estimate), 0)
     } catch (e: any) {
       setError(e?.message || 'Estimate failed')
@@ -612,8 +631,11 @@ function DrivePickerLite({ onClose, onImport }: { onClose: () => void; onImport:
   }
 
   function isFolder(f: any) { return f.mimeType === 'application/vnd.google-apps.folder' }
+  // Videos can't be analyzed by Claude AND are usually huge — skip them from
+  // Drive imports to avoid blowing past the ingress timeout (>60s).
+  // Only images & PDFs are selectable here. Local uploads can still include videos.
   function isMedia(f: any) {
-    return typeof f.mimeType === 'string' && (f.mimeType.startsWith('image/') || f.mimeType.startsWith('video/') || f.mimeType === 'application/pdf')
+    return typeof f.mimeType === 'string' && (f.mimeType.startsWith('image/') || f.mimeType === 'application/pdf')
   }
 
   async function doImport() {

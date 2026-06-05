@@ -110,27 +110,39 @@ export async function POST(req: NextRequest) {
     try {
       const drive = await getDriveClient()
       const supabase = createServerClient()
+      const MAX_BYTES = 15 * 1024 * 1024   // 15MB per file — keeps the round-trip under the ingress timeout
       const uploaded: Array<{ path: string; name: string; type: string; size: number; signed_url: string | null }> = []
+      const skipped: Array<{ name: string; reason: string }> = []
       for (const f of files) {
         const fileId = f.fileId
         if (!fileId) continue
         const meta = await drive.files.get({ fileId, fields: 'name, mimeType, size' })
         const safeName = (f.fileName || meta.data.name || `drive-${fileId}`).replace(/[^a-z0-9._-]+/gi, '_')
         const safeMime = f.mimeType || meta.data.mimeType || 'application/octet-stream'
+        const declaredSize = Number(meta.data.size || 0)
         // Skip Workspace docs — they aren't usable as image input
-        if (safeMime.startsWith('application/vnd.google-apps')) continue
-        const fileRes = await drive.files.get({ fileId, alt: 'media' }, { responseType: 'arraybuffer' })
-        const buf = Buffer.from(fileRes.data as ArrayBuffer)
-        const storagePath = `${session_id}/${Date.now()}_${safeName}`
-        const { error: upErr } = await supabase.storage.from(JOB_PLANNING_BUCKET).upload(storagePath, buf, {
-          contentType: safeMime,
-          upsert: false,
-        })
-        if (upErr) continue
-        const signed = await signedUrlFor(supabase, JOB_PLANNING_BUCKET, storagePath, 60 * 60 * 24)
-        uploaded.push({ path: storagePath, name: safeName, type: safeMime, size: buf.length, signed_url: signed })
+        if (safeMime.startsWith('application/vnd.google-apps')) { skipped.push({ name: safeName, reason: 'Google Docs/Sheets/Slides not supported' }); continue }
+        // Skip videos — Claude can't analyze them and they're too big for the import round-trip
+        if (safeMime.startsWith('video/')) { skipped.push({ name: safeName, reason: 'Videos not supported for Drive import' }); continue }
+        // Skip oversized files to stay under the ingress timeout
+        if (declaredSize > MAX_BYTES) { skipped.push({ name: safeName, reason: `Too large (${(declaredSize / 1024 / 1024).toFixed(1)}MB > 15MB limit)` }); continue }
+        try {
+          const fileRes = await drive.files.get({ fileId, alt: 'media' }, { responseType: 'arraybuffer' })
+          const buf = Buffer.from(fileRes.data as ArrayBuffer)
+          if (buf.length > MAX_BYTES) { skipped.push({ name: safeName, reason: 'Too large after download' }); continue }
+          const storagePath = `${session_id}/${Date.now()}_${safeName}`
+          const { error: upErr } = await supabase.storage.from(JOB_PLANNING_BUCKET).upload(storagePath, buf, {
+            contentType: safeMime,
+            upsert: false,
+          })
+          if (upErr) { skipped.push({ name: safeName, reason: upErr.message }); continue }
+          const signed = await signedUrlFor(supabase, JOB_PLANNING_BUCKET, storagePath, 60 * 60 * 24)
+          uploaded.push({ path: storagePath, name: safeName, type: safeMime, size: buf.length, signed_url: signed })
+        } catch (e: any) {
+          skipped.push({ name: safeName, reason: e?.message || 'Download failed' })
+        }
       }
-      return NextResponse.json({ uploaded })
+      return NextResponse.json({ uploaded, skipped })
     } catch (err: any) {
       return NextResponse.json({ error: err.message || 'Drive import failed' }, { status: 500 })
     }
