@@ -189,6 +189,21 @@ Produce the JSON estimate now.`
       },
     })
   } catch (e: any) {
-    return NextResponse.json({ error: e?.message || 'Estimate failed' }, { status: 500 })
+    // Surface as much detail as possible — Anthropic SDK errors have status,
+    // error, and headers properties that explain network vs API failures.
+    console.error('estimate-job failed', {
+      message: e?.message, status: e?.status, type: e?.error?.type,
+      cause: e?.cause?.code, name: e?.name,
+      images: imageAttachments.length,
+      imageBytesTotal: imageAttachments.reduce((s, i) => s + i.base64.length, 0),
+    })
+    const detail = e?.error?.message || e?.cause?.code || e?.cause?.message || ''
+    return NextResponse.json({
+      error: e?.message || 'Estimate failed',
+      detail,
+      status: e?.status,
+      name: e?.name,
+      type: e?.error?.type,
+    }, { status: 500 })
   }
 }
