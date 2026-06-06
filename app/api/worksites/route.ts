@@ -420,6 +420,25 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: true, groupsFound, merged, mergedGroups, failures })
   }
 
+  // ── Manual merge: caller specifies exactly which to keep and which to remove ──
+  if (action === 'manual-merge') {
+    const body = await req.json()
+    const { keep_id, merge_ids } = body as { keep_id: string; merge_ids: string[] }
+    if (!keep_id || !Array.isArray(merge_ids) || merge_ids.length === 0) {
+      return NextResponse.json({ error: 'keep_id and merge_ids required' }, { status: 400 })
+    }
+    const failures: string[] = []
+    const visitsUp = await supabase.from('worksite_visits').update({ worksite_id: keep_id }).in('worksite_id', merge_ids)
+    if (visitsUp.error) failures.push(`visits: ${visitsUp.error.message}`)
+    const photosUp = await supabase.from('worksite_photos').update({ worksite_id: keep_id }).in('worksite_id', merge_ids)
+    if (photosUp.error) failures.push(`photos: ${photosUp.error.message}`)
+    if (failures.length) return NextResponse.json({ error: failures.join('; ') }, { status: 500 })
+    const { data: deleted, error: delErr } = await supabase.from('worksites').delete().in('id', merge_ids).select('id')
+    if (delErr) return NextResponse.json({ error: `Delete failed: ${delErr.message}` }, { status: 500 })
+    const deletedCount = (deleted || []).length
+    return NextResponse.json({ success: true, merged: deletedCount, groupsFound: 1, mergedGroups: [{ kept: { id: keep_id }, merged_count: deletedCount }], failures: [] })
+  }
+
   return NextResponse.json({ error: 'Unknown action' }, { status: 400 })
 }
 

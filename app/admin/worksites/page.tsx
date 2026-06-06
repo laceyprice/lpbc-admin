@@ -88,6 +88,12 @@ export default function WorksitesPage() {
   const [mergeResult, setMergeResult] = useState<{ merged: number; groupsFound: number; mergedGroups: any[]; failures?: any[] } | null>(null)
   const [financialAccounts, setFinancialAccounts] = useState<Array<{ id: string; name: string; color?: string }>>([])
 
+  // Manual merge selection mode
+  const [mergeSelectMode, setMergeSelectMode] = useState(false)
+  const [mergeSelected, setMergeSelected] = useState<Set<string>>(new Set())
+  const [showMergeModal, setShowMergeModal] = useState(false)
+  const [mergeKeepId, setMergeKeepId] = useState<string>('')
+
   // New site modal
   const [showNewSite, setShowNewSite] = useState(false)
   const [savingSite, setSavingSite] = useState(false)
@@ -177,6 +183,28 @@ export default function WorksitesPage() {
       setMergeResult(d)
       await loadSites()
     } finally { setMerging(false) }
+  }
+
+  async function manualMerge() {
+    if (mergeSelected.size < 2 || !mergeKeepId) return
+    const duplicateIds = Array.from(mergeSelected).filter(id => id !== mergeKeepId)
+    setMerging(true)
+    try {
+      const res = await fetch('/api/worksites?action=manual-merge', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ keep_id: mergeKeepId, merge_ids: duplicateIds }),
+      })
+      const d = await res.json()
+      if (!res.ok) { alert(d.error || 'Merge failed'); setMerging(false); return }
+      setMergeResult(d)
+      setMergeSelectMode(false)
+      setMergeSelected(new Set())
+      setShowMergeModal(false)
+      await loadSites()
+    } catch (e: any) {
+      alert(e?.message || 'Merge failed')
+    }
+    setMerging(false)
   }
 
   async function setWorksiteAccount(financialAccountId: string | null) {
@@ -980,6 +1008,44 @@ export default function WorksitesPage() {
           </>
         )}
 
+        {/* Manual Merge Modal */}
+        {showMergeModal && mergeSelected.size >= 2 && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg">
+              <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+                <h2 className="font-bold text-gray-900">Merge {mergeSelected.size} Worksites</h2>
+                <button onClick={() => setShowMergeModal(false)}><X size={18} className="text-gray-400" /></button>
+              </div>
+              <div className="p-6 space-y-4">
+                <p className="text-sm text-gray-600">Choose which address to <strong>keep</strong>. All visits, photos, and data from the others will be moved to it, then the duplicates will be deleted.</p>
+                <div className="space-y-2">
+                  {Array.from(mergeSelected).map(id => {
+                    const site = sites.find(s => s.id === id)
+                    if (!site) return null
+                    return (
+                      <label key={id} className={`flex items-start gap-3 p-3 rounded-xl border-2 cursor-pointer transition-colors ${mergeKeepId === id ? 'border-amber-400 bg-amber-50' : 'border-gray-200 hover:border-gray-300'}`}>
+                        <input type="radio" name="keepSite" value={id} checked={mergeKeepId === id}
+                          onChange={() => setMergeKeepId(id)} className="mt-0.5" style={{ accentColor: '#b8895a' }} />
+                        <div>
+                          <div className="font-semibold text-gray-900 text-sm">{site.address}</div>
+                          <div className="text-xs text-gray-500">{[site.city, site.state].filter(Boolean).join(', ')} · {(site as any).visit_count || 0} visits</div>
+                        </div>
+                        {mergeKeepId === id && <span className="ml-auto text-xs font-bold text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full">KEEP</span>}
+                      </label>
+                    )
+                  })}
+                </div>
+                <button onClick={manualMerge} disabled={!mergeKeepId || merging}
+                  className="w-full py-3 rounded-xl text-white font-bold disabled:opacity-50 flex items-center justify-center gap-2"
+                  style={{ background: '#b8895a' }}>
+                  {merging && <Loader2 size={14} className="animate-spin" />}
+                  Merge — Keep "{sites.find(s => s.id === mergeKeepId)?.address}"
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* New Visit Modal */}
         {showNewVisit && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
@@ -1071,12 +1137,36 @@ export default function WorksitesPage() {
           <p className="text-gray-500 text-sm mt-0.5">Property history</p>
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={mergeDuplicates} disabled={merging}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-sm border border-gray-200 hover:bg-gray-50 disabled:opacity-60 transition-all"
-            title="Find worksites with the same street+unit and merge them into one">
-            {merging ? <Loader2 size={14} className="animate-spin" /> : <Link2 size={14} />}
-            {merging ? 'Mergingâ€¦' : 'Merge Duplicates'}
-          </button>
+          {mergeSelectMode ? (
+            <>
+              <span className="text-xs text-gray-500 font-semibold">{mergeSelected.size} selected</span>
+              <button onClick={() => { setShowMergeModal(true); setMergeKeepId(Array.from(mergeSelected)[0] || '') }}
+                disabled={mergeSelected.size < 2 || merging}
+                className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl font-bold text-sm text-white disabled:opacity-50"
+                style={{ background: '#b8895a' }}>
+                {merging ? <Loader2 size={13} className="animate-spin" /> : <Link2 size={13} />}
+                Merge {mergeSelected.size} Sites
+              </button>
+              <button onClick={() => { setMergeSelectMode(false); setMergeSelected(new Set()) }}
+                className="px-4 py-2.5 rounded-xl font-bold text-sm border border-gray-200 hover:bg-gray-50">
+                Cancel
+              </button>
+            </>
+          ) : (
+            <>
+              <button onClick={() => setMergeSelectMode(true)}
+                className="flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-sm border border-gray-200 hover:bg-gray-50 transition-all"
+                title="Select worksites to manually merge">
+                <Link2 size={14} /> Merge Sites
+              </button>
+              <button onClick={mergeDuplicates} disabled={merging}
+                className="flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-sm border border-gray-200 hover:bg-gray-50 disabled:opacity-60 transition-all"
+                title="Auto-detect and merge worksites with the same address">
+                {merging ? <Loader2 size={14} className="animate-spin" /> : null}
+                {merging ? 'Auto-mergingâ€¦' : 'Auto-merge'}
+              </button>
+            </>
+          )}
           <button onClick={importFromInvoices} disabled={importing}
             className="flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-sm border border-gray-200 hover:bg-gray-50 disabled:opacity-60 transition-all"
             style={{ color: '#b8895a' }}>
@@ -1182,12 +1272,26 @@ export default function WorksitesPage() {
               <tbody className="divide-y divide-gray-50">
                 {filtered.map(site => {
                   const PropIcon = propIcon(site.property_type)
+                  const isSelForMerge = mergeSelected.has(site.id)
                   return (
-                    <tr key={site.id} onClick={() => openSite(site)} className="hover:bg-gray-50 cursor-pointer transition-colors">
+                    <tr key={site.id}
+                      onClick={() => {
+                        if (mergeSelectMode) {
+                          setMergeSelected(prev => { const n = new Set(prev); n.has(site.id) ? n.delete(site.id) : n.add(site.id); return n })
+                        } else {
+                          openSite(site)
+                        }
+                      }}
+                      className={`hover:bg-gray-50 cursor-pointer transition-colors ${isSelForMerge ? 'bg-amber-50 ring-1 ring-amber-300' : ''}`}>
                       <td className="px-5 py-3">
-                        <div className="w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: '#f3ede3' }}>
-                          <PropIcon size={15} style={{ color: '#b8895a' }} />
-                        </div>
+                        {mergeSelectMode ? (
+                          <input type="checkbox" checked={isSelForMerge} readOnly
+                            className="w-4 h-4 rounded cursor-pointer" style={{ accentColor: '#b8895a' }} />
+                        ) : (
+                          <div className="w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: '#f3ede3' }}>
+                            <PropIcon size={15} style={{ color: '#b8895a' }} />
+                          </div>
+                        )}
                       </td>
                       <td className="px-5 py-3">
                         <div className="font-semibold text-gray-900">{site.address}</div>

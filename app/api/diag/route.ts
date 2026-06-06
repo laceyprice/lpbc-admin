@@ -11,7 +11,7 @@ export async function GET() {
   const raw = process.env.RESEND_FROM_EMAIL || 'Lacey@laceynprice.com (default — not set in env)'
   const normalized = normalizeFrom(process.env.RESEND_FROM_EMAIL || 'Lacey@laceynprice.com')
   return NextResponse.json({
-    version: 'v33-estimate-job-streaming',
+    version: 'v34-manual-merge-sonnet46-estimate',
     deployedAt: new Date().toISOString(),
     rawEnvValue: raw,
     normalizedValue: normalized,

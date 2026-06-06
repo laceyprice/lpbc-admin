@@ -167,8 +167,8 @@ Produce the JSON estimate now.`
         let fullText = ''
         let tokensSoFar = 0
         const claudeStream = await client.messages.stream({
-          model: 'claude-haiku-4-5',
-          max_tokens: 3000,
+          model: 'claude-sonnet-4-6',
+          max_tokens: 4000,
           system: systemPrompt,
           messages: [{ role: 'user', content: userContent }],
         })
@@ -182,14 +182,30 @@ Produce the JSON estimate now.`
           }
         }
 
-        // Parse the JSON from the accumulated text
+        // Extract JSON from the accumulated text — try several strategies
         let jsonStr = fullText.trim()
-        const fenceMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)\s*```/)
-        if (fenceMatch) jsonStr = fenceMatch[1].trim()
         let estimate: any
-        try { estimate = JSON.parse(jsonStr) }
-        catch {
-          send('error', { error: 'AI returned malformed JSON', raw: fullText.slice(0, 500) })
+        const extractStrategies = [
+          // 1. Direct parse
+          () => jsonStr,
+          // 2. Code fence with json marker
+          () => { const m = jsonStr.match(/```json\s*([\s\S]*?)\s*```/); return m?.[1] ?? null },
+          // 3. Code fence without marker
+          () => { const m = jsonStr.match(/```\s*([\s\S]*?)\s*```/); return m?.[1] ?? null },
+          // 4. First { ... } block spanning the whole output
+          () => { const m = jsonStr.match(/(\{[\s\S]*\})/); return m?.[1] ?? null },
+        ]
+        for (const strategy of extractStrategies) {
+          try {
+            const candidate = strategy()
+            if (!candidate) continue
+            estimate = JSON.parse(candidate)
+            break
+          } catch {}
+        }
+        if (!estimate) {
+          console.error('estimate-job: could not parse JSON', { raw: fullText.slice(0, 800) })
+          send('error', { error: 'AI returned malformed JSON — try again', raw: fullText.slice(0, 300) })
           clearInterval(heartbeat)
           controller.close()
           return
