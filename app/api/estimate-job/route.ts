@@ -167,7 +167,7 @@ Produce the JSON estimate now.`
         let fullText = ''
         let tokensSoFar = 0
         const claudeStream = await client.messages.stream({
-          model: 'claude-sonnet-4-6',
+          model: 'claude-sonnet-4-5',
           max_tokens: 4000,
           system: systemPrompt,
           messages: [{ role: 'user', content: userContent }],
