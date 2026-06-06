@@ -167,7 +167,7 @@ Produce the JSON estimate now.`
         let fullText = ''
         let tokensSoFar = 0
         const claudeStream = await client.messages.stream({
-          model: 'claude-sonnet-4-5',
+          model: 'claude-3-5-haiku-20241022',
           max_tokens: 4000,
           system: systemPrompt,
           messages: [{ role: 'user', content: userContent }],
@@ -222,8 +222,18 @@ Produce the JSON estimate now.`
           },
         })
       } catch (e: any) {
-        console.error('estimate-job stream failed', { message: e?.message, status: e?.status, type: e?.error?.type, cause: e?.cause?.code })
-        send('error', { error: e?.message || 'Estimate failed', status: e?.status, type: e?.error?.type })
+        const errDetail = {
+          message: e?.message,
+          status: e?.status,
+          type: e?.error?.type,
+          cause: e?.cause?.code || e?.cause?.message,
+          name: e?.name,
+        }
+        console.error('estimate-job stream failed', errDetail)
+        send('error', {
+          error: e?.message || 'Estimate failed',
+          detail: `model:claude-3-5-haiku-20241022 status:${e?.status || '?'} type:${e?.error?.type || '?'} cause:${e?.cause?.code || e?.cause?.message || '?'}`,
+        })
       } finally {
         clearInterval(heartbeat)
         try { controller.close() } catch {}

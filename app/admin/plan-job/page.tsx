@@ -256,7 +256,7 @@ export default function PlanJobPage() {
             finalEstimate = payload.estimate
             finalMeta = payload.historical_data_used
           } else if (evt === 'error') {
-            setError(payload.error || 'Estimate failed')
+            setError((payload.error || 'Estimate failed') + (payload.detail ? ` — ${payload.detail}` : ''))
           }
         }
       }
