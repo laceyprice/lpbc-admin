@@ -2291,6 +2291,25 @@ function BookkeepingPage() {
           </div>
         </div>
       )}
+
+      {/* Receipt/Check lightbox */}
+      {lightboxImage && (
+        <div onClick={() => setLightboxImage(null)} className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4 cursor-pointer">
+          <div className="relative max-w-4xl max-h-[90vh]" onClick={e => e.stopPropagation()}>
+            <button onClick={() => setLightboxImage(null)} className="absolute -top-10 right-0 text-white hover:text-gray-300 flex items-center gap-1 text-sm font-semibold">
+              <X size={18} /> Close
+            </button>
+            {lightboxImage.url.match(/\.(pdf)$/i) ? (
+              <iframe src={lightboxImage.url} className="w-[85vw] h-[85vh] bg-white rounded-lg" />
+            ) : (
+              <img src={lightboxImage.url} alt={lightboxImage.name || 'Receipt'} className="max-w-full max-h-[85vh] rounded-lg shadow-2xl" />
+            )}
+            {lightboxImage.name && (
+              <p className="text-white text-center text-sm mt-2 font-medium">{lightboxImage.name}</p>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -2446,24 +2465,6 @@ function ReconciliationTab({ accounts, selectedAccountId, onSelectAccount }: {
         </div>
       </div>
 
-      {/* Receipt/Check lightbox */}
-      {lightboxImage && (
-        <div onClick={() => setLightboxImage(null)} className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4 cursor-pointer">
-          <div className="relative max-w-4xl max-h-[90vh]" onClick={e => e.stopPropagation()}>
-            <button onClick={() => setLightboxImage(null)} className="absolute -top-10 right-0 text-white hover:text-gray-300 flex items-center gap-1 text-sm font-semibold">
-              <X size={18} /> Close
-            </button>
-            {lightboxImage.url.match(/\.(pdf)$/i) ? (
-              <iframe src={lightboxImage.url} className="w-[85vw] h-[85vh] bg-white rounded-lg" />
-            ) : (
-              <img src={lightboxImage.url} alt={lightboxImage.name || 'Receipt'} className="max-w-full max-h-[85vh] rounded-lg shadow-2xl" />
-            )}
-            {lightboxImage.name && (
-              <p className="text-white text-center text-sm mt-2 font-medium">{lightboxImage.name}</p>
-            )}
-          </div>
-        </div>
-      )}
     </div>
   )
 }
