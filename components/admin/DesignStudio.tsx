@@ -1,5 +1,6 @@
 'use client'
-import { useEffect, useRef, useState } from 'react'
+import { Component, useEffect, useRef, useState } from 'react'
+import type { ErrorInfo, ReactNode } from 'react'
 import {
   X, Palette, PenTool, Images, Sparkles, Loader2, Plus, Trash2, Save,
   Square, Minus, Type, Eraser, Undo2, RotateCcw, Wand2, Check, DollarSign,
@@ -67,10 +68,7 @@ type TabKey = typeof TABS[number]['key']
 
 function newId(prefix: string) { return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}` }
 
-export default function DesignStudio({
-  open, onClose, design, onChange,
-  attachments, sessionId, description, measurements,
-}: {
+type DesignStudioProps = {
   open: boolean
   onClose: () => void
   design: DesignData
@@ -79,7 +77,66 @@ export default function DesignStudio({
   sessionId: string
   description: string
   measurements: string
-}) {
+}
+
+// Wrap the actual studio in an error boundary — the modal deals with a lot of
+// loosely-typed AI- and DB-sourced data (design JSONB, AI suggestion shapes,
+// attachment metadata), and a single bad value anywhere inside it must never
+// be able to crash the *entire* plan-job page out from under the owner.
+class DesignStudioBoundary extends Component<{ open: boolean; onClose: () => void; children: ReactNode }, { error: Error | null }> {
+  constructor(props: { open: boolean; onClose: () => void; children: ReactNode }) {
+    super(props)
+    this.state = { error: null }
+  }
+  static getDerivedStateFromError(error: Error) {
+    return { error }
+  }
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error('DesignStudio crashed:', error, info?.componentStack)
+  }
+  componentDidUpdate(prevProps: { open: boolean }) {
+    // Reopening the modal gives the inner component a fresh mount/state —
+    // clear any prior crash so the feature isn't permanently bricked.
+    if (this.state.error && this.props.open && !prevProps.open) {
+      this.setState({ error: null })
+    }
+  }
+  render() {
+    if (this.state.error) {
+      if (!this.props.open) return null
+      return (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-6">
+          <div className="bg-white max-w-md w-full rounded-2xl shadow-xl p-6 text-center space-y-3">
+            <h2 className="font-extrabold text-gray-900 text-base">Design Studio hit a snag</h2>
+            <p className="text-sm text-gray-500">
+              Something inside the Design Studio didn't load correctly — your plan, estimate, and budget
+              breakdown are safe and unaffected. Closing and reopening usually clears it.
+            </p>
+            <p className="text-[11px] font-mono text-gray-400 break-words">{this.state.error.message}</p>
+            <button onClick={this.props.onClose}
+              className="text-sm font-bold px-4 py-2 rounded-xl text-white shadow-sm" style={{ background: '#b8895a' }}>
+              Close
+            </button>
+          </div>
+        </div>
+      )
+    }
+    return this.props.children as any
+  }
+}
+
+export default function DesignStudio(props: DesignStudioProps) {
+  return (
+    <DesignStudioBoundary open={props.open} onClose={props.onClose}>
+      <DesignStudioInner {...props} />
+    </DesignStudioBoundary>
+  )
+}
+
+function DesignStudioInner({
+  open, onClose, design, onChange,
+  attachments, sessionId, description, measurements,
+}: DesignStudioProps) {
   const [tab, setTab] = useState<TabKey>('board')
   if (!open) return null
 
@@ -147,9 +204,11 @@ export default function DesignStudio({
               onSet={list => patch({ ai_suggestions: list })}
               onToggleSelect={(i) => patch({ ai_suggestions: suggestions.map((s, idx) => idx === i ? { ...s, selected: !s.selected } : s) })}
               onAddToBoard={(s) => {
-                const items: BoardItem[] = (s.key_materials || []).slice(0, 6).map(m => ({
-                  id: newId('board'), path: '', signed_url: null, name: s.style_name,
-                  room: 'Other', label: m, notes: `From AI direction "${s.style_name}": ${s.why_it_fits || ''}`, price: 0,
+                const materials = Array.isArray(s.key_materials) ? s.key_materials : []
+                const styleName = String(s.style_name ?? 'Untitled direction')
+                const items: BoardItem[] = materials.slice(0, 6).map(m => ({
+                  id: newId('board'), path: '', signed_url: null, name: styleName,
+                  room: 'Other', label: String(m ?? ''), notes: `From AI direction "${styleName}": ${s.why_it_fits ? String(s.why_it_fits) : ''}`, price: 0,
                 }))
                 if (items.length) patch({ board: [...board, ...items] })
               }}
@@ -175,7 +234,7 @@ function MoodBoardTab({ board, attachments, onAdd, onUpdate, onRemove }: {
 }) {
   const [picking, setPicking] = useState(false)
   const usedPaths = new Set(board.map(b => b.path).filter(Boolean))
-  const images = attachments.filter(a => a.type.startsWith('image/'))
+  const images = attachments.filter(a => typeof a?.type === 'string' && a.type.startsWith('image/'))
   const pickable = images.filter(a => !usedPaths.has(a.path))
 
   function addFromAttachment(att: AttachmentLike) {
@@ -342,16 +401,19 @@ function SketchTab({ sketches, sessionId, onAdd, onRemove }: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  function pos(e: React.MouseEvent | React.TouchEvent): { x: number; y: number } {
-    const canvas = canvasRef.current!
+  function pos(e: React.MouseEvent | React.TouchEvent): { x: number; y: number } | null {
+    const canvas = canvasRef.current
+    if (!canvas) return null
     const rect = canvas.getBoundingClientRect()
-    const point = 'touches' in e ? e.touches[0] : (e as React.MouseEvent)
+    const point = 'touches' in e && e.touches && e.touches.length ? e.touches[0] : ('clientX' in e ? e : null)
+    if (!point) return null
     return { x: point.clientX - rect.left, y: point.clientY - rect.top }
   }
 
   function start(e: React.MouseEvent | React.TouchEvent) {
     e.preventDefault()
     const p = pos(e)
+    if (!p) return
     if (tool === 'text') {
       const text = window.prompt('Annotation text:')
       if (text && text.trim()) setStrokes(prev => [...prev, { tool: 'text', color, width, start: p, text: text.trim() }])
@@ -365,6 +427,7 @@ function SketchTab({ sketches, sessionId, onAdd, onRemove }: {
     if (!drawing.current || !current.current) return
     e.preventDefault()
     const p = pos(e)
+    if (!p) return
     if (current.current.points) current.current.points = [...current.current.points, p]
     else current.current.end = p
     redraw([...strokes, current.current])
@@ -478,7 +541,7 @@ function CompareTab({ comparisons, attachments, onAdd, onUpdate, onRemove }: {
   onUpdate: (i: number, c: ComparisonItem) => void
   onRemove: (i: number) => void
 }) {
-  const images = attachments.filter(a => a.type.startsWith('image/'))
+  const images = attachments.filter(a => typeof a?.type === 'string' && a.type.startsWith('image/'))
 
   function addPair() {
     onAdd({ id: newId('cmp'), before_path: null, after_path: null, note: '' })
@@ -548,7 +611,7 @@ function AiSuggestionsTab({ suggestions, attachments, description, measurements,
 }) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-  const images = attachments.filter(a => a.type.startsWith('image/'))
+  const images = attachments.filter(a => typeof a?.type === 'string' && a.type.startsWith('image/'))
 
   async function generate() {
     if (!description || description.trim().length < 10) { setError('Add a job description in the plan above first.'); return }
@@ -599,29 +662,29 @@ function AiSuggestionsTab({ suggestions, attachments, description, measurements,
           {suggestions.map((s, i) => (
             <div key={s.id} className={`border rounded-xl p-3.5 flex flex-col gap-2 transition-colors ${s.selected ? 'border-amber-300 bg-amber-50/50 ring-1 ring-amber-200' : 'border-gray-200 bg-white'}`}>
               <div className="flex items-start justify-between gap-2">
-                <h4 className="font-extrabold text-gray-900 text-sm leading-snug">{s.style_name}</h4>
+                <h4 className="font-extrabold text-gray-900 text-sm leading-snug">{String(s.style_name ?? 'Untitled direction')}</h4>
                 <button onClick={() => onToggleSelect(i)} title={s.selected ? 'Unselect' : 'Select this direction'}
                   className={`flex-shrink-0 p-1.5 rounded-full border ${s.selected ? 'bg-amber-400 border-amber-400 text-white' : 'border-gray-200 text-gray-300 hover:text-gray-500'}`}>
                   <Check size={12} />
                 </button>
               </div>
-              {s.estimated_cost_impact && (
+              {s.estimated_cost_impact && typeof s.estimated_cost_impact === 'string' && (
                 <span className={`self-start text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full border ${impactColor(s.estimated_cost_impact)}`}>
                   {s.estimated_cost_impact} cost impact
                 </span>
               )}
-              <p className="text-xs text-gray-600 leading-relaxed">{s.description}</p>
-              {s.color_palette && s.color_palette.length > 0 && (
+              {s.description && <p className="text-xs text-gray-600 leading-relaxed">{String(s.description)}</p>}
+              {Array.isArray(s.color_palette) && s.color_palette.length > 0 && (
                 <div className="flex flex-wrap gap-1">
-                  {s.color_palette.map((c, ci) => <span key={ci} className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-600">{c}</span>)}
+                  {s.color_palette.map((c, ci) => <span key={ci} className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-600">{String(c ?? '')}</span>)}
                 </div>
               )}
-              {s.key_materials && s.key_materials.length > 0 && (
+              {Array.isArray(s.key_materials) && s.key_materials.length > 0 && (
                 <ul className="text-[11px] text-gray-500 list-disc list-inside space-y-0.5">
-                  {s.key_materials.slice(0, 5).map((m, mi) => <li key={mi}>{m}</li>)}
+                  {s.key_materials.slice(0, 5).map((m, mi) => <li key={mi}>{String(m ?? '')}</li>)}
                 </ul>
               )}
-              {s.why_it_fits && <p className="text-[11px] text-gray-400 italic border-t border-gray-100 pt-1.5 mt-auto">{s.why_it_fits}</p>}
+              {s.why_it_fits && <p className="text-[11px] text-gray-400 italic border-t border-gray-100 pt-1.5 mt-auto">{String(s.why_it_fits)}</p>}
               <button onClick={() => onAddToBoard(s)} className="mt-1 flex items-center justify-center gap-1.5 text-[11px] font-bold px-3 py-1.5 rounded-lg border border-gray-200 hover:bg-gray-50 text-gray-700">
                 <Palette size={11} /> Send materials to mood board
               </button>
