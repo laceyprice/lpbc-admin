@@ -1,6 +1,6 @@
 'use client'
-import { useEffect, useState } from 'react'
-import { Loader2, TrendingUp, TrendingDown, DollarSign, Scale, ArrowRightLeft, Download, AlertTriangle, FileBarChart2, FileText, Trash2, Link2 } from 'lucide-react'
+import { Fragment, useEffect, useState } from 'react'
+import { Loader2, TrendingUp, TrendingDown, DollarSign, Scale, ArrowRightLeft, Download, AlertTriangle, FileBarChart2, FileText, Trash2, Link2, X, CheckCircle2 } from 'lucide-react'
 import { formatCurrency, formatDateShort } from '@/lib/utils'
 import { getLocked, setLocked, getSharedRange, setSharedRange, subscribeSharedRange } from '@/lib/shared-date'
 
@@ -626,7 +626,7 @@ export default function ReportsPage() {
           {tab === 'pnl' && <PnLReport data={data} />}
           {tab === 'balance-sheet' && <BalanceSheetReport data={data} />}
           {tab === 'cash-flow' && <CashFlowReport data={data} />}
-          {tab === 'reconciliation' && <ReconciliationReport data={data} />}
+          {tab === 'reconciliation' && <ReconciliationReport data={data} onRefresh={load} />}
         </>
       )}
     </div>
@@ -784,7 +784,10 @@ function CashFlowReport({ data }: { data: any }) {
 }
 
 // ─── RECONCILIATION ─────────────────────────────────────────
-function ReconciliationReport({ data }: { data: any }) {
+function ReconciliationReport({ data, onRefresh }: { data: any; onRefresh: () => void }) {
+  const accounts: any[] = data.chartOfAccounts || []
+  const financialAccounts: any[] = data.financialAccounts || []
+
   return (
     <div className="space-y-6">
       {/* Summary */}
@@ -801,23 +804,25 @@ function ReconciliationReport({ data }: { data: any }) {
         <SummaryCard icon={ArrowRightLeft} label="Difference" value={data.difference} color={Math.abs(data.difference) < 0.01 ? 'green' : 'red'} />
       </div>
 
-      {/* Uncategorized */}
+      {/* Uncategorized — highest priority */}
       {(data.uncategorized || []).length > 0 && (
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-          <div className="px-5 py-4 border-b border-amber-100 bg-amber-50">
+          <div className="px-5 py-4 border-b border-amber-100 bg-amber-50 flex items-center justify-between">
             <h3 className="text-xs font-bold text-amber-700 uppercase tracking-wider">Uncategorized Bank Transactions ({data.uncategorizedCount})</h3>
+            <span className="text-[11px] text-amber-600 font-medium">Click any row to assign a category</span>
           </div>
-          <TxTable rows={data.uncategorized} />
+          <TxTable rows={data.uncategorized} accounts={accounts} financialAccounts={financialAccounts} onSaved={onRefresh} />
         </div>
       )}
 
       {/* Unreconciled */}
       {(data.unreconciled || []).length > 0 && (
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-          <div className="px-5 py-4 border-b border-red-100 bg-red-50">
+          <div className="px-5 py-4 border-b border-red-100 bg-red-50 flex items-center justify-between">
             <h3 className="text-xs font-bold text-red-700 uppercase tracking-wider">Unreconciled Bank Transactions ({data.unreconciledCount})</h3>
+            <span className="text-[11px] text-red-500 font-medium">Click any row to categorize</span>
           </div>
-          <TxTable rows={data.unreconciled} />
+          <TxTable rows={data.unreconciled} accounts={accounts} financialAccounts={financialAccounts} onSaved={onRefresh} />
         </div>
       )}
 
@@ -962,24 +967,170 @@ function BalanceSection({ title, lines: rawLines, total, extraLine }: { title: s
   )
 }
 
-function TxTable({ rows }: { rows: any[] }) {
+function TxTable({ rows, accounts = [], financialAccounts = [], onSaved }: {
+  rows: any[]
+  accounts?: any[]
+  financialAccounts?: any[]
+  onSaved?: () => void
+}) {
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [form, setForm] = useState<{ account_id: string; payee: string }>({ account_id: '', payee: '' })
+  const [saving, setSaving] = useState(false)
+  const [savedIds, setSavedIds] = useState<Set<string>>(new Set())
+  const [page, setPage] = useState(0)
+  const PAGE_SIZE = 50
+
+  const faName = (id: string | null) => financialAccounts.find((a: any) => a.id === id)?.name || null
+  const acctName = (id: string | null) => accounts.find((a: any) => a.id === id)?.name || null
+
+  // Group chart-of-accounts by report_group for the <optgroup> select
+  const groupedAccounts = accounts.reduce((acc: Record<string, any[]>, a: any) => {
+    const key = a.report_group || (a.account_type || 'other').toUpperCase()
+    if (!acc[key]) acc[key] = []
+    acc[key].push(a)
+    return acc
+  }, {})
+
+  function startEdit(tx: any) {
+    setEditingId(tx.id)
+    setForm({ account_id: tx.account_id || '', payee: tx.payee || '' })
+  }
+
+  async function save(txId: string) {
+    setSaving(true)
+    try {
+      const res = await fetch('/api/bookkeeping', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: txId,
+          account_id: form.account_id || null,
+          payee: form.payee || null,
+        }),
+      })
+      if (res.ok) {
+        setSavedIds(prev => new Set([...prev, txId]))
+        setEditingId(null)
+        onSaved?.()
+      } else {
+        const d = await res.json().catch(() => ({}))
+        alert('Failed to save: ' + (d.error || 'Unknown error'))
+      }
+    } finally { setSaving(false) }
+  }
+
+  const totalPages = Math.ceil(rows.length / PAGE_SIZE)
+  const pageRows = rows.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)
+
   return (
-    <table className="w-full text-sm">
-      <thead><tr className="bg-gray-50 border-b border-gray-100">
-        {['Date', 'Description', 'Payee', 'Amount'].map(h => (
-          <th key={h} className="text-left px-5 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider">{h}</th>
-        ))}
-      </tr></thead>
-      <tbody className="divide-y divide-gray-50">
-        {rows.map((tx: any) => (
-          <tr key={tx.id} className="hover:bg-gray-50">
-            <td className="px-5 py-3 text-gray-600 text-xs whitespace-nowrap">{formatDateShort(tx.transaction_date)}</td>
-            <td className="px-5 py-3 text-gray-900 text-xs truncate max-w-48">{tx.description}</td>
-            <td className="px-5 py-3 text-gray-600 text-xs">{tx.payee || '—'}</td>
-            <td className={`px-5 py-3 font-bold text-sm ${tx.amount >= 0 ? 'text-green-700' : 'text-red-600'}`}>{formatCurrency(tx.amount)}</td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
+    <div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead><tr className="bg-gray-50 border-b border-gray-100">
+            <th className="text-left px-4 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider whitespace-nowrap">Date</th>
+            <th className="text-left px-4 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider">Description</th>
+            <th className="text-left px-4 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider">Payee</th>
+            <th className="text-left px-4 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider">Bank Account</th>
+            <th className="text-left px-4 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider">Category</th>
+            <th className="text-right px-4 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider">Amount</th>
+          </tr></thead>
+          <tbody className="divide-y divide-gray-50">
+            {pageRows.map((tx: any) => (
+              <Fragment key={tx.id}>
+                <tr
+                  onClick={() => editingId === tx.id ? setEditingId(null) : startEdit(tx)}
+                  className={`cursor-pointer transition-colors ${editingId === tx.id ? 'bg-amber-50/80' : savedIds.has(tx.id) ? 'bg-green-50/60' : 'hover:bg-amber-50/40'}`}
+                >
+                  <td className="px-4 py-3 text-gray-500 text-xs whitespace-nowrap">{formatDateShort(tx.transaction_date)}</td>
+                  <td className="px-4 py-3 text-xs">
+                    <div className="font-medium text-gray-900 truncate max-w-56" title={tx.description}>{tx.description}</div>
+                  </td>
+                  <td className="px-4 py-3 text-gray-600 text-xs">{tx.payee || <span className="text-gray-300">—</span>}</td>
+                  <td className="px-4 py-3 text-xs">
+                    {faName(tx.financial_account_id)
+                      ? <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-blue-50 text-blue-700">{faName(tx.financial_account_id)}</span>
+                      : <span className="text-gray-300 text-xs">—</span>
+                    }
+                  </td>
+                  <td className="px-4 py-3 text-xs">
+                    {savedIds.has(tx.id) ? (
+                      <span className="flex items-center gap-1 text-[11px] font-semibold text-green-600">
+                        <CheckCircle2 size={12} /> Saved
+                      </span>
+                    ) : acctName(tx.account_id) ? (
+                      <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-50 text-amber-700">{acctName(tx.account_id)}</span>
+                    ) : (
+                      <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-red-50 text-red-500 italic">Uncategorized — click to assign</span>
+                    )}
+                  </td>
+                  <td className={`px-4 py-3 font-bold text-sm text-right ${tx.amount >= 0 ? 'text-green-700' : 'text-red-600'}`}>{formatCurrency(tx.amount)}</td>
+                </tr>
+
+                {editingId === tx.id && (
+                  <tr className="bg-amber-50/60 border-b border-amber-100">
+                    <td colSpan={6} className="px-4 py-3">
+                      <div className="flex flex-wrap items-end gap-3">
+                        <div className="flex-1 min-w-48">
+                          <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">Category (Chart of Accounts)</label>
+                          <select
+                            value={form.account_id}
+                            onChange={e => setForm(f => ({ ...f, account_id: e.target.value }))}
+                            className="w-full px-3 py-2 rounded-lg border border-amber-200 bg-white text-sm focus:outline-none focus:ring-2 focus:border-amber-400">
+                            <option value="">— Uncategorized —</option>
+                            {Object.entries(groupedAccounts).map(([group, items]) => (
+                              <optgroup key={group} label={group}>
+                                {(items as any[]).map((a: any) => (
+                                  <option key={a.id} value={a.id}>{a.name}</option>
+                                ))}
+                              </optgroup>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="w-48">
+                          <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">Payee</label>
+                          <input
+                            value={form.payee}
+                            onChange={e => setForm(f => ({ ...f, payee: e.target.value }))}
+                            placeholder="e.g. Lowe's"
+                            className="w-full px-3 py-2 rounded-lg border border-amber-200 bg-white text-sm focus:outline-none focus:ring-2 focus:border-amber-400" />
+                        </div>
+                        <div className="flex gap-2 pb-0.5">
+                          <button
+                            onClick={() => save(tx.id)}
+                            disabled={saving}
+                            className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-white text-xs font-bold disabled:opacity-50"
+                            style={{ background: '#b8895a' }}>
+                            {saving ? <Loader2 size={12} className="animate-spin" /> : <CheckCircle2 size={12} />}
+                            Save
+                          </button>
+                          <button
+                            onClick={() => setEditingId(null)}
+                            className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-gray-200 text-xs font-semibold text-gray-600 hover:bg-gray-50">
+                            <X size={12} /> Cancel
+                          </button>
+                        </div>
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {totalPages > 1 && (
+        <div className="flex items-center justify-between px-5 py-3 border-t border-gray-100">
+          <span className="text-xs text-gray-400">
+            Showing {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, rows.length)} of {rows.length}
+          </span>
+          <div className="flex gap-2">
+            <button onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0}
+              className="px-3 py-1 rounded-lg border border-gray-200 text-xs font-semibold text-gray-600 hover:bg-gray-50 disabled:opacity-40">← Prev</button>
+            <button onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))} disabled={page >= totalPages - 1}
+              className="px-3 py-1 rounded-lg border border-gray-200 text-xs font-semibold text-gray-600 hover:bg-gray-50 disabled:opacity-40">Next →</button>
+          </div>
+        </div>
+      )}
+    </div>
   )
 }

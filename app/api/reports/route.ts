@@ -230,22 +230,30 @@ async function getCashFlow(supabase: any, from: string | null, to: string | null
 
 // ─── RECONCILIATION ─────────────────────────────────────────
 async function getReconciliation(supabase: any, from: string | null, to: string | null, accountId?: string | null) {
-  // Bank transactions
-  let bankQ = supabase.from('bank_transactions').select('*')
-  if (from) bankQ = bankQ.gte('transaction_date', from)
-  if (to) bankQ = bankQ.lte('transaction_date', to)
-  if (accountId) bankQ = bankQ.eq('financial_account_id', accountId)
-  const { data: bankTxs } = await bankQ
+  // Fetch lookup tables alongside transactions in parallel
+  const [bankResult, acctResult, chartResult, faResult] = await Promise.all([
+    (() => {
+      let q = supabase.from('bank_transactions').select('*').order('transaction_date', { ascending: false })
+      if (from) q = q.gte('transaction_date', from)
+      if (to) q = q.lte('transaction_date', to)
+      if (accountId) q = q.eq('financial_account_id', accountId)
+      return q
+    })(),
+    (() => {
+      let q = supabase.from('accounting_entries').select('bank_transaction_id')
+      if (from) q = q.gte('transaction_date', from)
+      if (to) q = q.lte('transaction_date', to)
+      if (accountId) q = q.eq('financial_account_id', accountId)
+      return q
+    })(),
+    supabase.from('chart_of_accounts').select('id, name, account_type, report_group').eq('is_active', true).order('sort_order'),
+    supabase.from('financial_accounts').select('id, name, color').order('name'),
+  ])
 
-  // Accounting entries
-  let acctQ = supabase.from('accounting_entries').select('*')
-  if (from) acctQ = acctQ.gte('transaction_date', from)
-  if (to) acctQ = acctQ.lte('transaction_date', to)
-  if (accountId) acctQ = acctQ.eq('financial_account_id', accountId)
-  const { data: acctTxs } = await acctQ
-
-  const bank = bankTxs || []
-  const accounting = acctTxs || []
+  const bank = bankResult.data || []
+  const accounting = acctResult.data || []
+  const chartOfAccounts = chartResult.data || []
+  const financialAccounts = faResult.data || []
 
   // Find which bank transactions have been synced to accounting
   const syncedBankIds = new Set(accounting.filter((a: any) => a.bank_transaction_id).map((a: any) => a.bank_transaction_id))
@@ -253,23 +261,33 @@ async function getReconciliation(supabase: any, from: string | null, to: string 
   const reconciled = bank.filter((b: any) => syncedBankIds.has(b.id))
   const unreconciled = bank.filter((b: any) => !syncedBankIds.has(b.id))
 
-  // Uncategorized = bank transactions without a category or account_id
-  const uncategorized = bank.filter((b: any) => !b.category && !b.account_id)
+  // Uncategorized = bank transactions without an account_id
+  const uncategorized = bank.filter((b: any) => !b.account_id)
 
   const bankTotal = bank.reduce((s: number, t: any) => s + Number(t.amount), 0)
-  const accountingTotal = accounting.reduce((s: number, t: any) => s + Number(t.amount), 0)
+  // Re-fetch accounting totals with amounts since we only selected bank_transaction_id above
+  const { data: acctFull } = await (() => {
+    let q = supabase.from('accounting_entries').select('amount')
+    if (from) q = q.gte('transaction_date', from)
+    if (to) q = q.lte('transaction_date', to)
+    if (accountId) q = q.eq('financial_account_id', accountId)
+    return q
+  })()
+  const accountingTotal = (acctFull || []).reduce((s: number, t: any) => s + Number(t.amount), 0)
   const difference = bankTotal - accountingTotal
 
   return {
     bankTransactionCount: bank.length,
-    accountingEntryCount: accounting.length,
+    accountingEntryCount: (acctFull || []).length,
     reconciledCount: reconciled.length,
     unreconciledCount: unreconciled.length,
     uncategorizedCount: uncategorized.length,
     bankTotal,
     accountingTotal,
     difference,
-    unreconciled: unreconciled.slice(0, 50), // limit for UI
-    uncategorized: uncategorized.slice(0, 50),
+    unreconciled,       // all rows — client paginates
+    uncategorized,      // all rows
+    chartOfAccounts,
+    financialAccounts,
   }
 }
