@@ -114,9 +114,9 @@ You MUST respond with a single valid JSON object matching this exact schema (no 
 When photos are provided, populate "photo_observations" with 2–5 specific things you SEE in the images that affect pricing. If no photos, return an empty array.
 
 Pricing guidance:
-- Anchor materials to the Top Vendors list — those are LPBC's actual suppliers
+- Anchor pricing to the Top Vendors list — those are LPBC's actual suppliers — but DO NOT name any retail chain or store (e.g. Lowe's, Home Depot, Menards, Ferguson, etc.) anywhere in your output, including materials_breakdown notes, assumptions, risks, or rationale — UNLESS that exact business name appears verbatim in the Top Vendors list provided to you. Never guess or suggest a generic big-box retailer as a sourcing location. Describe materials generically instead (e.g. "mid-grade stock cabinets," "standard porcelain tile," "supplier-sourced fixtures").
 - Labor rate: estimate from past expense entries for labor/subcontractor payees, or use $65-85/hr if no data
-- Design/PM fee should reflect complexity: simple service work 8-12% of total; full remodels with permits/coordination 15-22%
+- Design/PM fee: LPBC's standard baseline is 20% of job cost — use 20% by default. Only deviate from it when complexity clearly warrants: simple, single-trade service work with no design/sourcing involved can go as low as ~15%; highly complex multi-trade remodels with heavy permitting/coordination can go up to ~25%. Explain any deviation from the 20% baseline in design_pm_fee_rationale.
 - Be specific and grounded.`
 
   const userContent: any[] = []
