@@ -92,8 +92,6 @@ You MUST respond with a single valid JSON object matching this exact schema (no 
   "materials_breakdown": [
     { "category": "string", "estimated_cost": number, "notes": "string" }
   ],
-  "labor_estimate": { "hours": number, "rate_per_hour": number, "total": number },
-  "subcontractor_estimate": number,
   "duration_business_days": number,
   "process_steps": [
     { "step": number, "title": "string", "description": "string", "estimated_days": number }
@@ -113,9 +111,16 @@ You MUST respond with a single valid JSON object matching this exact schema (no 
 
 When photos are provided, populate "photo_observations" with 2–5 specific things you SEE in the images that affect pricing. If no photos, return an empty array.
 
+IMPORTANT — "materials_breakdown" is really a UNIFIED BUDGET BREAKDOWN, not materials-only:
+- Do NOT return separate labor_estimate or subcontractor_estimate fields — they no longer exist in this schema.
+- Instead, fold EVERY cost into "materials_breakdown" as individual line items — materials AND labor AND subcontractor work all belong in this same list, each as its own line with a clear category.
+- Use categories like "Labor — Demo & Framing", "Labor — Finish Carpentry / Paint", "Subcontractor — Plumbing Rough-in", "Subcontractor — Electrical", alongside material categories like "Tile & Flooring Materials", "Cabinetry & Countertops", etc.
+- For labor line items, show your math in "notes" (e.g. "approx. 40 hrs @ $75/hr — demo, framing, drywall").
+- "estimated_total" = the sum of every line in materials_breakdown (materials + labor + subs combined). Do not add anything on top of that sum.
+
 Pricing guidance:
 - Anchor pricing to the Top Vendors list — those are LPBC's actual suppliers — but DO NOT name any retail chain or store (e.g. Lowe's, Home Depot, Menards, Ferguson, etc.) anywhere in your output, including materials_breakdown notes, assumptions, risks, or rationale — UNLESS that exact business name appears verbatim in the Top Vendors list provided to you. Never guess or suggest a generic big-box retailer as a sourcing location. Describe materials generically instead (e.g. "mid-grade stock cabinets," "standard porcelain tile," "supplier-sourced fixtures").
-- Labor rate: estimate from past expense entries for labor/subcontractor payees, or use $65-85/hr if no data
+- Labor rate: estimate from past expense entries for labor/subcontractor payees, or use $65-85/hr if no data — and bake the resulting dollar total directly into its own line item(s) as described above.
 - Design/PM fee: LPBC's standard baseline is 20% of job cost — use 20% by default. Only deviate from it when complexity clearly warrants: simple, single-trade service work with no design/sourcing involved can go as low as ~15%; highly complex multi-trade remodels with heavy permitting/coordination can go up to ~25%. Explain any deviation from the 20% baseline in design_pm_fee_rationale.
 - Be specific and grounded.`
 

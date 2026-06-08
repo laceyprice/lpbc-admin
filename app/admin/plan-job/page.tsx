@@ -4,14 +4,26 @@ import { useSearchParams } from 'next/navigation'
 import { Sparkles, Loader2, ClipboardList, DollarSign, Clock, AlertTriangle, ListChecks, TrendingUp, History, Hammer, Upload, X, Image as ImageIcon, Film, FileText, Ruler, Save, FolderOpen, Plus, Trash2, Archive, Cloud, Folder, ChevronLeft, Search, Download, MapPin, Users2, Pencil, Check, RotateCcw, Wand2 } from 'lucide-react'
 import DesignStudio, { DesignData } from '@/components/admin/DesignStudio'
 
-interface MaterialLine { category: string; estimated_cost: number; notes: string }
+interface BudgetLine {
+  category: string
+  estimated_cost: number
+  notes: string
+  // Filled in later as the project moves from estimate → quote → completed job,
+  // so the owner can see the spread between what was estimated, quoted, and billed.
+  quoted_cost?: number | null
+  actual_cost?: number | null
+}
 interface ProcessStep { step: number; title: string; description: string; estimated_days: number }
 interface SimilarJob { service_date: string; amount: number; description: string }
 interface Estimate {
   estimated_total: number
-  materials_breakdown: MaterialLine[]
-  labor_estimate: { hours: number; rate_per_hour: number; total: number }
-  subcontractor_estimate: number
+  materials_breakdown: BudgetLine[]
+  // Legacy fields from older estimate shapes — folded into materials_breakdown
+  // line items by normalizeEstimate() so the UI shows one unified Budget Breakdown.
+  labor_estimate?: { hours: number; rate_per_hour: number; total: number }
+  subcontractor_estimate?: number
+  // Quote/invoice files attached once real numbers come in
+  actual_documents?: Attachment[]
   duration_business_days: number
   process_steps: ProcessStep[]
   design_pm_fee: number
@@ -59,6 +71,41 @@ const PLAN_STATUS_LABEL: Record<string, { label: string; color: string }> = {
 }
 
 function newSessionId() { return `plan_${Date.now()}_${Math.random().toString(36).slice(2, 8)}` }
+
+// Older estimates carried materials/labor/subcontractor as separate buckets.
+// We now show ONE unified "Budget Breakdown" — fold any legacy labor/subcontractor
+// totals into line items (once) so nothing gets double-counted or hidden.
+function normalizeEstimate(raw: any): Estimate {
+  const breakdown: BudgetLine[] = Array.isArray(raw?.materials_breakdown)
+    ? raw.materials_breakdown.map((m: any) => ({
+        category: m?.category || '',
+        estimated_cost: Number(m?.estimated_cost) || 0,
+        notes: m?.notes || '',
+        quoted_cost: m?.quoted_cost ?? null,
+        actual_cost: m?.actual_cost ?? null,
+      }))
+    : []
+  const labor = raw?.labor_estimate
+  if (labor && (Number(labor.total) > 0 || Number(labor.hours) > 0)) {
+    const total = Number(labor.total) || (Number(labor.hours) || 0) * (Number(labor.rate_per_hour) || 0)
+    breakdown.push({
+      category: 'Labor',
+      estimated_cost: Number(total.toFixed(2)),
+      notes: labor.hours && labor.rate_per_hour ? `${labor.hours} hrs × $${labor.rate_per_hour}/hr` : '',
+      quoted_cost: null, actual_cost: null,
+    })
+  }
+  if (Number(raw?.subcontractor_estimate) > 0) {
+    breakdown.push({ category: 'Subcontractors', estimated_cost: Number(raw.subcontractor_estimate), notes: '', quoted_cost: null, actual_cost: null })
+  }
+  return {
+    ...raw,
+    materials_breakdown: breakdown,
+    labor_estimate: { hours: 0, rate_per_hour: 0, total: 0 },
+    subcontractor_estimate: 0,
+    actual_documents: Array.isArray(raw?.actual_documents) ? raw.actual_documents : [],
+  } as Estimate
+}
 
 export default function PlanJobPage() {
   const searchParams = useSearchParams()
@@ -196,7 +243,7 @@ export default function PlanJobPage() {
       setDescription(d.description || '')
       setMeasurements(d.measurements || '')
       setAttachments(Array.isArray(d.attachments) ? d.attachments : [])
-      setEstimate(d.estimate || null)
+      setEstimate(d.estimate ? normalizeEstimate(d.estimate) : null)
       setSessionId(d.session_id || newSessionId())
       setShowLoadPanel(false)
       setSavedAt(d.updated_at ? new Date(d.updated_at) : null)
@@ -324,7 +371,7 @@ export default function PlanJobPage() {
           try { payload = JSON.parse(data) } catch { continue }
           if (evt === 'progress') setProgressTokens(payload.tokens_so_far || 0)
           else if (evt === 'result') {
-            finalEstimate = payload.estimate
+            finalEstimate = payload.estimate ? normalizeEstimate(payload.estimate) : null
             finalMeta = payload.historical_data_used
           } else if (evt === 'error') {
             setError((payload.error || 'Estimate failed') + (payload.detail ? ` — ${payload.detail}` : '') + (payload.raw ? `\n\nRaw AI output (truncated):\n${payload.raw}` : ''))
@@ -368,29 +415,25 @@ export default function PlanJobPage() {
   function onDrop(e: React.DragEvent) { e.preventDefault(); if (e.dataTransfer.files?.length) handleFiles(e.dataTransfer.files) }
 
   // ── Live recalculation when the estimate is hand-edited ──────────────────
-  // Job cost = sum(materials) + labor total + subcontractors.
-  // Design/PM fee is derived from the (possibly-edited) percent against the
-  // freshly recalculated job cost, so editing any line item ripples through.
+  // Job cost = sum of every Budget Breakdown line (materials, labor, subs — all
+  // unified into one table now). Design/PM fee derives from the (possibly-edited)
+  // percent against the freshly recalculated job cost, so any edit ripples through.
   function recalc(est: Estimate): Estimate {
-    const materialsSum = est.materials_breakdown.reduce((s, m) => s + (Number(m.estimated_cost) || 0), 0)
-    const laborTotal = (Number(est.labor_estimate.hours) || 0) * (Number(est.labor_estimate.rate_per_hour) || 0)
-    const estimated_total = Number((materialsSum + laborTotal + (Number(est.subcontractor_estimate) || 0)).toFixed(2))
+    const estimated_total = Number(est.materials_breakdown.reduce((s, m) => s + (Number(m.estimated_cost) || 0), 0).toFixed(2))
     const design_pm_fee = Number((estimated_total * ((Number(est.design_pm_fee_percent) || 0) / 100)).toFixed(2))
-    return {
-      ...est,
-      labor_estimate: { ...est.labor_estimate, total: Number(laborTotal.toFixed(2)) },
-      estimated_total,
-      design_pm_fee,
-    }
+    return { ...est, estimated_total, design_pm_fee }
   }
   function patchEstimate(patch: (e: Estimate) => Estimate) {
     setEstimate(prev => prev ? recalc(patch(prev)) : prev)
   }
-  function updateMaterial(i: number, field: 'category' | 'notes' | 'estimated_cost', value: string) {
+  function updateMaterial(i: number, field: 'category' | 'notes' | 'estimated_cost' | 'quoted_cost' | 'actual_cost', value: string) {
     patchEstimate(e => ({
       ...e,
       materials_breakdown: e.materials_breakdown.map((m, idx) => idx !== i ? m : {
-        ...m, [field]: field === 'estimated_cost' ? (Number(value) || 0) : value,
+        ...m,
+        [field]: (field === 'category' || field === 'notes')
+          ? value
+          : (value.trim() === '' ? null : (Number(value) || 0)),
       }),
     }))
   }
@@ -398,19 +441,48 @@ export default function PlanJobPage() {
     patchEstimate(e => ({ ...e, materials_breakdown: e.materials_breakdown.filter((_, idx) => idx !== i) }))
   }
   function addMaterial() {
-    patchEstimate(e => ({ ...e, materials_breakdown: [...e.materials_breakdown, { category: 'New line item', estimated_cost: 0, notes: '' }] }))
+    patchEstimate(e => ({ ...e, materials_breakdown: [...e.materials_breakdown, { category: 'New line item', estimated_cost: 0, notes: '', quoted_cost: null, actual_cost: null }] }))
   }
-  function updateLabor(field: 'hours' | 'rate_per_hour', value: string) {
-    patchEstimate(e => ({ ...e, labor_estimate: { ...e.labor_estimate, [field]: Number(value) || 0 } }))
-  }
-  function updateField(field: 'subcontractor_estimate' | 'design_pm_fee_percent' | 'duration_business_days', value: string) {
+  function updateField(field: 'design_pm_fee_percent' | 'duration_business_days', value: string) {
     patchEstimate(e => ({ ...e, [field]: Number(value) || 0 }))
   }
   function updateStepDays(i: number, value: string) {
     patchEstimate(e => ({ ...e, process_steps: e.process_steps.map((s, idx) => idx !== i ? s : { ...s, estimated_days: Number(value) || 0 }) }))
   }
 
+  // ── Quote / actual-cost document attachments ─────────────────────────────
+  // Separate from the planning photos — these are the real quote/invoice once
+  // it comes in, so the owner can see estimate vs. quote vs. billed side by side.
+  const actualDocsRef = useRef<HTMLInputElement>(null)
+  async function addActualDocuments(files: FileList | File[]) {
+    const list = Array.from(files)
+    if (!list.length || !estimate) return
+    setUploading(true); setError('')
+    try {
+      const fd = new FormData()
+      fd.append('session_id', sessionId)
+      for (const f of list) fd.append('file', f)
+      const res = await fetch('/api/job-planning', { method: 'POST', body: fd })
+      const d = await res.json()
+      if (!res.ok) { setError(d.error || 'Upload failed'); setUploading(false); return }
+      patchEstimate(e => ({ ...e, actual_documents: [...(e.actual_documents || []), ...(d.uploaded || [])] }))
+    } catch (e: any) {
+      setError(e?.message || 'Upload failed')
+    }
+    setUploading(false)
+    if (actualDocsRef.current) actualDocsRef.current.value = ''
+  }
+  function removeActualDocument(att: Attachment) {
+    fetch(`/api/job-planning?path=${encodeURIComponent(att.path)}`, { method: 'DELETE' })
+    patchEstimate(e => ({ ...e, actual_documents: (e.actual_documents || []).filter(a => a.path !== att.path) }))
+  }
+
   const grandTotal = estimate ? estimate.estimated_total + estimate.design_pm_fee : 0
+  // Budget comparison roll-ups — only populated once quoted/actual numbers exist
+  const quotedLines = estimate ? estimate.materials_breakdown.filter(m => m.quoted_cost != null) : []
+  const actualLines = estimate ? estimate.materials_breakdown.filter(m => m.actual_cost != null) : []
+  const quotedSum = quotedLines.length ? quotedLines.reduce((s, m) => s + (Number(m.quoted_cost) || 0), 0) : null
+  const actualSum = actualLines.length ? actualLines.reduce((s, m) => s + (Number(m.actual_cost) || 0), 0) : null
   const confidenceColor = estimate?.confidence === 'high' ? 'text-green-700 bg-green-50 border-green-200'
     : estimate?.confidence === 'medium' ? 'text-amber-700 bg-amber-50 border-amber-200'
     : 'text-red-700 bg-red-50 border-red-200'
@@ -694,13 +766,19 @@ export default function PlanJobPage() {
             )}
           </div>
 
-          <Section title="Materials Breakdown" icon={ListChecks}>
+          <Section title="Budget Breakdown" icon={ListChecks}>
+            <div className="px-5 pt-3 pb-1 text-[11px] text-gray-400">
+              Materials, labor, and subcontractor costs all live here as one unified budget. Fill in <span className="text-blue-600 font-semibold">Quoted</span> once a real quote comes in, and <span className="text-emerald-600 font-semibold">Actual Billed</span> once the job wraps — the spread shows automatically.
+            </div>
+            <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-gray-50 border-b border-gray-100">
                 <tr>
                   <th className="text-left px-4 py-2.5 text-[11px] font-semibold text-gray-600 uppercase tracking-wider">Category</th>
                   <th className="text-left px-4 py-2.5 text-[11px] font-semibold text-gray-600 uppercase tracking-wider">Notes</th>
                   <th className="text-right px-4 py-2.5 text-[11px] font-semibold text-gray-600 uppercase tracking-wider">Estimated</th>
+                  <th className="text-right px-4 py-2.5 text-[11px] font-semibold text-blue-600 uppercase tracking-wider">Quoted</th>
+                  <th className="text-right px-4 py-2.5 text-[11px] font-semibold text-emerald-600 uppercase tracking-wider">Actual Billed</th>
                   {editingEstimate && <th className="w-8"></th>}
                 </tr>
               </thead>
@@ -722,11 +800,8 @@ export default function PlanJobPage() {
                             <span className="text-gray-400 text-xs">$</span>
                             <input type="number" step="0.01" value={m.estimated_cost}
                               onChange={e => updateMaterial(i, 'estimated_cost', e.target.value)}
-                              className="w-28 px-2 py-1 rounded-lg border border-gray-200 text-sm font-mono font-semibold text-right focus:outline-none focus:ring-2 focus:border-blue-400" />
+                              className="w-24 px-2 py-1 rounded-lg border border-gray-200 text-sm font-mono font-semibold text-right focus:outline-none focus:ring-2 focus:border-blue-400" />
                           </div>
-                        </td>
-                        <td className="px-1 text-center">
-                          <button onClick={() => removeMaterial(i)} title="Remove line item" className="text-gray-300 hover:text-red-500 p-1"><Trash2 size={13} /></button>
                         </td>
                       </>
                     ) : (
@@ -736,67 +811,86 @@ export default function PlanJobPage() {
                         <td className="px-4 py-2.5 text-right font-mono text-sm font-semibold">${m.estimated_cost.toFixed(2)}</td>
                       </>
                     )}
+                    <td className="px-4 py-1.5">
+                      <div className="flex items-center justify-end gap-1">
+                        <span className="text-gray-300 text-xs">$</span>
+                        <input type="number" step="0.01" placeholder="—" value={m.quoted_cost ?? ''}
+                          onChange={e => updateMaterial(i, 'quoted_cost', e.target.value)}
+                          className="w-24 px-2 py-1 rounded-lg border border-gray-200 text-sm font-mono text-right text-blue-700 placeholder:text-gray-300 focus:outline-none focus:ring-2 focus:border-blue-400" />
+                      </div>
+                    </td>
+                    <td className="px-4 py-1.5">
+                      <div className="flex items-center justify-end gap-1">
+                        <span className="text-gray-300 text-xs">$</span>
+                        <input type="number" step="0.01" placeholder="—" value={m.actual_cost ?? ''}
+                          onChange={e => updateMaterial(i, 'actual_cost', e.target.value)}
+                          className="w-24 px-2 py-1 rounded-lg border border-gray-200 text-sm font-mono text-right text-emerald-700 placeholder:text-gray-300 focus:outline-none focus:ring-2 focus:border-emerald-400" />
+                      </div>
+                    </td>
+                    {editingEstimate && (
+                      <td className="px-1 text-center">
+                        <button onClick={() => removeMaterial(i)} title="Remove line item" className="text-gray-300 hover:text-red-500 p-1"><Trash2 size={13} /></button>
+                      </td>
+                    )}
                   </tr>
                 ))}
                 {editingEstimate && (
                   <tr>
-                    <td colSpan={4} className="px-4 py-2">
+                    <td colSpan={6} className="px-4 py-2">
                       <button onClick={addMaterial} className="flex items-center gap-1.5 text-xs font-semibold text-blue-600 hover:text-blue-800">
                         <Plus size={12} /> Add line item
                       </button>
                     </td>
                   </tr>
                 )}
-                <tr className="bg-gray-50 font-bold">
-                  {editingEstimate ? (
-                    <>
-                      <td colSpan={2} className="px-4 py-2">
-                        <div className="flex items-center gap-2 text-sm font-bold text-gray-700">
-                          Labor —
-                          <input type="number" step="0.5" min={0} value={estimate.labor_estimate.hours}
-                            onChange={e => updateLabor('hours', e.target.value)}
-                            className="w-20 px-2 py-1 rounded-lg border border-gray-200 text-sm font-mono text-right focus:outline-none focus:ring-2 focus:border-blue-400" /> hrs ×
-                          <span className="text-gray-400">$</span>
-                          <input type="number" step="0.01" min={0} value={estimate.labor_estimate.rate_per_hour}
-                            onChange={e => updateLabor('rate_per_hour', e.target.value)}
-                            className="w-20 px-2 py-1 rounded-lg border border-gray-200 text-sm font-mono text-right focus:outline-none focus:ring-2 focus:border-blue-400" /> /hr
-                        </div>
-                      </td>
-                      <td className="px-4 py-2.5 text-right font-mono">${estimate.labor_estimate.total.toFixed(2)}</td>
-                      <td></td>
-                    </>
-                  ) : (
-                    <>
-                      <td colSpan={2} className="px-4 py-2.5 text-sm">Labor — {estimate.labor_estimate.hours} hrs × ${estimate.labor_estimate.rate_per_hour}/hr</td>
-                      <td className="px-4 py-2.5 text-right font-mono">${estimate.labor_estimate.total.toFixed(2)}</td>
-                    </>
-                  )}
-                </tr>
-                {(editingEstimate || estimate.subcontractor_estimate > 0) && (
-                  <tr className="bg-gray-50 font-bold">
-                    {editingEstimate ? (
-                      <>
-                        <td colSpan={2} className="px-4 py-2 text-sm">Subcontractors</td>
-                        <td className="px-4 py-2">
-                          <div className="flex items-center justify-end gap-1">
-                            <span className="text-gray-400 text-xs">$</span>
-                            <input type="number" step="0.01" min={0} value={estimate.subcontractor_estimate}
-                              onChange={e => updateField('subcontractor_estimate', e.target.value)}
-                              className="w-28 px-2 py-1 rounded-lg border border-gray-200 text-sm font-mono font-semibold text-right focus:outline-none focus:ring-2 focus:border-blue-400" />
-                          </div>
-                        </td>
-                        <td></td>
-                      </>
-                    ) : (
-                      <>
-                        <td colSpan={2} className="px-4 py-2.5 text-sm">Subcontractors</td>
-                        <td className="px-4 py-2.5 text-right font-mono">${estimate.subcontractor_estimate.toFixed(2)}</td>
-                      </>
-                    )}
-                  </tr>
-                )}
               </tbody>
+              <tfoot>
+                <tr className="bg-gray-50 font-bold border-t-2 border-gray-200">
+                  <td colSpan={2} className="px-4 py-2.5 text-sm text-gray-700">Totals</td>
+                  <td className="px-4 py-2.5 text-right font-mono text-sm">${estimate.estimated_total.toFixed(2)}</td>
+                  <td className="px-4 py-2.5 text-right font-mono text-sm text-blue-700">{quotedSum != null ? `$${quotedSum.toFixed(2)}` : '—'}</td>
+                  <td className="px-4 py-2.5 text-right font-mono text-sm text-emerald-700">{actualSum != null ? `$${actualSum.toFixed(2)}` : '—'}</td>
+                  {editingEstimate && <td></td>}
+                </tr>
+              </tfoot>
             </table>
+            </div>
+
+            {(quotedSum != null || actualSum != null) && (
+              <div className="px-5 py-3 border-t border-gray-100 flex flex-wrap gap-x-6 gap-y-1.5">
+                {quotedSum != null && <BudgetDelta label="Quote vs. Estimate" from={estimate.estimated_total} to={quotedSum} />}
+                {actualSum != null && <BudgetDelta label="Actual vs. Estimate" from={estimate.estimated_total} to={actualSum} />}
+                {actualSum != null && quotedSum != null && <BudgetDelta label="Actual vs. Quote" from={quotedSum} to={actualSum} />}
+              </div>
+            )}
+
+            {/* Quote / final-invoice attachments */}
+            <div className="px-5 py-3 border-t border-gray-100">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-gray-400">Quotes & Final Invoices</span>
+                <button type="button" onClick={() => actualDocsRef.current?.click()}
+                  className="flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-gray-200 hover:bg-gray-50">
+                  <Upload size={11} /> Attach file
+                </button>
+                <input ref={actualDocsRef} type="file" multiple accept="image/*,application/pdf" className="hidden"
+                  onChange={e => e.target.files && addActualDocuments(e.target.files)} />
+              </div>
+              {(estimate.actual_documents || []).length === 0 ? (
+                <p className="text-[11px] text-gray-400">Attach the contractor's quote or the final invoice once it's in hand — keep the paper trail with the numbers.</p>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  {(estimate.actual_documents || []).map(doc => (
+                    <div key={doc.path} className="flex items-center gap-1.5 border border-gray-200 rounded-lg pl-2.5 pr-1 py-1.5 bg-white text-xs">
+                      <FileText size={12} className="text-gray-400 flex-shrink-0" />
+                      {doc.signed_url ? (
+                        <a href={doc.signed_url} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline truncate max-w-[160px]">{doc.name}</a>
+                      ) : <span className="truncate max-w-[160px] text-gray-600">{doc.name}</span>}
+                      <button onClick={() => removeActualDocument(doc)} className="text-gray-300 hover:text-red-500 p-0.5"><X size={12} /></button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </Section>
 
           <Section title={`Process — ${estimate.process_steps.length} steps`} icon={ClipboardList}>
@@ -1102,6 +1196,19 @@ function Stat({ label, value, sublabel, accent, icon: Icon, big }: { label: stri
       <div className={`${big ? 'text-3xl' : 'text-2xl'} font-extrabold mt-1`} style={{ color: accent || '#111827' }}>{value}</div>
       {sublabel && <div className="text-xs text-gray-400 mt-0.5">{sublabel}</div>}
     </div>
+  )
+}
+
+function BudgetDelta({ label, from, to }: { label: string; from: number; to: number }) {
+  const diff = to - from
+  const pct = from !== 0 ? (diff / from) * 100 : 0
+  const over = diff > 0.005
+  const under = diff < -0.005
+  const color = over ? 'text-red-600' : under ? 'text-green-600' : 'text-gray-500'
+  return (
+    <span className="text-xs text-gray-500">
+      {label}: <strong className={`font-mono ${color}`}>{diff >= 0 ? '+' : '−'}${Math.abs(diff).toFixed(2)} ({Math.abs(pct).toFixed(1)}%)</strong>
+    </span>
   )
 }
 
