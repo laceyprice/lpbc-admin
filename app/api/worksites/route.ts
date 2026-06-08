@@ -30,10 +30,11 @@ export async function GET(req: NextRequest) {
   // Single worksite with full detail
   if (id) {
     // Step 1: fetch site + worksite-specific data (+ linked financial_account)
-    const [siteRes, visitsRes, photosRes] = await Promise.all([
+    const [siteRes, visitsRes, photosRes, jobPlansRes] = await Promise.all([
       supabase.from('worksites').select('*, financial_account:financial_accounts(id, name, color)').eq('id', id).single(),
       supabase.from('worksite_visits').select('*').eq('worksite_id', id).order('visit_date', { ascending: false }),
       supabase.from('worksite_photos').select('*').eq('worksite_id', id).order('created_at', { ascending: false }),
+      supabase.from('job_plans').select('id, title, status, estimate, estimate_generated_at, shared_with_account_id, updated_at').eq('worksite_id', id).order('updated_at', { ascending: false }),
     ])
     if (siteRes.error) return NextResponse.json({ error: siteRes.error.message }, { status: 404 })
     const site = siteRes.data
@@ -113,6 +114,7 @@ export async function GET(req: NextRequest) {
       appointments,
       scheduleRequests,
       contacts,
+      jobPlans: jobPlansRes.data || [],
     })
   }
 

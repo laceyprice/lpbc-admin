@@ -1,6 +1,6 @@
 'use client'
 import { useEffect, useState, useRef } from 'react'
-import { MapPin, Plus, Search, X, Loader2, Camera, Image as ImageIcon, ChevronRight, Trash2, Edit3, ClipboardList, Calendar, FileText, Home, Building2, Key, ChevronLeft, Upload, CheckCircle2, AlertCircle, Receipt, DollarSign, Link2, Users, FileCheck, Clock, ExternalLink } from 'lucide-react'
+import { MapPin, Plus, Search, X, Loader2, Camera, Image as ImageIcon, ChevronRight, Trash2, Edit3, ClipboardList, Calendar, FileText, Home, Building2, Key, ChevronLeft, Upload, CheckCircle2, AlertCircle, Receipt, DollarSign, Link2, Users, FileCheck, Clock, ExternalLink, Sparkles } from 'lucide-react'
 import { formatDateShort } from '@/lib/utils'
 
 const SERVICE_TYPES = ['Service', 'Draw']
@@ -549,6 +549,44 @@ export default function WorksitesPage() {
                 <a href={`/admin/bookkeeping`} className="text-xs font-semibold px-3 py-2 rounded-lg border border-gray-200 hover:bg-gray-50">View ledger →</a>
               )}
             </div>
+
+            {/* Linked Job Plans / Estimates */}
+            {Array.isArray((selected as any).jobPlans) && (selected as any).jobPlans.length > 0 && (
+              <div className="bg-white rounded-2xl border border-gray-100 p-4 shadow-sm mb-5">
+                <div className="flex items-center gap-2 mb-3">
+                  <Sparkles size={15} style={{ color: '#b8895a' }} />
+                  <div className="text-xs font-bold uppercase tracking-wider text-gray-500">Job Plans &amp; Estimates</div>
+                </div>
+                <div className="divide-y divide-gray-100">
+                  {(selected as any).jobPlans.map((jp: any) => {
+                    const PLAN_STATUS: Record<string, { label: string; color: string }> = {
+                      draft: { label: 'Draft', color: 'bg-amber-100 text-amber-700' },
+                      estimated: { label: 'Estimated', color: 'bg-green-100 text-green-700' },
+                      sent_to_customer: { label: 'Sent', color: 'bg-blue-100 text-blue-700' },
+                      approved: { label: 'Approved', color: 'bg-emerald-100 text-emerald-700' },
+                      scheduled: { label: 'Scheduled', color: 'bg-indigo-100 text-indigo-700' },
+                      in_progress: { label: 'In Progress', color: 'bg-orange-100 text-orange-700' },
+                      completed: { label: 'Completed', color: 'bg-gray-200 text-gray-700' },
+                    }
+                    const st = PLAN_STATUS[jp.status || 'draft'] || PLAN_STATUS.draft
+                    const total = jp.estimate ? (jp.estimate.estimated_total + jp.estimate.design_pm_fee) : null
+                    return (
+                      <a key={jp.id} href={`/admin/plan-job?id=${jp.id}`} className="flex items-center justify-between gap-3 py-2.5 hover:bg-gray-50 -mx-2 px-2 rounded-lg">
+                        <div className="min-w-0">
+                          <div className="text-sm font-semibold text-gray-800 truncate flex items-center gap-2">
+                            {jp.title}
+                            <span className={`text-[10px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded ${st.color}`}>{st.label}</span>
+                            {jp.shared_with_account_id && <span className="text-[10px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded bg-purple-100 text-purple-700">Shared</span>}
+                          </div>
+                          <div className="text-[11px] text-gray-400">Updated {new Date(jp.updated_at).toLocaleDateString()}</div>
+                        </div>
+                        {total != null && <div className="font-mono font-bold text-sm text-gray-900 whitespace-nowrap">${total.toFixed(2)}</div>}
+                      </a>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
 
             {/* Tabs */}
             <div className="flex gap-1 bg-gray-100 rounded-xl p-1 w-fit mb-5 flex-wrap">

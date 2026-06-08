@@ -33,7 +33,7 @@ export async function GET(req: NextRequest) {
 
   let query = supabase
     .from('job_plans')
-    .select('id, title, description, session_id, estimate, estimate_generated_at, is_archived, created_at, updated_at')
+    .select('id, title, description, session_id, estimate, estimate_generated_at, is_archived, status, worksite_id, shared_with_account_id, worksite:worksites(id, address, city), created_at, updated_at')
     .order('updated_at', { ascending: false })
   if (!archived) query = query.eq('is_archived', false)
   const { data, error } = await query
@@ -57,6 +57,9 @@ export async function POST(req: NextRequest) {
     attachments: body.attachments || [],
     estimate: body.estimate || null,
     estimate_generated_at: body.estimate ? new Date().toISOString() : null,
+    worksite_id: body.worksite_id || null,
+    status: body.status || 'draft',
+    shared_with_account_id: body.shared_with_account_id || null,
   }).select().single()
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json(data, { status: 201 })

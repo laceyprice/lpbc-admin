@@ -1,6 +1,7 @@
 'use client'
 import { useEffect, useRef, useState } from 'react'
-import { Sparkles, Loader2, ClipboardList, DollarSign, Clock, AlertTriangle, ListChecks, TrendingUp, History, Hammer, Upload, X, Image as ImageIcon, Film, FileText, Ruler, Save, FolderOpen, Plus, Trash2, Archive, Cloud, Folder, ChevronLeft, Search, Download } from 'lucide-react'
+import { useSearchParams } from 'next/navigation'
+import { Sparkles, Loader2, ClipboardList, DollarSign, Clock, AlertTriangle, ListChecks, TrendingUp, History, Hammer, Upload, X, Image as ImageIcon, Film, FileText, Ruler, Save, FolderOpen, Plus, Trash2, Archive, Cloud, Folder, ChevronLeft, Search, Download, MapPin, Users2, Pencil, Check, RotateCcw } from 'lucide-react'
 
 interface MaterialLine { category: string; estimated_cost: number; notes: string }
 interface ProcessStep { step: number; title: string; description: string; estimated_days: number }
@@ -38,13 +39,28 @@ interface JobPlanSummary {
   estimate: Estimate | null
   estimate_generated_at: string | null
   is_archived: boolean
+  status?: string
+  worksite_id?: string | null
+  shared_with_account_id?: string | null
+  worksite?: { id: string; address: string; city: string } | null
   created_at: string
   updated_at: string
+}
+
+const PLAN_STATUS_LABEL: Record<string, { label: string; color: string }> = {
+  draft:            { label: 'Draft',          color: 'bg-amber-100 text-amber-700' },
+  estimated:        { label: 'Estimated',      color: 'bg-green-100 text-green-700' },
+  sent_to_customer: { label: 'Sent',           color: 'bg-blue-100 text-blue-700' },
+  approved:         { label: 'Approved',       color: 'bg-emerald-100 text-emerald-700' },
+  scheduled:        { label: 'Scheduled',      color: 'bg-indigo-100 text-indigo-700' },
+  in_progress:      { label: 'In Progress',    color: 'bg-orange-100 text-orange-700' },
+  completed:        { label: 'Completed',      color: 'bg-gray-200 text-gray-700' },
 }
 
 function newSessionId() { return `plan_${Date.now()}_${Math.random().toString(36).slice(2, 8)}` }
 
 export default function PlanJobPage() {
+  const searchParams = useSearchParams()
   const [planId, setPlanId] = useState<string | null>(null)
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
@@ -67,6 +83,36 @@ export default function PlanJobPage() {
   const [drivePickerOpen, setDrivePickerOpen] = useState(false)
   const [progressTokens, setProgressTokens] = useState(0)
   const fileRef = useRef<HTMLInputElement>(null)
+
+  // Project linking — worksite, status, customer sharing
+  const [worksiteId, setWorksiteId] = useState<string | null>(null)
+  const [status, setStatus] = useState<string>('draft')
+  const [sharedWithAccountId, setSharedWithAccountId] = useState<string | null>(null)
+  const [worksiteOptions, setWorksiteOptions] = useState<Array<{ id: string; address: string; city: string }>>([])
+  const [customerOptions, setCustomerOptions] = useState<Array<{ account_id: string; account_name: string; customer_label: string }>>([])
+  const [editingEstimate, setEditingEstimate] = useState(false)
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const [wsRes, urRes] = await Promise.all([
+          fetch('/api/worksites'),
+          fetch('/api/user-roles'),
+        ])
+        const ws = await wsRes.json()
+        if (Array.isArray(ws)) setWorksiteOptions(ws.map((w: any) => ({ id: w.id, address: w.address, city: w.city })))
+        const ur = await urRes.json()
+        if (Array.isArray(ur)) {
+          const customers = ur.filter((u: any) => u.role === 'customer' && u.assigned_account_id)
+          setCustomerOptions(customers.map((u: any) => ({
+            account_id: u.assigned_account_id,
+            account_name: u.assigned_account_id,
+            customer_label: u.display_name || u.email,
+          })))
+        }
+      } catch {}
+    })()
+  }, [])
 
   async function importFromDrive(files: Array<{ fileId: string; fileName: string; mimeType: string }>) {
     if (!files.length) return
@@ -100,6 +146,13 @@ export default function PlanJobPage() {
 
   useEffect(() => { loadPlansList() }, [showArchived])
 
+  // Deep-link support: /admin/plan-job?id=<plan_id> (e.g. from a worksite's "Job Plans" list)
+  useEffect(() => {
+    const id = searchParams?.get('id')
+    if (id) loadPlan(id)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams])
+
   async function loadPlansList() {
     try {
       const res = await fetch(`/api/job-plans${showArchived ? '?archived=true' : ''}`)
@@ -119,6 +172,10 @@ export default function PlanJobPage() {
     setSavedAt(null)
     setError('')
     setSessionId(newSessionId())
+    setWorksiteId(null)
+    setStatus('draft')
+    setSharedWithAccountId(null)
+    setEditingEstimate(false)
   }
 
   async function loadPlan(id: string) {
@@ -137,6 +194,10 @@ export default function PlanJobPage() {
       setShowLoadPanel(false)
       setSavedAt(d.updated_at ? new Date(d.updated_at) : null)
       setMeta(null)
+      setWorksiteId(d.worksite_id || null)
+      setStatus(d.status || 'draft')
+      setSharedWithAccountId(d.shared_with_account_id || null)
+      setEditingEstimate(false)
     } catch (e: any) {
       setError(e?.message || 'Failed to load plan')
     }
@@ -150,6 +211,7 @@ export default function PlanJobPage() {
         title: title || deriveTitle(description) || 'Untitled Plan',
         description, measurements, session_id: sessionId,
         attachments, estimate,
+        worksite_id: worksiteId, status, shared_with_account_id: sharedWithAccountId,
       }
       const url = '/api/job-plans'
       const method = planId ? 'PATCH' : 'POST'
@@ -277,6 +339,9 @@ export default function PlanJobPage() {
       const body: any = {
         title: title || deriveTitle(description) || 'Untitled Plan',
         description, measurements, session_id: sessionId, attachments, estimate: est,
+        worksite_id: worksiteId,
+        status: status === 'draft' ? 'estimated' : status,
+        shared_with_account_id: sharedWithAccountId,
       }
       const method = planId ? 'PATCH' : 'POST'
       if (planId) body.id = planId
@@ -284,6 +349,7 @@ export default function PlanJobPage() {
       const d = await res.json()
       if (res.ok) {
         if (!planId) setPlanId(d.id)
+        if (d.status) setStatus(d.status)
         setSavedAt(new Date())
         await loadPlansList()
       }
@@ -291,6 +357,49 @@ export default function PlanJobPage() {
   }
 
   function onDrop(e: React.DragEvent) { e.preventDefault(); if (e.dataTransfer.files?.length) handleFiles(e.dataTransfer.files) }
+
+  // ── Live recalculation when the estimate is hand-edited ──────────────────
+  // Job cost = sum(materials) + labor total + subcontractors.
+  // Design/PM fee is derived from the (possibly-edited) percent against the
+  // freshly recalculated job cost, so editing any line item ripples through.
+  function recalc(est: Estimate): Estimate {
+    const materialsSum = est.materials_breakdown.reduce((s, m) => s + (Number(m.estimated_cost) || 0), 0)
+    const laborTotal = (Number(est.labor_estimate.hours) || 0) * (Number(est.labor_estimate.rate_per_hour) || 0)
+    const estimated_total = Number((materialsSum + laborTotal + (Number(est.subcontractor_estimate) || 0)).toFixed(2))
+    const design_pm_fee = Number((estimated_total * ((Number(est.design_pm_fee_percent) || 0) / 100)).toFixed(2))
+    return {
+      ...est,
+      labor_estimate: { ...est.labor_estimate, total: Number(laborTotal.toFixed(2)) },
+      estimated_total,
+      design_pm_fee,
+    }
+  }
+  function patchEstimate(patch: (e: Estimate) => Estimate) {
+    setEstimate(prev => prev ? recalc(patch(prev)) : prev)
+  }
+  function updateMaterial(i: number, field: 'category' | 'notes' | 'estimated_cost', value: string) {
+    patchEstimate(e => ({
+      ...e,
+      materials_breakdown: e.materials_breakdown.map((m, idx) => idx !== i ? m : {
+        ...m, [field]: field === 'estimated_cost' ? (Number(value) || 0) : value,
+      }),
+    }))
+  }
+  function removeMaterial(i: number) {
+    patchEstimate(e => ({ ...e, materials_breakdown: e.materials_breakdown.filter((_, idx) => idx !== i) }))
+  }
+  function addMaterial() {
+    patchEstimate(e => ({ ...e, materials_breakdown: [...e.materials_breakdown, { category: 'New line item', estimated_cost: 0, notes: '' }] }))
+  }
+  function updateLabor(field: 'hours' | 'rate_per_hour', value: string) {
+    patchEstimate(e => ({ ...e, labor_estimate: { ...e.labor_estimate, [field]: Number(value) || 0 } }))
+  }
+  function updateField(field: 'subcontractor_estimate' | 'design_pm_fee_percent' | 'duration_business_days', value: string) {
+    patchEstimate(e => ({ ...e, [field]: Number(value) || 0 }))
+  }
+  function updateStepDays(i: number, value: string) {
+    patchEstimate(e => ({ ...e, process_steps: e.process_steps.map((s, idx) => idx !== i ? s : { ...s, estimated_days: Number(value) || 0 }) }))
+  }
 
   const grandTotal = estimate ? estimate.estimated_total + estimate.design_pm_fee : 0
   const confidenceColor = estimate?.confidence === 'high' ? 'text-green-700 bg-green-50 border-green-200'
@@ -341,13 +450,16 @@ export default function PlanJobPage() {
                   <button onClick={() => loadPlan(p.id)} className="flex-1 min-w-0 text-left hover:bg-gray-50 rounded-lg px-2 py-1 -mx-2">
                     <div className="font-semibold text-gray-900 text-sm truncate flex items-center gap-2">
                       {p.title}
-                      {p.estimate_generated_at ? (
-                        <span className="text-[10px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded bg-green-100 text-green-700">Estimated</span>
-                      ) : (
-                        <span className="text-[10px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">Draft</span>
+                      {(() => { const st = PLAN_STATUS_LABEL[p.status || 'draft'] || PLAN_STATUS_LABEL.draft
+                        return <span className={`text-[10px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded ${st.color}`}>{st.label}</span> })()}
+                      {p.shared_with_account_id && (
+                        <span title="Shared with customer" className="text-[10px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 flex items-center gap-0.5"><Users2 size={9} /> Shared</span>
                       )}
                     </div>
-                    <div className="text-[11px] text-gray-500 truncate">{p.description}</div>
+                    <div className="text-[11px] text-gray-500 truncate">
+                      {p.worksite ? <span className="inline-flex items-center gap-0.5 text-gray-400 mr-1.5"><MapPin size={10} />{p.worksite.address}{p.worksite.city ? `, ${p.worksite.city}` : ''} ·</span> : null}
+                      {p.description}
+                    </div>
                     <div className="text-[10px] text-gray-400 mt-0.5">Updated {new Date(p.updated_at).toLocaleDateString()} {new Date(p.updated_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
                   </button>
                   <button onClick={() => toggleArchive(p)} title={p.is_archived ? 'Unarchive' : 'Archive'} className="text-gray-300 hover:text-blue-600 p-1"><Archive size={13} /></button>
@@ -377,6 +489,42 @@ export default function PlanJobPage() {
           {saving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
           {planId ? 'Save Changes' : 'Save Draft'}
         </button>
+      </div>
+
+      {/* Project linking — worksite, status, customer sharing */}
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 px-4 py-3 mb-5 grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div>
+          <label className="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1 flex items-center gap-1"><MapPin size={11} /> Worksite</label>
+          <select value={worksiteId || ''} onChange={e => setWorksiteId(e.target.value || null)}
+            className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:border-blue-400 bg-white">
+            <option value="">— Not linked —</option>
+            {worksiteOptions.map(w => <option key={w.id} value={w.id}>{w.address}{w.city ? `, ${w.city}` : ''}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1">Project Status</label>
+          <select value={status} onChange={e => setStatus(e.target.value)}
+            className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:border-blue-400 bg-white">
+            <option value="draft">Draft</option>
+            <option value="estimated">Estimate Ready</option>
+            <option value="sent_to_customer">Sent to Customer</option>
+            <option value="approved">Approved</option>
+            <option value="scheduled">Scheduled</option>
+            <option value="in_progress">In Progress</option>
+            <option value="completed">Completed</option>
+          </select>
+        </div>
+        <div>
+          <label className="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1 flex items-center gap-1"><Users2 size={11} /> Share with Customer</label>
+          <select value={sharedWithAccountId || ''} onChange={e => setSharedWithAccountId(e.target.value || null)}
+            className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:border-blue-400 bg-white">
+            <option value="">— Not shared —</option>
+            {customerOptions.map(c => <option key={c.account_id} value={c.account_id}>{c.customer_label}</option>)}
+          </select>
+          {sharedWithAccountId && status === 'draft' && (
+            <p className="text-[10px] text-amber-600 mt-1">Customer won't see this until status moves past Draft.</p>
+          )}
+        </div>
       </div>
 
       {/* Input panel */}
@@ -482,16 +630,27 @@ export default function PlanJobPage() {
 
       {estimate && !loading && (
         <div className="space-y-5">
-          <div className="flex flex-wrap items-center gap-3">
-            <span className={`inline-flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-full border ${confidenceColor}`}>
-              <TrendingUp size={11} /> {estimate.confidence.toUpperCase()} CONFIDENCE
-            </span>
-            {meta && (
-              <span className="text-xs text-gray-500">
-                {meta.invoices_considered} invoices · {meta.expenses_considered} expenses · {meta.images_analyzed > 0 && `${meta.images_analyzed} photos analyzed · `}{meta.other_files > 0 && `${meta.other_files} other files · `}{meta.top_vendors} vendors
+          <div className="flex flex-wrap items-center gap-3 justify-between">
+            <div className="flex flex-wrap items-center gap-3">
+              <span className={`inline-flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-full border ${confidenceColor}`}>
+                <TrendingUp size={11} /> {estimate.confidence.toUpperCase()} CONFIDENCE
               </span>
-            )}
+              {meta && (
+                <span className="text-xs text-gray-500">
+                  {meta.invoices_considered} invoices · {meta.expenses_considered} expenses · {meta.images_analyzed > 0 && `${meta.images_analyzed} photos analyzed · `}{meta.other_files > 0 && `${meta.other_files} other files · `}{meta.top_vendors} vendors
+                </span>
+              )}
+            </div>
+            <button onClick={() => setEditingEstimate(v => !v)}
+              className={`flex items-center gap-1.5 text-xs font-bold px-3 py-2 rounded-xl border transition-colors ${editingEstimate ? 'border-green-200 bg-green-50 text-green-700' : 'border-gray-200 hover:bg-gray-50 text-gray-700'}`}>
+              {editingEstimate ? <><Check size={13} /> Done Editing</> : <><Pencil size={13} /> Edit Numbers</>}
+            </button>
           </div>
+          {editingEstimate && (
+            <div className="text-xs text-gray-500 bg-blue-50 border border-blue-100 rounded-xl px-4 py-2.5 flex items-center gap-2">
+              <RotateCcw size={13} className="text-blue-500" /> Edit any cost, hours, rate, fee %, or duration below — totals recalculate live. Click <strong className="mx-0.5">Save Changes</strong> at the top to keep your edits.
+            </div>
+          )}
 
           {estimate.photo_observations && estimate.photo_observations.length > 0 && (
             <Section title="What the photos revealed" icon={ImageIcon}>
@@ -505,7 +664,16 @@ export default function PlanJobPage() {
             <Stat label="Job Cost" value={`$${estimate.estimated_total.toFixed(2)}`} icon={Hammer} />
             <Stat label="Design + PM Fee" value={`$${estimate.design_pm_fee.toFixed(2)}`} sublabel={`${estimate.design_pm_fee_percent}% of job`} accent="#b8895a" icon={ClipboardList} />
             <Stat label="Total to Client" value={`$${grandTotal.toFixed(2)}`} accent="#185FA5" icon={DollarSign} big />
-            <Stat label="Duration" value={`${estimate.duration_business_days} days`} icon={Clock} />
+            {editingEstimate ? (
+              <div className="rounded-2xl border border-gray-100 bg-white px-4 py-3">
+                <div className="flex items-center gap-1.5 text-[11px] uppercase font-semibold text-gray-400 tracking-wider mb-1"><Clock size={12} /> Duration (days)</div>
+                <input type="number" min={0} value={estimate.duration_business_days}
+                  onChange={e => updateField('duration_business_days', e.target.value)}
+                  className="w-full px-2 py-1 rounded-lg border border-gray-200 text-lg font-extrabold focus:outline-none focus:ring-2 focus:border-blue-400" />
+              </div>
+            ) : (
+              <Stat label="Duration" value={`${estimate.duration_business_days} days`} icon={Clock} />
+            )}
           </div>
 
           <Section title="Materials Breakdown" icon={ListChecks}>
@@ -515,24 +683,98 @@ export default function PlanJobPage() {
                   <th className="text-left px-4 py-2.5 text-[11px] font-semibold text-gray-600 uppercase tracking-wider">Category</th>
                   <th className="text-left px-4 py-2.5 text-[11px] font-semibold text-gray-600 uppercase tracking-wider">Notes</th>
                   <th className="text-right px-4 py-2.5 text-[11px] font-semibold text-gray-600 uppercase tracking-wider">Estimated</th>
+                  {editingEstimate && <th className="w-8"></th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
                 {estimate.materials_breakdown.map((m, i) => (
                   <tr key={i}>
-                    <td className="px-4 py-2.5 font-medium text-gray-800 text-sm">{m.category}</td>
-                    <td className="px-4 py-2.5 text-gray-600 text-xs">{m.notes}</td>
-                    <td className="px-4 py-2.5 text-right font-mono text-sm font-semibold">${m.estimated_cost.toFixed(2)}</td>
+                    {editingEstimate ? (
+                      <>
+                        <td className="px-4 py-1.5">
+                          <input value={m.category} onChange={e => updateMaterial(i, 'category', e.target.value)}
+                            className="w-full px-2 py-1 rounded-lg border border-gray-200 text-sm font-medium focus:outline-none focus:ring-2 focus:border-blue-400" />
+                        </td>
+                        <td className="px-4 py-1.5">
+                          <input value={m.notes} onChange={e => updateMaterial(i, 'notes', e.target.value)}
+                            className="w-full px-2 py-1 rounded-lg border border-gray-200 text-xs text-gray-600 focus:outline-none focus:ring-2 focus:border-blue-400" />
+                        </td>
+                        <td className="px-4 py-1.5">
+                          <div className="flex items-center justify-end gap-1">
+                            <span className="text-gray-400 text-xs">$</span>
+                            <input type="number" step="0.01" value={m.estimated_cost}
+                              onChange={e => updateMaterial(i, 'estimated_cost', e.target.value)}
+                              className="w-28 px-2 py-1 rounded-lg border border-gray-200 text-sm font-mono font-semibold text-right focus:outline-none focus:ring-2 focus:border-blue-400" />
+                          </div>
+                        </td>
+                        <td className="px-1 text-center">
+                          <button onClick={() => removeMaterial(i)} title="Remove line item" className="text-gray-300 hover:text-red-500 p-1"><Trash2 size={13} /></button>
+                        </td>
+                      </>
+                    ) : (
+                      <>
+                        <td className="px-4 py-2.5 font-medium text-gray-800 text-sm">{m.category}</td>
+                        <td className="px-4 py-2.5 text-gray-600 text-xs">{m.notes}</td>
+                        <td className="px-4 py-2.5 text-right font-mono text-sm font-semibold">${m.estimated_cost.toFixed(2)}</td>
+                      </>
+                    )}
                   </tr>
                 ))}
+                {editingEstimate && (
+                  <tr>
+                    <td colSpan={4} className="px-4 py-2">
+                      <button onClick={addMaterial} className="flex items-center gap-1.5 text-xs font-semibold text-blue-600 hover:text-blue-800">
+                        <Plus size={12} /> Add line item
+                      </button>
+                    </td>
+                  </tr>
+                )}
                 <tr className="bg-gray-50 font-bold">
-                  <td colSpan={2} className="px-4 py-2.5 text-sm">Labor — {estimate.labor_estimate.hours} hrs × ${estimate.labor_estimate.rate_per_hour}/hr</td>
-                  <td className="px-4 py-2.5 text-right font-mono">${estimate.labor_estimate.total.toFixed(2)}</td>
+                  {editingEstimate ? (
+                    <>
+                      <td colSpan={2} className="px-4 py-2">
+                        <div className="flex items-center gap-2 text-sm font-bold text-gray-700">
+                          Labor —
+                          <input type="number" step="0.5" min={0} value={estimate.labor_estimate.hours}
+                            onChange={e => updateLabor('hours', e.target.value)}
+                            className="w-20 px-2 py-1 rounded-lg border border-gray-200 text-sm font-mono text-right focus:outline-none focus:ring-2 focus:border-blue-400" /> hrs ×
+                          <span className="text-gray-400">$</span>
+                          <input type="number" step="0.01" min={0} value={estimate.labor_estimate.rate_per_hour}
+                            onChange={e => updateLabor('rate_per_hour', e.target.value)}
+                            className="w-20 px-2 py-1 rounded-lg border border-gray-200 text-sm font-mono text-right focus:outline-none focus:ring-2 focus:border-blue-400" /> /hr
+                        </div>
+                      </td>
+                      <td className="px-4 py-2.5 text-right font-mono">${estimate.labor_estimate.total.toFixed(2)}</td>
+                      <td></td>
+                    </>
+                  ) : (
+                    <>
+                      <td colSpan={2} className="px-4 py-2.5 text-sm">Labor — {estimate.labor_estimate.hours} hrs × ${estimate.labor_estimate.rate_per_hour}/hr</td>
+                      <td className="px-4 py-2.5 text-right font-mono">${estimate.labor_estimate.total.toFixed(2)}</td>
+                    </>
+                  )}
                 </tr>
-                {estimate.subcontractor_estimate > 0 && (
+                {(editingEstimate || estimate.subcontractor_estimate > 0) && (
                   <tr className="bg-gray-50 font-bold">
-                    <td colSpan={2} className="px-4 py-2.5 text-sm">Subcontractors</td>
-                    <td className="px-4 py-2.5 text-right font-mono">${estimate.subcontractor_estimate.toFixed(2)}</td>
+                    {editingEstimate ? (
+                      <>
+                        <td colSpan={2} className="px-4 py-2 text-sm">Subcontractors</td>
+                        <td className="px-4 py-2">
+                          <div className="flex items-center justify-end gap-1">
+                            <span className="text-gray-400 text-xs">$</span>
+                            <input type="number" step="0.01" min={0} value={estimate.subcontractor_estimate}
+                              onChange={e => updateField('subcontractor_estimate', e.target.value)}
+                              className="w-28 px-2 py-1 rounded-lg border border-gray-200 text-sm font-mono font-semibold text-right focus:outline-none focus:ring-2 focus:border-blue-400" />
+                          </div>
+                        </td>
+                        <td></td>
+                      </>
+                    ) : (
+                      <>
+                        <td colSpan={2} className="px-4 py-2.5 text-sm">Subcontractors</td>
+                        <td className="px-4 py-2.5 text-right font-mono">${estimate.subcontractor_estimate.toFixed(2)}</td>
+                      </>
+                    )}
                   </tr>
                 )}
               </tbody>
@@ -541,26 +783,50 @@ export default function PlanJobPage() {
 
           <Section title={`Process — ${estimate.process_steps.length} steps`} icon={ClipboardList}>
             <div className="divide-y divide-gray-100">
-              {estimate.process_steps.map(s => (
+              {estimate.process_steps.map((s, i) => (
                 <div key={s.step} className="px-5 py-3 flex items-start gap-3">
                   <div className="flex-shrink-0 w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-bold" style={{ background: '#b8895a' }}>{s.step}</div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-baseline justify-between gap-3">
                       <h3 className="font-semibold text-gray-900 text-sm">{s.title}</h3>
-                      <span className="text-[11px] text-gray-500 whitespace-nowrap">{s.estimated_days} day{s.estimated_days !== 1 ? 's' : ''}</span>
+                      {editingEstimate ? (
+                        <div className="flex items-center gap-1 whitespace-nowrap">
+                          <input type="number" min={0} step="0.5" value={s.estimated_days}
+                            onChange={e => updateStepDays(i, e.target.value)}
+                            className="w-14 px-1.5 py-0.5 rounded-lg border border-gray-200 text-xs font-mono text-right focus:outline-none focus:ring-2 focus:border-blue-400" />
+                          <span className="text-[11px] text-gray-500">day{s.estimated_days !== 1 ? 's' : ''}</span>
+                        </div>
+                      ) : (
+                        <span className="text-[11px] text-gray-500 whitespace-nowrap">{s.estimated_days} day{s.estimated_days !== 1 ? 's' : ''}</span>
+                      )}
                     </div>
                     <p className="text-xs text-gray-600 mt-0.5">{s.description}</p>
                   </div>
                 </div>
               ))}
             </div>
+            {editingEstimate && (
+              <div className="px-5 py-2.5 text-[11px] text-gray-400 border-t border-gray-100">
+                Sum of step days: {estimate.process_steps.reduce((s, st) => s + (Number(st.estimated_days) || 0), 0)} — adjust "Duration" above if it should match.
+              </div>
+            )}
           </Section>
 
           <Section title="Design + PM Fee Rationale" icon={DollarSign}>
             <div className="px-5 py-4">
               <div className="flex items-baseline gap-3 mb-2">
                 <span className="text-2xl font-extrabold" style={{ color: '#b8895a' }}>${estimate.design_pm_fee.toFixed(2)}</span>
-                <span className="text-sm text-gray-500">({estimate.design_pm_fee_percent}% of job cost)</span>
+                {editingEstimate ? (
+                  <span className="text-sm text-gray-500 flex items-center gap-1.5">
+                    (
+                    <input type="number" min={0} step="0.1" value={estimate.design_pm_fee_percent}
+                      onChange={e => updateField('design_pm_fee_percent', e.target.value)}
+                      className="w-16 px-2 py-1 rounded-lg border border-gray-200 text-sm font-mono text-right focus:outline-none focus:ring-2 focus:border-blue-400" />
+                    % of job cost)
+                  </span>
+                ) : (
+                  <span className="text-sm text-gray-500">({estimate.design_pm_fee_percent}% of job cost)</span>
+                )}
               </div>
               <p className="text-sm text-gray-700">{estimate.design_pm_fee_rationale}</p>
             </div>

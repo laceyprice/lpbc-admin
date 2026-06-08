@@ -4,7 +4,7 @@ import { useRouter, usePathname } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { Loader2 } from 'lucide-react'
 
-type UserRole = 'admin' | 'bookkeeper' | 'invoicing' | null
+type UserRole = 'admin' | 'bookkeeper' | 'invoicing' | 'customer' | null
 
 interface AuthCtx {
   role: UserRole
@@ -24,6 +24,7 @@ const FULL_PAGES = [
 
 function canAccess(role: UserRole, path: string): boolean {
   if (!role) return false
+  if (role === 'customer') return false   // customers live in /portal, not /admin
   if (role === 'admin' || role === 'bookkeeper') return true
   // Invoicing users can only see dashboard, invoices, and CRM
   return INVOICING_PAGES.some(p => path === p || (p !== '/admin' && path.startsWith(p + '/')))
@@ -76,7 +77,7 @@ export default function AdminAuthGuard({ children }: { children: React.ReactNode
   // Check page access when role or path changes
   useEffect(() => {
     if (!checking && authed && role && !isLoginPage && !canAccess(role, pathname)) {
-      router.replace('/admin')
+      router.replace(role === 'customer' ? '/portal' : '/admin')
     }
   }, [role, pathname, checking, authed, isLoginPage, router])
 
