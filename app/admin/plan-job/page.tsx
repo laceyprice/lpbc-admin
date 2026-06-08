@@ -1,7 +1,8 @@
 'use client'
 import { useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { Sparkles, Loader2, ClipboardList, DollarSign, Clock, AlertTriangle, ListChecks, TrendingUp, History, Hammer, Upload, X, Image as ImageIcon, Film, FileText, Ruler, Save, FolderOpen, Plus, Trash2, Archive, Cloud, Folder, ChevronLeft, Search, Download, MapPin, Users2, Pencil, Check, RotateCcw } from 'lucide-react'
+import { Sparkles, Loader2, ClipboardList, DollarSign, Clock, AlertTriangle, ListChecks, TrendingUp, History, Hammer, Upload, X, Image as ImageIcon, Film, FileText, Ruler, Save, FolderOpen, Plus, Trash2, Archive, Cloud, Folder, ChevronLeft, Search, Download, MapPin, Users2, Pencil, Check, RotateCcw, Wand2 } from 'lucide-react'
+import DesignStudio, { DesignData } from '@/components/admin/DesignStudio'
 
 interface MaterialLine { category: string; estimated_cost: number; notes: string }
 interface ProcessStep { step: number; title: string; description: string; estimated_days: number }
@@ -92,6 +93,10 @@ export default function PlanJobPage() {
   const [customerOptions, setCustomerOptions] = useState<Array<{ account_id: string; account_name: string; customer_label: string }>>([])
   const [editingEstimate, setEditingEstimate] = useState(false)
 
+  // Design Studio — mood boards, sketches, before/after, AI design directions
+  const [design, setDesign] = useState<DesignData>({})
+  const [designStudioOpen, setDesignStudioOpen] = useState(false)
+
   useEffect(() => {
     (async () => {
       try {
@@ -176,6 +181,8 @@ export default function PlanJobPage() {
     setStatus('draft')
     setSharedWithAccountId(null)
     setEditingEstimate(false)
+    setDesign({})
+    setDesignStudioOpen(false)
   }
 
   async function loadPlan(id: string) {
@@ -198,6 +205,8 @@ export default function PlanJobPage() {
       setStatus(d.status || 'draft')
       setSharedWithAccountId(d.shared_with_account_id || null)
       setEditingEstimate(false)
+      setDesign(d.design && typeof d.design === 'object' ? d.design : {})
+      setDesignStudioOpen(false)
     } catch (e: any) {
       setError(e?.message || 'Failed to load plan')
     }
@@ -210,7 +219,7 @@ export default function PlanJobPage() {
       const body: any = {
         title: title || deriveTitle(description) || 'Untitled Plan',
         description, measurements, session_id: sessionId,
-        attachments, estimate,
+        attachments, estimate, design,
         worksite_id: worksiteId, status, shared_with_account_id: sharedWithAccountId,
       }
       const url = '/api/job-plans'
@@ -338,7 +347,7 @@ export default function PlanJobPage() {
     try {
       const body: any = {
         title: title || deriveTitle(description) || 'Untitled Plan',
-        description, measurements, session_id: sessionId, attachments, estimate: est,
+        description, measurements, session_id: sessionId, attachments, estimate: est, design,
         worksite_id: worksiteId,
         status: status === 'draft' ? 'estimated' : status,
         shared_with_account_id: sharedWithAccountId,
@@ -418,6 +427,15 @@ export default function PlanJobPage() {
           <p className="text-gray-500 text-sm mt-0.5">Save drafts, come back later, generate estimates with AI vision + your bookkeeping history</p>
         </div>
         <div className="flex items-center gap-2">
+          <button onClick={() => setDesignStudioOpen(true)}
+            className="flex items-center gap-1.5 text-xs font-bold px-3 py-2 rounded-xl border transition-colors"
+            style={{ borderColor: '#e8d9c8', background: '#fbf3ec', color: '#9a6a3c' }}>
+            <Wand2 size={13} /> Design Studio
+            {(() => {
+              const c = (design.board?.length || 0) + (design.sketches?.length || 0) + (design.comparisons?.length || 0) + (design.ai_suggestions?.length || 0)
+              return c > 0 ? <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-200 text-amber-800">{c}</span> : null
+            })()}
+          </button>
           <button onClick={() => setShowLoadPanel(!showLoadPanel)}
             className="flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-xl border border-gray-200 hover:bg-gray-50">
             <FolderOpen size={13} /> My Plans ({savedPlans.length})
@@ -875,6 +893,17 @@ export default function PlanJobPage() {
           <img src={previewing.signed_url || ''} alt={previewing.name} className="max-w-full max-h-full rounded-2xl shadow-2xl" />
         </div>
       )}
+
+      <DesignStudio
+        open={designStudioOpen}
+        onClose={() => setDesignStudioOpen(false)}
+        design={design}
+        onChange={setDesign}
+        attachments={attachments}
+        sessionId={sessionId}
+        description={description}
+        measurements={measurements}
+      />
 
       {drivePickerOpen && (
         <DrivePickerLite

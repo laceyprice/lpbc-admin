@@ -28,6 +28,26 @@ export async function GET(req: NextRequest) {
         }))
       )
     }
+    // Refresh signed URLs inside the Design Studio blob too (board items,
+    // sketches, before/after comparison pairs all reference storage paths).
+    if (data.design && typeof data.design === 'object') {
+      const sign = async (path: string | null | undefined) => path ? await signedUrlFor(supabase, BUCKET, path, 60 * 60 * 24) : null
+      const d = data.design as any
+      if (Array.isArray(d.board)) {
+        d.board = await Promise.all(d.board.map(async (b: any) => ({ ...b, signed_url: await sign(b?.path) })))
+      }
+      if (Array.isArray(d.sketches)) {
+        d.sketches = await Promise.all(d.sketches.map(async (s: any) => ({ ...s, signed_url: await sign(s?.path) })))
+      }
+      if (Array.isArray(d.comparisons)) {
+        d.comparisons = await Promise.all(d.comparisons.map(async (c: any) => ({
+          ...c,
+          before_signed_url: await sign(c?.before_path),
+          after_signed_url: await sign(c?.after_path),
+        })))
+      }
+      data.design = d
+    }
     return NextResponse.json(data)
   }
 
@@ -57,6 +77,7 @@ export async function POST(req: NextRequest) {
     attachments: body.attachments || [],
     estimate: body.estimate || null,
     estimate_generated_at: body.estimate ? new Date().toISOString() : null,
+    design: body.design || {},
     worksite_id: body.worksite_id || null,
     status: body.status || 'draft',
     shared_with_account_id: body.shared_with_account_id || null,
