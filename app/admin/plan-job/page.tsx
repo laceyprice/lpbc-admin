@@ -440,7 +440,14 @@ export default function PlanJobPage() {
   function recalc(est: Estimate): Estimate {
     const estimated_total = Number(est.materials_breakdown.reduce((s, m) => s + (Number(m.estimated_cost) || 0), 0).toFixed(2))
     const design_pm_fee = Number((estimated_total * ((Number(est.design_pm_fee_percent) || 0) / 100)).toFixed(2))
-    return { ...est, estimated_total, design_pm_fee }
+    // Duration is derived from the process steps — the steps are the source of
+    // truth for "how long will this take," so editing a step's days (or
+    // adding/removing steps) ripples straight up into the headline Duration
+    // stat instead of needing to be kept in sync by hand.
+    const duration_business_days = est.process_steps.length
+      ? Number(est.process_steps.reduce((s, st) => s + (Number(st.estimated_days) || 0), 0).toFixed(1))
+      : est.duration_business_days
+    return { ...est, estimated_total, design_pm_fee, duration_business_days }
   }
   function patchEstimate(patch: (e: Estimate) => Estimate) {
     setEstimate(prev => prev ? recalc(patch(prev)) : prev)
@@ -462,8 +469,11 @@ export default function PlanJobPage() {
   function addMaterial() {
     patchEstimate(e => ({ ...e, materials_breakdown: [...e.materials_breakdown, { category: 'New line item', estimated_cost: 0, notes: '', quoted_cost: null, actual_cost: null }] }))
   }
-  function updateField(field: 'design_pm_fee_percent' | 'duration_business_days', value: string) {
+  function updateField(field: 'design_pm_fee_percent', value: string) {
     patchEstimate(e => ({ ...e, [field]: Number(value) || 0 }))
+  }
+  function updateRationale(value: string) {
+    patchEstimate(e => ({ ...e, design_pm_fee_rationale: value }))
   }
   function updateStepDays(i: number, value: string) {
     patchEstimate(e => ({ ...e, process_steps: e.process_steps.map((s, idx) => idx !== i ? s : { ...s, estimated_days: Number(value) || 0 }) }))
@@ -780,16 +790,8 @@ export default function PlanJobPage() {
             <Stat label="Job Cost" value={`$${estimate.estimated_total.toFixed(2)}`} icon={Hammer} />
             <Stat label="Design + PM Fee" value={`$${estimate.design_pm_fee.toFixed(2)}`} sublabel={`${estimate.design_pm_fee_percent}% of job`} accent="#b8895a" icon={ClipboardList} />
             <Stat label="Total to Client" value={`$${grandTotal.toFixed(2)}`} accent="#185FA5" icon={DollarSign} big />
-            {editingEstimate ? (
-              <div className="rounded-2xl border border-gray-100 bg-white px-4 py-3">
-                <div className="flex items-center gap-1.5 text-[11px] uppercase font-semibold text-gray-400 tracking-wider mb-1"><Clock size={12} /> Duration (days)</div>
-                <input type="number" min={0} value={estimate.duration_business_days}
-                  onChange={e => updateField('duration_business_days', e.target.value)}
-                  className="w-full px-2 py-1 rounded-lg border border-gray-200 text-lg font-extrabold focus:outline-none focus:ring-2 focus:border-blue-400" />
-              </div>
-            ) : (
-              <Stat label="Duration" value={`${estimate.duration_business_days} days`} icon={Clock} />
-            )}
+            <Stat label="Duration" value={`${estimate.duration_business_days} days`}
+              sublabel={editingEstimate ? '= sum of process step days below' : undefined} icon={Clock} />
           </div>
 
           <Section title="Budget Breakdown" icon={ListChecks}>
@@ -945,7 +947,7 @@ export default function PlanJobPage() {
             </div>
             {editingEstimate && (
               <div className="px-5 py-2.5 text-[11px] text-gray-400 border-t border-gray-100">
-                Sum of step days: {estimate.process_steps.reduce((s, st) => s + (Number(st.estimated_days) || 0), 0)} — adjust "Duration" above if it should match.
+                Total: {estimate.duration_business_days} day{estimate.duration_business_days !== 1 ? 's' : ''} — the "Duration" stat above updates automatically as you adjust step days.
               </div>
             )}
           </Section>
@@ -966,7 +968,13 @@ export default function PlanJobPage() {
                   <span className="text-sm text-gray-500">({estimate.design_pm_fee_percent}% of job cost)</span>
                 )}
               </div>
-              <p className="text-sm text-gray-700">{estimate.design_pm_fee_rationale}</p>
+              {editingEstimate ? (
+                <textarea value={estimate.design_pm_fee_rationale} onChange={e => updateRationale(e.target.value)} rows={4}
+                  placeholder="Why this percentage fits this job…"
+                  className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm text-gray-700 leading-relaxed focus:outline-none focus:ring-2 focus:border-blue-400" />
+              ) : (
+                <p className="text-sm text-gray-700">{estimate.design_pm_fee_rationale}</p>
+              )}
             </div>
           </Section>
 
