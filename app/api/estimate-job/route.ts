@@ -164,23 +164,23 @@ Produce the JSON estimate now.`
         send('start', { images: imageAttachments.length, expenses: pastExpenses?.length || 0, invoices: pastInvoices?.length || 0 })
 
         const client = getAnthropicClient()
-        let fullText = ''
-        let tokensSoFar = 0
-        const claudeStream = await client.messages.stream({
+        // Use messages.create() (not .stream()) — the streaming SDK method uses a
+        // different internal fetch transport that fails in this container environment,
+        // while .create() works fine (same transport as parse-receipt).
+        // The SSE wrapper + heartbeat is still here to keep the nginx proxy alive
+        // during the wait (can be 30-90s), so we don't get a 504.
+        send('progress', { tokens_so_far: 0, status: 'calling_claude' })
+        const resp = await client.messages.create({
           model: 'claude-3-5-haiku-20241022',
           max_tokens: 4000,
           system: systemPrompt,
           messages: [{ role: 'user', content: userContent }],
         })
-
-        for await (const event of claudeStream) {
-          if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
-            const chunk = event.delta.text
-            fullText += chunk
-            tokensSoFar += Math.ceil(chunk.length / 4)
-            send('progress', { tokens_so_far: tokensSoFar })
-          }
-        }
+        const fullText = resp.content
+          .filter((b: any) => b.type === 'text')
+          .map((b: any) => b.text)
+          .join('')
+        send('progress', { tokens_so_far: fullText.length, status: 'parsing' })
 
         // Extract JSON from the accumulated text — try several strategies
         let jsonStr = fullText.trim()
