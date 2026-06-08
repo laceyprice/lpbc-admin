@@ -5,6 +5,18 @@ import { signedUrlFor } from '@/lib/signed-url'
 
 const BUCKET = 'job-planning'
 
+// The `design` jsonb column (added by migration 20260608_job_plans_design_studio.sql)
+// may not exist yet on some environments if that migration hasn't been run —
+// PostgREST then rejects the WHOLE write with "Could not find the 'design'
+// column of 'job_plans' in the schema cache", silently losing every other
+// field in the same save (title, description, estimate, attachments, etc).
+// To stop that from costing the owner real work, detect that specific error
+// and transparently retry the write without `design` so everything else still
+// lands — the design data just won't persist until the migration is applied.
+function isMissingDesignColumnError(message: string | undefined | null) {
+  return !!message && /could not find the 'design' column/i.test(message)
+}
+
 // GET    /api/job-plans                  → list (?archived=true to include archived)
 // GET    /api/job-plans?id=uuid          → fetch one (refreshes signed URLs on attachments)
 // POST   /api/job-plans                  → create
@@ -69,7 +81,7 @@ export async function POST(req: NextRequest) {
   // Derive title from first non-empty line of description if not provided
   const title = (body.title?.trim()) || deriveTitle(body.description) || 'Untitled Plan'
 
-  const { data, error } = await supabase.from('job_plans').insert({
+  const insertPayload: Record<string, any> = {
     title,
     description: body.description || '',
     measurements: body.measurements || '',
@@ -81,7 +93,13 @@ export async function POST(req: NextRequest) {
     worksite_id: body.worksite_id || null,
     status: body.status || 'draft',
     shared_with_account_id: body.shared_with_account_id || null,
-  }).select().single()
+  }
+  let { data, error } = await supabase.from('job_plans').insert(insertPayload).select().single()
+  if (error && isMissingDesignColumnError(error.message)) {
+    console.warn('job_plans.design column missing — retrying insert without it (run the 20260608_job_plans_design_studio.sql migration)')
+    const { design, ...withoutDesign } = insertPayload
+    ;({ data, error } = await supabase.from('job_plans').insert(withoutDesign).select().single())
+  }
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json(data, { status: 201 })
 }
@@ -96,7 +114,12 @@ export async function PATCH(req: NextRequest) {
   if (updates.estimate && !updates.estimate_generated_at) {
     updates.estimate_generated_at = new Date().toISOString()
   }
-  const { data, error } = await supabase.from('job_plans').update(updates).eq('id', id).select().single()
+  let { data, error } = await supabase.from('job_plans').update(updates).eq('id', id).select().single()
+  if (error && isMissingDesignColumnError(error.message)) {
+    console.warn('job_plans.design column missing — retrying update without it (run the 20260608_job_plans_design_studio.sql migration)')
+    const { design, ...withoutDesign } = updates
+    ;({ data, error } = await supabase.from('job_plans').update(withoutDesign).eq('id', id).select().single())
+  }
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json(data)
 }

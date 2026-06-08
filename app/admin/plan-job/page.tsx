@@ -8,10 +8,54 @@ interface BudgetLine {
   category: string
   estimated_cost: number
   notes: string
+  // Groups the line into a typical contracting trade/phase so the breakdown
+  // reads like a real budget (Demo, Electrical, Plumbing, etc) instead of a
+  // flat list. Optional + defaulted/inferred for legacy & AI-returned data
+  // that doesn't set it.
+  section?: string
   // Filled in later as the project moves from estimate → quote → completed job,
   // so the owner can see the spread between what was estimated, quoted, and billed.
   quoted_cost?: number | null
   actual_cost?: number | null
+}
+
+// Standard trade/phase sections the Budget Breakdown groups line items into —
+// mirrors how a real contractor budget reads (Demo → Rough-in trades → Finishes).
+const BUDGET_SECTIONS = [
+  'Design & Sourcing',
+  'Demo',
+  'Framing & Structural',
+  'Plumbing',
+  'Electrical',
+  'HVAC',
+  'Drywall & Paint',
+  'Flooring & Tile',
+  'Cabinetry & Countertops',
+  'Trim & Finish Carpentry',
+  'Fixtures & Hardware',
+  'Other',
+]
+
+// Best-effort mapping for legacy/AI line items that don't carry a `section` —
+// keyword-matches the category + notes text against the trade vocabulary so
+// existing estimates land in sensible groups instead of all piling into "Other".
+function inferSection(category: string | undefined, notes: string | undefined): string {
+  const text = `${category || ''} ${notes || ''}`.toLowerCase()
+  const rules: Array<[string, RegExp]> = [
+    ['Demo', /\bdemo(lition)?\b|\btear[\s-]?out\b|\bdemolish/],
+    ['Plumbing', /\bplumb|\bpipe|\bvanity|\btoilet|\bfaucet|\bshower valve|\bwater heater|\bdrain|\bsewer|\bsupply line/],
+    ['Electrical', /\belectric|\bwiring|\bwire\b|\boutlet|\bcircuit|\bbreaker|\bwafer light|\bceiling fan|\bswitch(es)?\b|\bcable box|\block ?box/],
+    ['HVAC', /\bhvac|\bduct|\bair handler|\bcondenser|\bfurnace|\bmini[\s-]?split|\bvent(ilation)?\b/],
+    ['Drywall & Paint', /\bdrywall|\bdry[\s-]?wall|\btexture|\bmud(ding)?\b|\btape\b|\bpaint(ing)?\b|\bprimer/],
+    ['Flooring & Tile', /\btile|\bflooring|\bfloor(s)?\b|\bgrout|\bbacksplash|\bunderlayment/],
+    ['Cabinetry & Countertops', /\bcabinet|\bcountertop|\bquartz|\bgranite|\bvanity cabinet/],
+    ['Trim & Finish Carpentry', /\btrim\b|\bbaseboard|\bmolding|\bmoulding|\bcasing\b|\bfinish carpentry|\bdoor(s)? install/],
+    ['Framing & Structural', /\bfram(e|ing)|\bstructural|\bjoist|\bheader\b|\bbulkhead|\bceiling (raise|structure)/],
+    ['Fixtures & Hardware', /\bfixture|\bhardware|\blighting\b|\bpendant|\bsconce|\bmirror|\btowel bar/],
+    ['Design & Sourcing', /\bdesign\b|\bsourcing\b|\bpm fee|\bproject management|\bselections?\b/],
+  ]
+  for (const [section, re] of rules) if (re.test(text)) return section
+  return 'Other'
 }
 interface ProcessStep { step: number; title: string; description: string; estimated_days: number }
 interface SimilarJob { service_date: string; amount: number; description: string }
@@ -77,13 +121,18 @@ function newSessionId() { return `plan_${Date.now()}_${Math.random().toString(36
 // totals into line items (once) so nothing gets double-counted or hidden.
 function normalizeEstimate(raw: any): Estimate {
   const breakdown: BudgetLine[] = Array.isArray(raw?.materials_breakdown)
-    ? raw.materials_breakdown.map((m: any) => ({
-        category: m?.category || '',
-        estimated_cost: Number(m?.estimated_cost) || 0,
-        notes: m?.notes || '',
-        quoted_cost: m?.quoted_cost ?? null,
-        actual_cost: m?.actual_cost ?? null,
-      }))
+    ? raw.materials_breakdown.map((m: any) => {
+        const category = m?.category || ''
+        const notes = m?.notes || ''
+        return {
+          category,
+          estimated_cost: Number(m?.estimated_cost) || 0,
+          notes,
+          section: (typeof m?.section === 'string' && BUDGET_SECTIONS.includes(m.section)) ? m.section : inferSection(category, notes),
+          quoted_cost: m?.quoted_cost ?? null,
+          actual_cost: m?.actual_cost ?? null,
+        }
+      })
     : []
   const labor = raw?.labor_estimate
   if (labor && (Number(labor.total) > 0 || Number(labor.hours) > 0)) {
@@ -452,12 +501,12 @@ export default function PlanJobPage() {
   function patchEstimate(patch: (e: Estimate) => Estimate) {
     setEstimate(prev => prev ? recalc(patch(prev)) : prev)
   }
-  function updateMaterial(i: number, field: 'category' | 'notes' | 'estimated_cost' | 'quoted_cost' | 'actual_cost', value: string) {
+  function updateMaterial(i: number, field: 'category' | 'notes' | 'section' | 'estimated_cost' | 'quoted_cost' | 'actual_cost', value: string) {
     patchEstimate(e => ({
       ...e,
       materials_breakdown: e.materials_breakdown.map((m, idx) => idx !== i ? m : {
         ...m,
-        [field]: (field === 'category' || field === 'notes')
+        [field]: (field === 'category' || field === 'notes' || field === 'section')
           ? value
           : (value.trim() === '' ? null : (Number(value) || 0)),
       }),
@@ -466,8 +515,8 @@ export default function PlanJobPage() {
   function removeMaterial(i: number) {
     patchEstimate(e => ({ ...e, materials_breakdown: e.materials_breakdown.filter((_, idx) => idx !== i) }))
   }
-  function addMaterial() {
-    patchEstimate(e => ({ ...e, materials_breakdown: [...e.materials_breakdown, { category: 'New line item', estimated_cost: 0, notes: '', quoted_cost: null, actual_cost: null }] }))
+  function addMaterial(section?: string) {
+    patchEstimate(e => ({ ...e, materials_breakdown: [...e.materials_breakdown, { category: 'New line item', estimated_cost: 0, notes: '', section: section || 'Other', quoted_cost: null, actual_cost: null }] }))
   }
   function updateField(field: 'design_pm_fee_percent', value: string) {
     patchEstimate(e => ({ ...e, [field]: Number(value) || 0 }))
@@ -810,68 +859,114 @@ export default function PlanJobPage() {
                   {editingEstimate && <th className="w-8"></th>}
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-50">
-                {estimate.materials_breakdown.map((m, i) => (
-                  <tr key={i}>
-                    {editingEstimate ? (
-                      <>
-                        <td className="px-4 py-1.5">
-                          <input value={m.category} onChange={e => updateMaterial(i, 'category', e.target.value)}
-                            className="w-full px-2 py-1 rounded-lg border border-gray-200 text-sm font-medium focus:outline-none focus:ring-2 focus:border-blue-400" />
-                        </td>
-                        <td className="px-4 py-1.5">
-                          <input value={m.notes} onChange={e => updateMaterial(i, 'notes', e.target.value)}
-                            className="w-full px-2 py-1 rounded-lg border border-gray-200 text-xs text-gray-600 focus:outline-none focus:ring-2 focus:border-blue-400" />
-                        </td>
-                        <td className="px-4 py-1.5">
-                          <div className="flex items-center justify-end gap-1">
-                            <span className="text-gray-400 text-xs">$</span>
-                            <input type="number" step="0.01" value={m.estimated_cost}
-                              onChange={e => updateMaterial(i, 'estimated_cost', e.target.value)}
-                              className="w-24 px-2 py-1 rounded-lg border border-gray-200 text-sm font-mono font-semibold text-right focus:outline-none focus:ring-2 focus:border-blue-400" />
+              {(() => {
+                const bySection = new Map<string, number[]>()
+                estimate.materials_breakdown.forEach((m, i) => {
+                  const sec = (m.section && BUDGET_SECTIONS.includes(m.section)) ? m.section : 'Other'
+                  if (!bySection.has(sec)) bySection.set(sec, [])
+                  bySection.get(sec)!.push(i)
+                })
+                const orderedSections = [
+                  ...BUDGET_SECTIONS.filter(s => bySection.has(s)),
+                  ...Array.from(bySection.keys()).filter(s => !BUDGET_SECTIONS.includes(s)),
+                ]
+                const colSpan = editingEstimate ? 6 : 5
+                return orderedSections.map(section => {
+                  const indices = bySection.get(section)!
+                  const subtotal = indices.reduce((s, i) => s + (Number(estimate.materials_breakdown[i].estimated_cost) || 0), 0)
+                  return (
+                    <tbody key={section} className="divide-y divide-gray-50">
+                      <tr className="bg-gray-50/70">
+                        <td colSpan={colSpan} className="px-4 py-1.5 text-[11px] font-bold text-gray-500 uppercase tracking-wider">
+                          <div className="flex items-center justify-between">
+                            <span>{section} <span className="font-normal normal-case text-gray-400">· {indices.length} item{indices.length === 1 ? '' : 's'}</span></span>
+                            <span className="font-mono text-gray-600">${subtotal.toFixed(2)}</span>
                           </div>
                         </td>
-                      </>
-                    ) : (
-                      <>
-                        <td className="px-4 py-2.5 font-medium text-gray-800 text-sm">{m.category}</td>
-                        <td className="px-4 py-2.5 text-gray-600 text-xs">{m.notes}</td>
-                        <td className="px-4 py-2.5 text-right font-mono text-sm font-semibold">${m.estimated_cost.toFixed(2)}</td>
-                      </>
-                    )}
-                    <td className="px-4 py-1.5">
-                      <div className="flex items-center justify-end gap-1">
-                        <span className="text-gray-300 text-xs">$</span>
-                        <input type="number" step="0.01" placeholder="—" value={m.quoted_cost ?? ''}
-                          onChange={e => updateMaterial(i, 'quoted_cost', e.target.value)}
-                          className="w-24 px-2 py-1 rounded-lg border border-gray-200 text-sm font-mono text-right text-blue-700 placeholder:text-gray-300 focus:outline-none focus:ring-2 focus:border-blue-400" />
-                      </div>
-                    </td>
-                    <td className="px-4 py-1.5">
-                      <div className="flex items-center justify-end gap-1">
-                        <span className="text-gray-300 text-xs">$</span>
-                        <input type="number" step="0.01" placeholder="—" value={m.actual_cost ?? ''}
-                          onChange={e => updateMaterial(i, 'actual_cost', e.target.value)}
-                          className="w-24 px-2 py-1 rounded-lg border border-gray-200 text-sm font-mono text-right text-emerald-700 placeholder:text-gray-300 focus:outline-none focus:ring-2 focus:border-emerald-400" />
-                      </div>
-                    </td>
-                    {editingEstimate && (
-                      <td className="px-1 text-center">
-                        <button onClick={() => removeMaterial(i)} title="Remove line item" className="text-gray-300 hover:text-red-500 p-1"><Trash2 size={13} /></button>
-                      </td>
-                    )}
-                  </tr>
-                ))}
-                {editingEstimate && (
+                      </tr>
+                      {indices.map(i => {
+                        const m = estimate.materials_breakdown[i]
+                        return (
+                          <tr key={i}>
+                            {editingEstimate ? (
+                              <>
+                                <td className="px-4 py-1.5">
+                                  <select value={(m.section && BUDGET_SECTIONS.includes(m.section)) ? m.section : 'Other'}
+                                    onChange={e => updateMaterial(i, 'section', e.target.value)}
+                                    className="w-full mb-1 px-2 py-0.5 rounded border border-gray-200 text-[10px] text-gray-500 uppercase tracking-wide focus:outline-none focus:ring-2 focus:border-blue-400">
+                                    {BUDGET_SECTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+                                  </select>
+                                  <input value={m.category} onChange={e => updateMaterial(i, 'category', e.target.value)}
+                                    className="w-full px-2 py-1 rounded-lg border border-gray-200 text-sm font-medium focus:outline-none focus:ring-2 focus:border-blue-400" />
+                                </td>
+                                <td className="px-4 py-1.5">
+                                  <input value={m.notes} onChange={e => updateMaterial(i, 'notes', e.target.value)}
+                                    className="w-full px-2 py-1 rounded-lg border border-gray-200 text-xs text-gray-600 focus:outline-none focus:ring-2 focus:border-blue-400" />
+                                </td>
+                                <td className="px-4 py-1.5">
+                                  <div className="flex items-center justify-end gap-1">
+                                    <span className="text-gray-400 text-xs">$</span>
+                                    <input type="number" step="0.01" value={m.estimated_cost}
+                                      onChange={e => updateMaterial(i, 'estimated_cost', e.target.value)}
+                                      className="w-24 px-2 py-1 rounded-lg border border-gray-200 text-sm font-mono font-semibold text-right focus:outline-none focus:ring-2 focus:border-blue-400" />
+                                  </div>
+                                </td>
+                              </>
+                            ) : (
+                              <>
+                                <td className="px-4 py-2.5 font-medium text-gray-800 text-sm">{m.category}</td>
+                                <td className="px-4 py-2.5 text-gray-600 text-xs">{m.notes}</td>
+                                <td className="px-4 py-2.5 text-right font-mono text-sm font-semibold">${m.estimated_cost.toFixed(2)}</td>
+                              </>
+                            )}
+                            <td className="px-4 py-1.5">
+                              <div className="flex items-center justify-end gap-1">
+                                <span className="text-gray-300 text-xs">$</span>
+                                <input type="number" step="0.01" placeholder="—" value={m.quoted_cost ?? ''}
+                                  onChange={e => updateMaterial(i, 'quoted_cost', e.target.value)}
+                                  className="w-24 px-2 py-1 rounded-lg border border-gray-200 text-sm font-mono text-right text-blue-700 placeholder:text-gray-300 focus:outline-none focus:ring-2 focus:border-blue-400" />
+                              </div>
+                            </td>
+                            <td className="px-4 py-1.5">
+                              <div className="flex items-center justify-end gap-1">
+                                <span className="text-gray-300 text-xs">$</span>
+                                <input type="number" step="0.01" placeholder="—" value={m.actual_cost ?? ''}
+                                  onChange={e => updateMaterial(i, 'actual_cost', e.target.value)}
+                                  className="w-24 px-2 py-1 rounded-lg border border-gray-200 text-sm font-mono text-right text-emerald-700 placeholder:text-gray-300 focus:outline-none focus:ring-2 focus:border-emerald-400" />
+                              </div>
+                            </td>
+                            {editingEstimate && (
+                              <td className="px-1 text-center">
+                                <button onClick={() => removeMaterial(i)} title="Remove line item" className="text-gray-300 hover:text-red-500 p-1"><Trash2 size={13} /></button>
+                              </td>
+                            )}
+                          </tr>
+                        )
+                      })}
+                      {editingEstimate && (
+                        <tr>
+                          <td colSpan={colSpan} className="px-4 py-1.5">
+                            <button onClick={() => addMaterial(section)} className="flex items-center gap-1.5 text-[11px] font-semibold text-blue-600 hover:text-blue-800">
+                              <Plus size={11} /> Add to {section}
+                            </button>
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  )
+                })
+              })()}
+              {editingEstimate && (
+                <tbody>
                   <tr>
-                    <td colSpan={6} className="px-4 py-2">
-                      <button onClick={addMaterial} className="flex items-center gap-1.5 text-xs font-semibold text-blue-600 hover:text-blue-800">
+                    <td colSpan={6} className="px-4 py-2 border-t border-gray-100">
+                      <button onClick={() => addMaterial()} className="flex items-center gap-1.5 text-xs font-semibold text-blue-600 hover:text-blue-800">
                         <Plus size={12} /> Add line item
                       </button>
                     </td>
                   </tr>
-                )}
-              </tbody>
+                </tbody>
+              )}
               <tfoot>
                 <tr className="bg-gray-50 font-bold border-t-2 border-gray-200">
                   <td colSpan={2} className="px-4 py-2.5 text-sm text-gray-700">Totals</td>
