@@ -322,6 +322,20 @@ export default function PlanJobPage() {
 
   async function generate() {
     if (description.trim().length < 10) { setError('Add at least a sentence or two describing the job'); return }
+    // Regenerating replaces the whole Budget Breakdown — give a heads-up if there's
+    // tracked Quoted/Actual data on line items that would otherwise quietly vanish.
+    const priorEstimate = estimate
+    if (priorEstimate) {
+      const hasTrackingData = priorEstimate.materials_breakdown.some(m => m.quoted_cost != null || m.actual_cost != null)
+      if (hasTrackingData) {
+        const ok = window.confirm(
+          "Regenerating replaces the Budget Breakdown with fresh AI numbers based on the updated scope.\n\n" +
+          "Any Quoted / Actual Billed amounts you've entered on line items will be lost (attached quote & invoice files will carry over).\n\n" +
+          "Continue?"
+        )
+        if (!ok) return
+      }
+    }
     setError(''); setLoading(true); setEstimate(null); setMeta(null); setProgressTokens(0)
     try {
       const res = await fetch('/api/estimate-job', {
@@ -380,6 +394,11 @@ export default function PlanJobPage() {
       }
 
       if (finalEstimate) {
+        // Carry forward attached quote/invoice files across a regeneration —
+        // those documents describe the real world, not the AI's draft numbers.
+        if (priorEstimate?.actual_documents?.length) {
+          finalEstimate.actual_documents = [...priorEstimate.actual_documents, ...(finalEstimate.actual_documents || [])]
+        }
         setEstimate(finalEstimate)
         setMeta(finalMeta)
         setTimeout(() => saveAfterEstimate(finalEstimate!), 0)
@@ -694,13 +713,15 @@ export default function PlanJobPage() {
 
         <div className="flex items-center justify-between pt-1">
           <div className="text-xs text-gray-400">
-            {planId ? 'Changes auto-save when you generate an estimate.' : 'Save your draft now — come back later, generate when ready.'}
+            {estimate
+              ? 'Changed the scope above? Click Regenerate for fresh numbers — quote/invoice files carry over automatically.'
+              : planId ? 'Changes auto-save when you generate an estimate.' : 'Save your draft now — come back later, generate when ready.'}
           </div>
           <button onClick={generate} disabled={loading || description.trim().length < 10}
             className="flex items-center gap-2 text-sm font-bold px-5 py-2.5 rounded-xl text-white shadow-md disabled:opacity-50"
             style={{ background: '#b8895a' }}>
             {loading ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
-            {loading ? 'Analyzing your books + photos…' : 'Generate Estimate'}
+            {loading ? 'Analyzing your books + photos…' : estimate ? 'Regenerate Estimate' : 'Generate Estimate'}
           </button>
         </div>
         {error && <div className="bg-red-50 border border-red-100 text-red-700 text-sm px-4 py-3 rounded-xl whitespace-pre-wrap break-words">{error}</div>}
@@ -731,14 +752,19 @@ export default function PlanJobPage() {
                 </span>
               )}
             </div>
-            <button onClick={() => setEditingEstimate(v => !v)}
-              className={`flex items-center gap-1.5 text-xs font-bold px-3 py-2 rounded-xl border transition-colors ${editingEstimate ? 'border-green-200 bg-green-50 text-green-700' : 'border-gray-200 hover:bg-gray-50 text-gray-700'}`}>
-              {editingEstimate ? <><Check size={13} /> Done Editing</> : <><Pencil size={13} /> Edit Numbers</>}
+            <button onClick={async () => {
+                const leavingEdit = editingEstimate
+                setEditingEstimate(v => !v)
+                if (leavingEdit) await save()   // persist edits the moment you exit edit mode — no separate "Save" step to remember
+              }}
+              disabled={saving}
+              className={`flex items-center gap-1.5 text-xs font-bold px-3 py-2 rounded-xl border transition-colors disabled:opacity-60 ${editingEstimate ? 'border-green-200 bg-green-50 text-green-700' : 'border-gray-200 hover:bg-gray-50 text-gray-700'}`}>
+              {editingEstimate ? (saving ? <><Loader2 size={13} className="animate-spin" /> Saving…</> : <><Check size={13} /> Done Editing</>) : <><Pencil size={13} /> Edit Numbers</>}
             </button>
           </div>
           {editingEstimate && (
             <div className="text-xs text-gray-500 bg-blue-50 border border-blue-100 rounded-xl px-4 py-2.5 flex items-center gap-2">
-              <RotateCcw size={13} className="text-blue-500" /> Edit any cost, hours, rate, fee %, or duration below — totals recalculate live. Click <strong className="mx-0.5">Save Changes</strong> at the top to keep your edits.
+              <RotateCcw size={13} className="text-blue-500" /> Edit any cost, hours, rate, fee %, or duration below — totals recalculate live. Click <strong className="mx-0.5">Done Editing</strong> when you're finished and it'll save automatically.
             </div>
           )}
 
