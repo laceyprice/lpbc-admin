@@ -256,7 +256,7 @@ export default function PlanJobPage() {
             finalEstimate = payload.estimate
             finalMeta = payload.historical_data_used
           } else if (evt === 'error') {
-            setError((payload.error || 'Estimate failed') + (payload.detail ? ` — ${payload.detail}` : ''))
+            setError((payload.error || 'Estimate failed') + (payload.detail ? ` — ${payload.detail}` : '') + (payload.raw ? `\n\nRaw AI output (truncated):\n${payload.raw}` : ''))
           }
         }
       }
@@ -465,7 +465,7 @@ export default function PlanJobPage() {
             {loading ? 'Analyzing your books + photos…' : 'Generate Estimate'}
           </button>
         </div>
-        {error && <div className="bg-red-50 border border-red-100 text-red-700 text-sm px-4 py-3 rounded-xl">{error}</div>}
+        {error && <div className="bg-red-50 border border-red-100 text-red-700 text-sm px-4 py-3 rounded-xl whitespace-pre-wrap break-words">{error}</div>}
       </div>
 
       {loading && (

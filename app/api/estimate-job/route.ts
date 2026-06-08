@@ -175,7 +175,7 @@ Produce the JSON estimate now.`
         send('progress', { tokens_so_far: 0, status: 'calling_claude' })
         const resp = await client.messages.create({
           model: 'claude-sonnet-4-5',
-          max_tokens: 4000,
+          max_tokens: 8000,
           system: systemPrompt,
           messages: [{ role: 'user', content: userContent }],
         })
@@ -184,6 +184,9 @@ Produce the JSON estimate now.`
           .map((b: any) => b.text)
           .join('')
         send('progress', { tokens_so_far: fullText.length, status: 'parsing' })
+        if (resp.stop_reason === 'max_tokens') {
+          console.error('estimate-job: response truncated by max_tokens', { len: fullText.length })
+        }
 
         // Extract JSON from the accumulated text — try several strategies
         let jsonStr = fullText.trim()
@@ -207,8 +210,13 @@ Produce the JSON estimate now.`
           } catch {}
         }
         if (!estimate) {
-          console.error('estimate-job: could not parse JSON', { raw: fullText.slice(0, 800) })
-          send('error', { error: 'AI returned malformed JSON — try again', raw: fullText.slice(0, 300) })
+          console.error('estimate-job: could not parse JSON', { raw: fullText.slice(0, 2000), stop_reason: resp.stop_reason, len: fullText.length })
+          const truncatedNote = resp.stop_reason === 'max_tokens' ? ' (response was cut off — hit max_tokens limit)' : ''
+          send('error', {
+            error: `AI returned malformed JSON — try again${truncatedNote}`,
+            detail: `model:claude-sonnet-4-5 stop_reason:${resp.stop_reason || '?'} output_chars:${fullText.length}`,
+            raw: (fullText.slice(0, 600) + (fullText.length > 600 ? `\n…[+${fullText.length - 600} more chars, stop_reason=${resp.stop_reason}]` : '')),
+          })
           clearInterval(heartbeat)
           controller.close()
           return
