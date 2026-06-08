@@ -1,5 +1,6 @@
 'use client'
-import { useEffect, useState, useRef } from 'react'
+import { Component, useEffect, useState, useRef } from 'react'
+import type { ErrorInfo, ReactNode } from 'react'
 import { Upload, Search, Download, TrendingUp, TrendingDown, DollarSign, FileText, Loader2, X, Paperclip, Receipt, FileImage, Trash2, Plus, File, Camera, Image as ImageIcon, Link2, RefreshCw, Unplug, Edit3, FolderOpen, Sparkles, CheckCircle2, AlertCircle, Scale, CheckSquare, Square, Wand2, CheckCheck } from 'lucide-react'
 import { formatCurrency, formatDateShort } from '@/lib/utils'
 import Script from 'next/script'
@@ -60,7 +61,7 @@ function AccountsTab() {
   }
 
   const grouped = accounts.reduce((acc: any, a: any) => {
-    const key = a.report_group || a.account_type.toUpperCase()
+    const key = a.report_group || (a.account_type || 'other').toUpperCase()
     if (!acc[key]) acc[key] = []
     acc[key].push(a)
     return acc
@@ -258,7 +259,35 @@ interface FinancialAccount {
   closed_period_end: string | null
 }
 
-export default function BookkeepingPage() {
+class BookkeepingBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
+  constructor(props: { children: ReactNode }) {
+    super(props)
+    this.state = { error: null }
+  }
+  static getDerivedStateFromError(error: Error) { return { error } }
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error('[Bookkeeping] client-side crash:', error, info.componentStack)
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="p-8 md:p-12 pt-20 md:pt-12">
+          <div className="bg-red-50 border border-red-200 rounded-2xl p-6 max-w-xl">
+            <h2 className="text-lg font-bold text-red-700 mb-2">Bookkeeping hit a snag</h2>
+            <p className="text-sm text-red-600 mb-4">{this.state.error.message}</p>
+            <button onClick={() => this.setState({ error: null })}
+              className="px-4 py-2 rounded-xl text-white text-sm font-semibold" style={{ background: '#b8895a' }}>
+              Try again
+            </button>
+          </div>
+        </div>
+      )
+    }
+    return this.props.children
+  }
+}
+
+function BookkeepingPage() {
   const [tab, setTab] = useState<'bank'|'accounting'|'reconciliation'|'statements'|'uploads'|'accounts'>('bank')
   const [txs, setTxs] = useState<Tx[]>([])
   const [accounts, setAccounts] = useState<Account[]>([])
@@ -1085,7 +1114,7 @@ export default function BookkeepingPage() {
 
   // Group accounts by report_group for the dropdown
   const groupedAccounts = accounts.reduce((acc, a) => {
-    const key = a.report_group || a.account_type.toUpperCase()
+    const key = a.report_group || (a.account_type || 'other').toUpperCase()
     if (!acc[key]) acc[key] = []
     acc[key].push(a)
     return acc
@@ -2373,7 +2402,7 @@ function ReconciliationTab({ accounts, selectedAccountId, onSelectAccount }: {
                 return (
                   <tr key={row.month} className={`hover:bg-gray-50 transition-colors ${rowBg}`}>
                     <td className="px-4 py-3">
-                      <div className={`w-3 h-3 rounded-full ${dotColor}`} title={row.status.replace(/_/g, ' ')} />
+                      <div className={`w-3 h-3 rounded-full ${dotColor}`} title={(row.status || '').replace(/_/g, ' ')} />
                     </td>
                     <td className="px-4 py-3 font-semibold text-gray-900 whitespace-nowrap">{row.month}</td>
                     <td className="px-4 py-3 text-xs text-gray-700 whitespace-nowrap">{formatCurrency(row.beginning_balance)}</td>
@@ -2437,4 +2466,8 @@ function ReconciliationTab({ accounts, selectedAccountId, onSelectAccount }: {
       )}
     </div>
   )
+}
+
+export default function BookkeepingPageWithBoundary() {
+  return <BookkeepingBoundary><BookkeepingPage /></BookkeepingBoundary>
 }
