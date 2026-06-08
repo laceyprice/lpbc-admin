@@ -169,9 +169,12 @@ Produce the JSON estimate now.`
         // while .create() works fine (same transport as parse-receipt).
         // The SSE wrapper + heartbeat is still here to keep the nginx proxy alive
         // during the wait (can be 30-90s), so we don't get a 504.
+        // NOTE: claude-3-5-haiku-20241022 has been retired by Anthropic (404
+        // not_found_error as of mid-2026) — switched to claude-sonnet-4-5,
+        // which is confirmed live in this app (see inventory/route.ts).
         send('progress', { tokens_so_far: 0, status: 'calling_claude' })
         const resp = await client.messages.create({
-          model: 'claude-3-5-haiku-20241022',
+          model: 'claude-sonnet-4-5',
           max_tokens: 4000,
           system: systemPrompt,
           messages: [{ role: 'user', content: userContent }],
@@ -232,7 +235,7 @@ Produce the JSON estimate now.`
         console.error('estimate-job stream failed', errDetail)
         send('error', {
           error: e?.message || 'Estimate failed',
-          detail: `model:claude-3-5-haiku-20241022 status:${e?.status || '?'} type:${e?.error?.type || '?'} cause:${e?.cause?.code || e?.cause?.message || '?'}`,
+          detail: `model:claude-sonnet-4-5 status:${e?.status || '?'} type:${e?.error?.type || '?'} cause:${e?.cause?.code || e?.cause?.message || '?'}`,
         })
       } finally {
         clearInterval(heartbeat)
