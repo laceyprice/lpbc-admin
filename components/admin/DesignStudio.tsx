@@ -689,13 +689,23 @@ function SketchTab({ sketches, sessionId, onAdd, onRemove, onOpenDrivePicker, dr
       const fd = new FormData()
       fd.append('image', sendFile)
       const res = await fetch('/api/sketch-trace', { method: 'POST', body: fd })
-      const ct = res.headers.get('content-type') || ''
-      if (ct.includes('text/html')) {
-        setTraceError('Request timed out — try a clearer, well-lit photo with stronger contrast on the lines.')
+      // The endpoint streams keep-alive whitespace while Claude works, then writes
+      // the final JSON last. res.text() waits for the full stream; JSON.parse skips
+      // the leading whitespace. A non-JSON body means a proxy returned an error page.
+      const bodyText = await res.text()
+      let d: any
+      try {
+        d = JSON.parse(bodyText.trim())
+      } catch {
+        setTraceError('The server couldn’t complete the trace (it may be busy). Please try again — your photo is fine.')
         return
       }
-      const d = await res.json()
-      if (!res.ok) { setTraceError(d.error || 'Tracing failed'); return }
+      // Real status is carried in the body (HTTP is always 200 once streaming starts).
+      const ok = res.ok && (d._status === undefined || d._status === 200) && !d.error
+      if (!ok) { setTraceError(d.error || 'Tracing failed — please try again.'); return }
+      if (!Array.isArray(d.strokes) || d.strokes.length === 0) {
+        setTraceError('No floor-plan lines were found in this image.'); return
+      }
       // Replace canvas strokes with the traced ones, and adopt the detected grid
       // pitch/origin so the plan lines up square-for-square on the canvas paper.
       setStrokes(d.strokes)

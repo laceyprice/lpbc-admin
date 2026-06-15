@@ -1,7 +1,14 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest } from 'next/server'
 export const dynamic = 'force-dynamic'
-import sharp from 'sharp'
+export const maxDuration = 300
 import { getAnthropicClient } from '@/lib/anthropic'
+
+// sharp is loaded defensively at call time: if the native binary ever fails to
+// load in a given runtime, grid detection is skipped rather than 500-ing the
+// whole route — the trace still works, just without EXIF-normalize / pitch hint.
+async function loadSharp(): Promise<typeof import('sharp') | null> {
+  try { return (await import('sharp')).default as any } catch (e) { console.error('sharp load failed:', e); return null }
+}
 
 // POST /api/sketch-trace
 // Body: FormData with 'image' file
@@ -75,48 +82,48 @@ function detectPitch(data: Uint8Array | Buffer, w: number, h: number): { pitch: 
   return { pitch: fallback ? fallback.lag : 0, confident: false }
 }
 
-export async function POST(req: NextRequest) {
-  try {
-    const fd = await req.formData()
-    const file = fd.get('image') as File | null
-    if (!file || file.size === 0) {
-      return NextResponse.json({ error: 'No image provided' }, { status: 400 })
-    }
+type TraceResult = { status: number; payload: any }
 
+async function runTrace(file: File): Promise<TraceResult> {
+  try {
     const inputBuf = Buffer.from(await file.arrayBuffer())
 
     // ── Normalize: bake EXIF orientation, downscale to a sane width. This is the
     // SAME image we both detect the grid on and send to Claude, so the grid pitch
     // we report and what Claude "sees" are guaranteed to match.
     const DETECT_W = 1000
-    let normBuf: Buffer
+    const sharp = await loadSharp()
+    let normBuf: Buffer = inputBuf
     let normW = 0, normH = 0
     let pitch = 0, confident = false
-    try {
-      const oriented = sharp(inputBuf).rotate()
-      // Image for Claude (kept reasonably sized for token/latency budget)
-      normBuf = await oriented.clone().resize({ width: 1500, withoutEnlargement: true }).jpeg({ quality: 88 }).toBuffer()
-      const nm = await sharp(normBuf).metadata()
-      normW = nm.width || 0
-      normH = nm.height || 0
-      // Grayscale raw buffer for grid detection
-      const { data, info } = await sharp(inputBuf)
-        .rotate()
-        .resize({ width: DETECT_W })
-        .grayscale()
-        .normalise()
-        .raw()
-        .toBuffer({ resolveWithObject: true })
-      const det = detectPitch(data, info.width, info.height)
-      // express pitch in normBuf pixels
-      pitch = det.pitch * (normW / info.width)
-      confident = det.confident
-    } catch (e) {
-      // sharp failed (unsupported format etc.) — fall back to the raw upload, no detection
-      normBuf = inputBuf
-      const nm = await sharp(inputBuf).metadata().catch(() => ({ width: 0, height: 0 }))
-      normW = nm.width || 0
-      normH = nm.height || 0
+    if (sharp) {
+      try {
+        const oriented = sharp(inputBuf).rotate()
+        // Image for Claude (kept modest for token/latency budget — Claude downsamples
+        // to ~1568px internally anyway, so 1200 loses nothing and is a touch faster).
+        normBuf = await oriented.clone().resize({ width: 1200, withoutEnlargement: true }).jpeg({ quality: 86 }).toBuffer()
+        const nm = await sharp(normBuf).metadata()
+        normW = nm.width || 0
+        normH = nm.height || 0
+        // Grayscale raw buffer for grid detection
+        const { data, info } = await sharp(inputBuf)
+          .rotate()
+          .resize({ width: DETECT_W })
+          .grayscale()
+          .normalise()
+          .raw()
+          .toBuffer({ resolveWithObject: true })
+        const det = detectPitch(data, info.width, info.height)
+        // express pitch in normBuf pixels
+        pitch = det.pitch * (normW / info.width)
+        confident = det.confident
+      } catch (e) {
+        // sharp failed (unsupported format etc.) — fall back to the raw upload, no detection
+        normBuf = inputBuf
+        const nm = await sharp(inputBuf).metadata().catch(() => ({ width: 0, height: 0 }))
+        normW = nm.width || 0
+        normH = nm.height || 0
+      }
     }
 
     const base64 = normBuf.toString('base64')
@@ -185,13 +192,13 @@ Return ONLY valid JSON — no markdown, no commentary:
       const match = cleaned.match(/\{[\s\S]*\}/)
       if (!match) {
         console.error('sketch-trace: bad JSON from Claude:', raw.slice(0, 400))
-        return NextResponse.json({ error: 'AI could not parse the floor plan. Try a clearer, well-lit photo.' }, { status: 422 })
+        return { status: 422, payload: { error: 'The AI could not read a floor plan from this image. Try a photo taken straight-on with the lines clearly visible.' } }
       }
       parsed = JSON.parse(match[0])
     }
 
     if (!Array.isArray(parsed.strokes)) {
-      return NextResponse.json({ error: 'Unexpected AI response format' }, { status: 422 })
+      return { status: 422, payload: { error: 'Unexpected AI response format' } }
     }
 
     // ── Collect all grid-unit points so we can derive the true bounding box.
@@ -232,7 +239,7 @@ Return ONLY valid JSON — no markdown, no commentary:
     }
 
     if (gStrokes.length === 0 || !isFinite(minX)) {
-      return NextResponse.json({ error: 'No recognizable floor plan elements found. Try a clearer image with more contrast.' }, { status: 422 })
+      return { status: 422, payload: { error: 'No recognizable floor plan elements found in this image.' } }
     }
 
     // ── Fit the grid-unit drawing into the canvas at a UNIFORM block size.
@@ -257,20 +264,70 @@ Return ONLY valid JSON — no markdown, no commentary:
       return { ...base, start: mapPt(s.start!), end: mapPt(s.end!) }
     })
 
-    return NextResponse.json({
-      strokes,
-      count: strokes.length,
-      grid: {
-        blockPx: Math.round(B * 100) / 100,
-        originX: Math.round(originX),
-        originY: Math.round(originY),
-        cols, rows,
-        detected: pitch > 0,
-        confident,
+    return {
+      status: 200,
+      payload: {
+        strokes,
+        count: strokes.length,
+        grid: {
+          blockPx: Math.round(B * 100) / 100,
+          originX: Math.round(originX),
+          originY: Math.round(originY),
+          cols, rows,
+          detected: pitch > 0,
+          confident,
+        },
       },
-    })
+    }
   } catch (err: any) {
     console.error('sketch-trace error:', err)
-    return NextResponse.json({ error: err.message || 'Tracing failed' }, { status: 500 })
+    return { status: 500, payload: { error: err.message || 'Tracing failed' } }
   }
+}
+
+// ── Streaming handler ────────────────────────────────────────────────────────
+// Tracing a detailed plan can take longer than the 100s edge/proxy timeout
+// (Cloudflare 524 etc.). We return a streamed response immediately and emit a
+// tiny keep-alive byte every few seconds while Claude works, so the connection
+// is never idle and no proxy can kill it. The real JSON result is written last.
+// Leading whitespace is ignored by JSON.parse, so the client just res.json()s it.
+export async function POST(req: NextRequest) {
+  let file: File | null = null
+  try {
+    const fd = await req.formData()
+    file = fd.get('image') as File | null
+  } catch {
+    return new Response(JSON.stringify({ error: 'Invalid upload' }), { status: 400, headers: { 'Content-Type': 'application/json' } })
+  }
+  if (!file || file.size === 0) {
+    return new Response(JSON.stringify({ error: 'No image provided' }), { status: 400, headers: { 'Content-Type': 'application/json' } })
+  }
+  const theFile = file
+
+  const enc = new TextEncoder()
+  const stream = new ReadableStream({
+    async start(controller) {
+      const safeEnqueue = (s: string) => { try { controller.enqueue(enc.encode(s)) } catch {} }
+      safeEnqueue(' ') // flush headers immediately so the proxy sees the response start
+      const heartbeat = setInterval(() => safeEnqueue(' '), 4000)
+      let result: TraceResult
+      try {
+        result = await runTrace(theFile)
+      } catch (e: any) {
+        result = { status: 500, payload: { error: e?.message || 'Tracing failed' } }
+      }
+      clearInterval(heartbeat)
+      // Always 200 at the HTTP level (status already streamed); carry real status in body.
+      safeEnqueue('\n' + JSON.stringify({ ...result.payload, _status: result.status }))
+      try { controller.close() } catch {}
+    },
+  })
+
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform',
+      'X-Accel-Buffering': 'no', // disable nginx proxy buffering
+    },
+  })
 }
