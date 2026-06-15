@@ -174,12 +174,7 @@ async function runTrace(file: File): Promise<TraceResult> {
 
     const anthropic = getAnthropicClient()
 
-    const message = await anthropic.messages.create({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 4096,
-      messages: [{
-        role: 'user',
-        content: [
+    const userContent: any[] = [
           {
             type: 'image',
             source: { type: 'base64', media_type: 'image/jpeg', data: base64 },
@@ -198,11 +193,20 @@ Output ALL coordinates in GRID-SQUARE UNITS, where 1 unit = one printed graph sq
 • Walls run ALONG the printed grid lines — so almost every endpoint is an INTEGER (whole number). Only use a fraction like .5 when a line genuinely runs through the middle of a square.
 • Corners that meet MUST share identical coordinates. A wall ending at (12,7) and another starting there must both read (12,7).
 
-═══ MATCH THE WRITTEN DIMENSIONS (critical for a professional draft) ═══
-Find the scale note (e.g. "SCALE: 1 sq = 1 ft"). One grid square = that real distance.
-When a room has a written dimension, SIZE THE ROOM TO MATCH IT — trust the numbers over the rough hand-drawing.
-• Convert feet to squares at the scale: at 1 sq = 1 ft, a room labeled 10' x 14'3" is 10 squares by 14.25 squares (3 inches = 0.25 ft).
-• Lay rooms out edge-to-edge so shared walls stay shared and the exterior stays rectangular; reconcile small conflicts by trusting the labeled rooms.
+═══ WORK IT OUT BEFORE YOU DRAW (this is the most important step) ═══
+This sketch is on graph paper drawn to scale, so the printed squares and the written
+dimensions should AGREE — use each to check the other and resolve to exact square counts.
+Reason it through step by step before emitting any coordinates:
+1. Read the scale note (e.g. "SCALE: 1 sq = 1 ft"). One square = that real distance.
+2. Build a room schedule: for EACH room, read its written dimension and convert to squares
+   (at 1 sq = 1 ft, "10' x 14'3\"" = 10 × 14.25 squares; 3 in = 0.25 ft). Where a room has no
+   number, count its squares directly off the grid.
+3. Cross-check against the drawing: count the squares each room actually spans and reconcile
+   with the label. If they conflict, the written number wins, but adjust neighbors so walls
+   still meet — never leave gaps or overlaps.
+4. Assign real (x,y) grid coordinates to every room corner so that adjacent rooms SHARE the
+   exact wall coordinate and the overall outline stays clean. Lay rooms out edge-to-edge.
+Only after this layout is consistent, emit the wall strokes from your coordinate table.
 
 Also report the drawing's overall size: "gridCols" (total squares wide) and "gridRows" (total squares tall).
 
@@ -229,11 +233,28 @@ Include exterior entries the same way.
 Return ONLY valid JSON — no markdown, no commentary:
 {"gridCols":N,"gridRows":N,"strokes":[...],"doors":[...]}`,
           },
-        ],
-      }],
-    })
+    ]
 
-    const raw = message.content.find(c => c.type === 'text')?.text?.trim() ?? ''
+    // Opus + extended thinking for the spatial reasoning; fall back to Sonnet if
+    // Opus is unavailable so the feature degrades instead of breaking entirely.
+    let message: any
+    try {
+      message = await anthropic.messages.stream({
+        model: 'claude-opus-4-8',
+        max_tokens: 8000,
+        thinking: { type: 'enabled', budget_tokens: 4000 },
+        messages: [{ role: 'user', content: userContent }],
+      }).finalMessage()
+    } catch (e: any) {
+      console.error('sketch-trace: opus call failed, falling back to sonnet:', e?.message)
+      message = await anthropic.messages.create({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 4096,
+        messages: [{ role: 'user', content: userContent }],
+      })
+    }
+
+    const raw = message.content.find((c: any) => c.type === 'text')?.text?.trim() ?? ''
     const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim()
 
     let parsed: { strokes: any[]; gridCols?: number; gridRows?: number; doors?: any[] }
