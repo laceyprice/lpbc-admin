@@ -129,15 +129,15 @@ export default function ReportsPage() {
     setTab(report.report_type as Tab)
   }
 
-  async function load() {
-    setLoading(true)
+  async function load(silent = false) {
+    if (!silent) setLoading(true)
     try {
       const params = new URLSearchParams({ type: tab, from, to, year: from.substring(0, 4) })
       if (selectedAccountId) params.append('account_id', selectedAccountId)
       const res = await fetch(`/api/reports?${params}`)
       setData(await res.json())
-    } catch { setData(null) }
-    setLoading(false)
+    } catch { if (!silent) setData(null) }
+    if (!silent) setLoading(false)
   }
 
   const tabs: { k: Tab; l: string }[] = [
@@ -626,7 +626,7 @@ export default function ReportsPage() {
           {tab === 'pnl' && <PnLReport data={data} />}
           {tab === 'balance-sheet' && <BalanceSheetReport data={data} />}
           {tab === 'cash-flow' && <CashFlowReport data={data} />}
-          {tab === 'reconciliation' && <ReconciliationReport data={data} onRefresh={load} />}
+          {tab === 'reconciliation' && <ReconciliationReport data={data} onRefresh={() => load(true)} />}
         </>
       )}
     </div>
@@ -804,17 +804,6 @@ function ReconciliationReport({ data, onRefresh }: { data: any; onRefresh: () =>
         <SummaryCard icon={ArrowRightLeft} label="Difference" value={data.difference} color={Math.abs(data.difference) < 0.01 ? 'green' : 'red'} />
       </div>
 
-      {/* Uncategorized — highest priority */}
-      {(data.uncategorized || []).length > 0 && (
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-          <div className="px-5 py-4 border-b border-amber-100 bg-amber-50 flex items-center justify-between">
-            <h3 className="text-xs font-bold text-amber-700 uppercase tracking-wider">Uncategorized Bank Transactions ({data.uncategorizedCount})</h3>
-            <span className="text-[11px] text-amber-600 font-medium">Click any row to assign a category</span>
-          </div>
-          <TxTable rows={data.uncategorized} accounts={accounts} financialAccounts={financialAccounts} onSaved={onRefresh} />
-        </div>
-      )}
-
       {/* Unreconciled */}
       {(data.unreconciled || []).length > 0 && (
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
@@ -826,7 +815,7 @@ function ReconciliationReport({ data, onRefresh }: { data: any; onRefresh: () =>
         </div>
       )}
 
-      {data.unreconciledCount === 0 && data.uncategorizedCount === 0 && (
+      {data.unreconciledCount === 0 && (
         <div className="text-center py-12 text-gray-400">
           <ArrowRightLeft size={30} className="mx-auto mb-2 opacity-30" />
           <p className="text-sm">All transactions are reconciled and categorized</p>
@@ -937,8 +926,17 @@ function BalanceSection({ title, lines: rawLines, total, extraLine }: { title: s
             <>
               {lines.map((l: any) => (
                 <tr key={l.id} className="hover:bg-gray-50">
-                  <td className="px-5 py-3 text-gray-900">{l.name}</td>
-                  <td className="px-5 py-3 text-right text-gray-600">{formatCurrency(l.opening)}</td>
+                  <td className="px-5 py-3 text-gray-900">
+                    <div className="flex items-center gap-2">
+                      {l.name}
+                      {l.isAR && (
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-50 text-blue-600 border border-blue-100 whitespace-nowrap">
+                          {l.arInvoiceCount} unpaid invoice{l.arInvoiceCount === 1 ? '' : 's'}
+                        </span>
+                      )}
+                    </div>
+                  </td>
+                  <td className="px-5 py-3 text-right text-gray-600">{l.isAR ? '—' : formatCurrency(l.opening)}</td>
                   <td className={`px-5 py-3 text-right font-medium ${l.activity >= 0 ? 'text-green-700' : 'text-red-600'}`}>{formatCurrency(l.activity)}</td>
                   <td className="px-5 py-3 text-right font-bold text-gray-900">{formatCurrency(l.balance)}</td>
                 </tr>
@@ -977,6 +975,9 @@ function TxTable({ rows, accounts = [], financialAccounts = [], onSaved }: {
   const [form, setForm] = useState<{ account_id: string; payee: string }>({ account_id: '', payee: '' })
   const [saving, setSaving] = useState(false)
   const [savedIds, setSavedIds] = useState<Set<string>>(new Set())
+  // Optimistic patches — applied immediately after save so the row reflects
+  // the new category before the background data refresh completes.
+  const [localPatches, setLocalPatches] = useState<Record<string, { account_id: string | null; payee: string | null }>>({})
   const [page, setPage] = useState(0)
   const PAGE_SIZE = 50
 
@@ -1009,9 +1010,11 @@ function TxTable({ rows, accounts = [], financialAccounts = [], onSaved }: {
         }),
       })
       if (res.ok) {
+        // Apply optimistic patch so the row shows the new category immediately
+        setLocalPatches(p => ({ ...p, [txId]: { account_id: form.account_id || null, payee: form.payee || null } }))
         setSavedIds(prev => new Set([...prev, txId]))
         setEditingId(null)
-        onSaved?.()
+        onSaved?.()   // silent background refresh — doesn't unmount this component
       } else {
         const d = await res.json().catch(() => ({}))
         alert('Failed to save: ' + (d.error || 'Unknown error'))
@@ -1035,7 +1038,10 @@ function TxTable({ rows, accounts = [], financialAccounts = [], onSaved }: {
             <th className="text-right px-4 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider">Amount</th>
           </tr></thead>
           <tbody className="divide-y divide-gray-50">
-            {pageRows.map((tx: any) => (
+            {pageRows.map((rawTx: any) => {
+              // Merge any optimistic patch so the row reflects a save immediately
+              const tx = localPatches[rawTx.id] ? { ...rawTx, ...localPatches[rawTx.id] } : rawTx
+              return (
               <Fragment key={tx.id}>
                 <tr
                   onClick={() => editingId === tx.id ? setEditingId(null) : startEdit(tx)}
@@ -1114,7 +1120,8 @@ function TxTable({ rows, accounts = [], financialAccounts = [], onSaved }: {
                   </tr>
                 )}
               </Fragment>
-            ))}
+              )
+            })}
           </tbody>
         </table>
       </div>

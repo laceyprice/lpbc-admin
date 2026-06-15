@@ -5,16 +5,24 @@ import { signedUrlFor } from '@/lib/signed-url'
 
 const BUCKET = 'job-planning'
 
-// The `design` jsonb column (added by migration 20260608_job_plans_design_studio.sql)
-// may not exist yet on some environments if that migration hasn't been run —
-// PostgREST then rejects the WHOLE write with "Could not find the 'design'
-// column of 'job_plans' in the schema cache", silently losing every other
-// field in the same save (title, description, estimate, attachments, etc).
-// To stop that from costing the owner real work, detect that specific error
-// and transparently retry the write without `design` so everything else still
-// lands — the design data just won't persist until the migration is applied.
+// Some columns are added via migration and may not exist yet on all environments.
+// PostgREST rejects the WHOLE write if an unknown column is included, silently
+// losing every other field in the same save.  Detect these missing-column errors
+// and retry without the offending field so the core data always lands.
+function isMissingColumn(message: string | undefined | null, col: string) {
+  return !!message && new RegExp(`could not find the '${col}' column`, 'i').test(message)
+}
 function isMissingDesignColumnError(message: string | undefined | null) {
-  return !!message && /could not find the 'design' column/i.test(message)
+  return isMissingColumn(message, 'design')
+}
+function stripMissingCols(payload: Record<string, any>, error: string | undefined | null): Record<string, any> {
+  // Strip any column that PostgREST says is missing, then retry
+  const match = (error ?? '').match(/could not find the '(\w+)' column/i)
+  if (!match) return payload
+  const col = match[1]
+  const { [col]: _dropped, ...rest } = payload
+  console.warn(`job_plans column '${col}' missing — dropping it from write (run the migration)`)
+  return rest
 }
 
 // GET    /api/job-plans                  → list (?archived=true to include archived)
@@ -81,7 +89,7 @@ export async function POST(req: NextRequest) {
   // Derive title from first non-empty line of description if not provided
   const title = (body.title?.trim()) || deriveTitle(body.description) || 'Untitled Plan'
 
-  const insertPayload: Record<string, any> = {
+  let insertPayload: Record<string, any> = {
     title,
     description: body.description || '',
     measurements: body.measurements || '',
@@ -93,12 +101,19 @@ export async function POST(req: NextRequest) {
     worksite_id: body.worksite_id || null,
     status: body.status || 'draft',
     shared_with_account_id: body.shared_with_account_id || null,
+    drive_folder_id: body.drive_folder_id || null,
+    drive_folder_name: body.drive_folder_name || null,
   }
   let { data, error } = await supabase.from('job_plans').insert(insertPayload).select().single()
-  if (error && isMissingDesignColumnError(error.message)) {
-    console.warn('job_plans.design column missing — retrying insert without it (run the 20260608_job_plans_design_studio.sql migration)')
-    const { design, ...withoutDesign } = insertPayload
-    ;({ data, error } = await supabase.from('job_plans').insert(withoutDesign).select().single())
+  // Retry stripping any unknown columns until the insert succeeds (handles environments
+  // where not all migrations have been applied yet)
+  let retries = 0
+  while (error && retries < 5) {
+    retries++
+    const stripped = stripMissingCols(insertPayload, error.message)
+    if (JSON.stringify(stripped) === JSON.stringify(insertPayload)) break // no column removed, different error
+    insertPayload = stripped
+    ;({ data, error } = await supabase.from('job_plans').insert(insertPayload).select().single())
   }
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json(data, { status: 201 })
@@ -114,11 +129,16 @@ export async function PATCH(req: NextRequest) {
   if (updates.estimate && !updates.estimate_generated_at) {
     updates.estimate_generated_at = new Date().toISOString()
   }
-  let { data, error } = await supabase.from('job_plans').update(updates).eq('id', id).select().single()
-  if (error && isMissingDesignColumnError(error.message)) {
-    console.warn('job_plans.design column missing — retrying update without it (run the 20260608_job_plans_design_studio.sql migration)')
-    const { design, ...withoutDesign } = updates
-    ;({ data, error } = await supabase.from('job_plans').update(withoutDesign).eq('id', id).select().single())
+  let updatePayload: Record<string, any> = { ...updates }
+  let { data, error } = await supabase.from('job_plans').update(updatePayload).eq('id', id).select().single()
+  // Retry stripping any unknown columns
+  let retries = 0
+  while (error && retries < 5) {
+    retries++
+    const stripped = stripMissingCols(updatePayload, error.message)
+    if (JSON.stringify(stripped) === JSON.stringify(updatePayload)) break
+    updatePayload = stripped
+    ;({ data, error } = await supabase.from('job_plans').update(updatePayload).eq('id', id).select().single())
   }
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json(data)

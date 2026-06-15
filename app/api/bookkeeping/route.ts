@@ -113,6 +113,48 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ imported: data?.length || 0, total: rows.length })
   }
 
+  // ── Undo a bulk-update — restore previous account_id / payee values ────────
+  if (action === 'undo-bulk-update') {
+    const body = await req.json()
+    const { rows } = body as {
+      rows: Array<{ id: string; account_id: string | null; payee: string | null; had_entry: boolean }>
+    }
+    if (!Array.isArray(rows) || rows.length === 0) {
+      return NextResponse.json({ error: 'rows required' }, { status: 400 })
+    }
+
+    // Restore each bank_transaction to its prior account_id / payee
+    // Process in parallel chunks of 50 to avoid overwhelming the DB
+    for (let i = 0; i < rows.length; i += 50) {
+      await Promise.all(rows.slice(i, i + 50).map(row =>
+        supabase.from('bank_transactions')
+          .update({ account_id: row.account_id ?? null, payee: row.payee ?? null })
+          .eq('id', row.id)
+      ))
+    }
+
+    // Accounting entry cleanup:
+    //  - Entries that were NEWLY CREATED by the bulk-update → delete them
+    //  - Entries that ALREADY EXISTED → restore their account_id
+    const newEntries = rows.filter(r => !r.had_entry)
+    const oldEntries = rows.filter(r => r.had_entry)
+
+    if (newEntries.length > 0) {
+      await supabase.from('accounting_entries')
+        .delete()
+        .in('bank_transaction_id', newEntries.map(r => r.id))
+    }
+    for (let i = 0; i < oldEntries.length; i += 50) {
+      await Promise.all(oldEntries.slice(i, i + 50).map(row =>
+        supabase.from('accounting_entries')
+          .update({ account_id: row.account_id ?? null })
+          .eq('bank_transaction_id', row.id)
+      ))
+    }
+
+    return NextResponse.json({ restored: rows.length })
+  }
+
   // ── Bulk update action — apply payee/account to many transactions at once ──
   if (action === 'bulk-update') {
     const body = await req.json()

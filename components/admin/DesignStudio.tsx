@@ -4,6 +4,7 @@ import type { ErrorInfo, ReactNode } from 'react'
 import {
   X, Palette, PenTool, Images, Sparkles, Loader2, Plus, Trash2, Save,
   Square, Minus, Type, Eraser, Undo2, RotateCcw, Wand2, Check, DollarSign,
+  Camera, Upload, Cloud, ZoomIn, ZoomOut, ScanLine, AlertCircle, CheckCircle2,
 } from 'lucide-react'
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -77,6 +78,11 @@ type DesignStudioProps = {
   sessionId: string
   description: string
   measurements: string
+  onAddAttachments?: (atts: AttachmentLike[]) => void
+  onOpenDrivePicker?: () => void
+  onOpenDrivePickerForSketch?: () => void
+  sketchDriveImageUrl?: string | null
+  onSketchDriveImageConsumed?: () => void
 }
 
 // Wrap the actual studio in an error boundary — the modal deals with a lot of
@@ -136,9 +142,17 @@ export default function DesignStudio(props: DesignStudioProps) {
 function DesignStudioInner({
   open, onClose, design, onChange,
   attachments, sessionId, description, measurements,
+  onAddAttachments, onOpenDrivePicker,
+  onOpenDrivePickerForSketch, sketchDriveImageUrl, onSketchDriveImageConsumed,
 }: DesignStudioProps) {
   const [tab, setTab] = useState<TabKey>('board')
-  if (!open) return null
+
+  // Reset to board tab each time the studio opens so stale sketch-tab state
+  // (which persists because we use `if (!open) return null` not unmounting)
+  // doesn't trigger SketchTab's canvas effects with potentially stale data.
+  const prevOpenRef = useRef(false)
+  if (open && !prevOpenRef.current) { prevOpenRef.current = true; if (tab !== 'board') setTab('board') }
+  if (!open) { prevOpenRef.current = false; return null }
 
   const board = design.board || []
   const sketches = design.sketches || []
@@ -178,6 +192,9 @@ function DesignStudioInner({
         <div className="flex-1 overflow-y-auto p-5">
           {tab === 'board' && (
             <MoodBoardTab board={board} attachments={attachments}
+              sessionId={sessionId}
+              onAddAttachments={onAddAttachments}
+              onOpenDrivePicker={onOpenDrivePicker}
               onAdd={items => patch({ board: [...board, ...items] })}
               onUpdate={(i, item) => patch({ board: board.map((b, idx) => idx === i ? item : b) })}
               onRemove={i => patch({ board: board.filter((_, idx) => idx !== i) })}
@@ -187,6 +204,9 @@ function DesignStudioInner({
             <SketchTab sketches={sketches} sessionId={sessionId}
               onAdd={s => patch({ sketches: [...sketches, s] })}
               onRemove={i => patch({ sketches: sketches.filter((_, idx) => idx !== i) })}
+              onOpenDrivePicker={onOpenDrivePickerForSketch}
+              driveImageUrl={sketchDriveImageUrl}
+              onDriveImageConsumed={onSketchDriveImageConsumed}
             />
           )}
           {tab === 'compare' && (
@@ -225,17 +245,50 @@ function DesignStudioInner({
 }
 
 // ── Mood Board ─────────────────────────────────────────────────────────────
-function MoodBoardTab({ board, attachments, onAdd, onUpdate, onRemove }: {
+function MoodBoardTab({ board, attachments, sessionId, onAddAttachments, onOpenDrivePicker, onAdd, onUpdate, onRemove }: {
   board: BoardItem[]
   attachments: AttachmentLike[]
+  sessionId: string
+  onAddAttachments?: (atts: AttachmentLike[]) => void
+  onOpenDrivePicker?: () => void
   onAdd: (items: BoardItem[]) => void
   onUpdate: (i: number, item: BoardItem) => void
   onRemove: (i: number) => void
 }) {
   const [picking, setPicking] = useState(false)
+  const [uploading, setUploading] = useState(false)
+  const [uploadError, setUploadError] = useState('')
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
   const usedPaths = new Set(board.map(b => b.path).filter(Boolean))
   const images = attachments.filter(a => typeof a?.type === 'string' && a.type.startsWith('image/'))
   const pickable = images.filter(a => !usedPaths.has(a.path))
+
+  async function uploadFiles(files: FileList | File[]) {
+    const list = Array.from(files).filter(f => f.type.startsWith('image/'))
+    if (!list.length) { setUploadError('Please select image files only.'); return }
+    setUploading(true); setUploadError('')
+    try {
+      const fd = new FormData()
+      fd.append('session_id', sessionId)
+      for (const f of list) fd.append('file', f)
+      const res = await fetch('/api/job-planning', { method: 'POST', body: fd })
+      const d = await res.json()
+      if (!res.ok) { setUploadError(d.error || 'Upload failed'); return }
+      const uploaded: AttachmentLike[] = d.uploaded || []
+      // Add to mood board
+      onAdd(uploaded.map(att => ({
+        id: newId('board'), path: att.path, signed_url: att.signed_url,
+        name: att.name, room: 'Other', label: att.name.replace(/\.[^.]+$/, ''), notes: '', price: 0,
+      })))
+      // Also surface in main attachments list so they're accessible plan-wide
+      if (onAddAttachments) onAddAttachments(uploaded)
+    } catch (e: any) {
+      setUploadError(e?.message || 'Upload failed')
+    }
+    setUploading(false)
+    if (fileInputRef.current) fileInputRef.current.value = ''
+  }
 
   function addFromAttachment(att: AttachmentLike) {
     onAdd([{ id: newId('board'), path: att.path, signed_url: att.signed_url, name: att.name, room: 'Other', label: att.name.replace(/\.[^.]+$/, ''), notes: '', price: 0 }])
@@ -245,9 +298,10 @@ function MoodBoardTab({ board, attachments, onAdd, onUpdate, onRemove }: {
     onAdd([{ id: newId('board'), path: '', signed_url: null, name: 'New item', room: 'Other', label: 'New selection', notes: '', price: 0 }])
   }
 
-  // group by room for display
+  // group by room for display — guard against null/malformed DB entries
   const byRoom = new Map<string, number[]>()
   board.forEach((b, i) => {
+    if (!b) return
     const k = b.room || 'Other'
     if (!byRoom.has(k)) byRoom.set(k, [])
     byRoom.get(k)!.push(i)
@@ -255,17 +309,49 @@ function MoodBoardTab({ board, attachments, onAdd, onUpdate, onRemove }: {
 
   return (
     <div className="space-y-4">
+      {/* Hidden file input — triggered by the Camera/File button */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        multiple
+        className="hidden"
+        onChange={e => { if (e.target.files?.length) uploadFiles(e.target.files) }}
+      />
+
       <div className="flex items-center justify-between flex-wrap gap-2">
         <p className="text-xs text-gray-500">Pull in project photos as material/finish selections, group by room, add notes and rough pricing.</p>
-        <div className="flex items-center gap-2">
-          <button onClick={() => setPicking(v => !v)} className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg border border-gray-200 hover:bg-gray-50">
-            <Images size={12} /> Add from photos {pickable.length > 0 ? `(${pickable.length})` : ''}
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* Upload from camera or local files */}
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploading}
+            className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg border border-gray-200 hover:bg-gray-50 disabled:opacity-50"
+          >
+            {uploading ? <Loader2 size={12} className="animate-spin" /> : <Camera size={12} />}
+            {uploading ? 'Uploading…' : 'Camera / File'}
           </button>
+          {/* Import from Google Drive */}
+          {onOpenDrivePicker && (
+            <button
+              onClick={onOpenDrivePicker}
+              className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg border border-gray-200 hover:bg-gray-50"
+            >
+              <Cloud size={12} /> From Drive
+            </button>
+          )}
+          {/* Add from already-uploaded plan photos */}
+          {pickable.length > 0 && (
+            <button onClick={() => setPicking(v => !v)} className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg border border-gray-200 hover:bg-gray-50">
+              <Images size={12} /> Plan photos ({pickable.length})
+            </button>
+          )}
           <button onClick={addBlank} className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg border border-gray-200 hover:bg-gray-50">
-            <Plus size={12} /> Blank selection
+            <Plus size={12} /> Blank
           </button>
         </div>
       </div>
+      {uploadError && <div className="text-xs text-red-600 bg-red-50 px-3 py-2 rounded-lg border border-red-100">{uploadError}</div>}
 
       {picking && (
         <div className="border border-gray-200 rounded-xl p-3 bg-gray-50">
@@ -294,8 +380,9 @@ function MoodBoardTab({ board, attachments, onAdd, onUpdate, onRemove }: {
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                 {idxs.map(i => {
                   const b = board[i]
+                  if (!b) return null
                   return (
-                    <div key={b.id} className="border border-gray-200 rounded-xl overflow-hidden bg-white group relative">
+                    <div key={b.id ?? i} className="border border-gray-200 rounded-xl overflow-hidden bg-white group relative">
                       {b.signed_url ? <img src={b.signed_url} alt={b.label} className="w-full h-28 object-cover" /> : <div className="w-full h-28 bg-gray-50 flex items-center justify-center text-gray-300"><Palette size={20} /></div>}
                       <button onClick={() => onRemove(i)} className="absolute top-1.5 right-1.5 bg-white/90 hover:bg-red-100 rounded-full p-1 shadow opacity-0 group-hover:opacity-100 transition-opacity">
                         <Trash2 size={11} className="text-red-600" />
@@ -340,37 +427,90 @@ interface Stroke {
 }
 const COLORS = ['#1f2937', '#dc2626', '#2563eb', '#16a34a', '#b8895a', '#9333ea']
 
-function SketchTab({ sketches, sessionId, onAdd, onRemove }: {
+const ZOOM_STEPS = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0]
+
+function SketchTab({ sketches, sessionId, onAdd, onRemove, onOpenDrivePicker, driveImageUrl, onDriveImageConsumed }: {
   sketches: SketchItem[]
   sessionId: string
   onAdd: (s: SketchItem) => void
   onRemove: (i: number) => void
+  onOpenDrivePicker?: () => void
+  driveImageUrl?: string | null
+  onDriveImageConsumed?: () => void
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [tool, setTool] = useState<StrokeTool>('pen')
   const [color, setColor] = useState(COLORS[0])
   const [width, setWidth] = useState(3)
   const [strokes, setStrokes] = useState<Stroke[]>([])
+  const [zoom, setZoom] = useState(1)
+  const [blockFt, setBlockFt] = useState(1)
+  const [blockFtInput, setBlockFtInput] = useState('1')
+  // Grid pitch + phase. Defaults to the canvas's native 24px grid for manual
+  // sketches; a photo trace overrides these so the canvas graph paper matches
+  // the original's squares exactly (1 sketch square === 1 canvas square).
+  const [gridBlockPx, setGridBlockPx] = useState(24)
+  const [gridOrigin, setGridOrigin] = useState({ x: 0, y: 0 })
   const drawing = useRef(false)
   const current = useRef<Stroke | null>(null)
   const [name, setName] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
-  function redraw(list: Stroke[]) {
+  // Photo-import state
+  const photoInputRef = useRef<HTMLInputElement>(null)
+  const cameraInputRef = useRef<HTMLInputElement>(null)
+  const [tracing, setTracing] = useState(false)
+  const [traceResult, setTraceResult] = useState<{ count: number } | null>(null)
+  const [traceError, setTraceError] = useState<string | null>(null)
+  const [showImportMenu, setShowImportMenu] = useState(false)
+
+  // When the parent signals a Drive image URL, fetch it and trace
+  useEffect(() => {
+    if (!driveImageUrl) return
+    onDriveImageConsumed?.()
+    setShowImportMenu(false)
+    fetch(driveImageUrl)
+      .then(r => r.blob())
+      .then(blob => {
+        const file = new File([blob], 'drive-image.jpg', { type: blob.type || 'image/jpeg' })
+        traceFromPhoto(file)
+      })
+      .catch(e => setTraceError(String(e?.message || 'Failed to load Drive image')))
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [driveImageUrl])
+
+  // redraw accepts explicit zoom/scale/grid so event-handler closures always render correctly
+  function redraw(list: Stroke[], z = zoom, bft = blockFt, gp = gridBlockPx, origin = gridOrigin) {
     const canvas = canvasRef.current
     if (!canvas) return
     const ctx = canvas.getContext('2d')
     if (!ctx) return
+
+    // Reset to screen space and clear
+    ctx.setTransform(1, 0, 0, 1, 0, 0)
     ctx.fillStyle = '#ffffff'
     ctx.fillRect(0, 0, canvas.width, canvas.height)
-    // light grid for sketching reference
-    ctx.strokeStyle = '#f1f5f9'
-    ctx.lineWidth = 1
-    for (let x = 0; x < canvas.width; x += 24) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke() }
-    for (let y = 0; y < canvas.height; y += 24) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke() }
 
+    // Apply zoom transform — all content below is in logical (unzoomed) coordinates
+    ctx.setTransform(z, 0, 0, z, 0, 0)
+    const logW = canvas.width / z
+    const logH = canvas.height / z
+
+    // Grid — keep lines exactly 1 screen pixel regardless of zoom. Drawn at the
+    // current pitch (gp) and phased to the trace origin so a traced plan lands
+    // square-for-square on the canvas graph paper.
+    const step = gp > 0 ? gp : 24
+    ctx.strokeStyle = '#f1f5f9'
+    ctx.lineWidth = 1 / z
+    const startX = ((origin.x % step) + step) % step
+    const startY = ((origin.y % step) + step) % step
+    for (let x = startX; x <= logW; x += step) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, logH); ctx.stroke() }
+    for (let y = startY; y <= logH; y += step) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(logW, y); ctx.stroke() }
+
+    // Strokes (all in logical coordinates)
     for (const s of list) {
+      if (!s) continue   // guard against null strokes
       ctx.strokeStyle = s.tool === 'eraser' ? '#ffffff' : s.color
       ctx.fillStyle = s.color
       ctx.lineWidth = s.width
@@ -390,25 +530,75 @@ function SketchTab({ sketches, sessionId, onAdd, onRemove }: {
         ctx.fillText(s.text, s.start.x, s.start.y)
       }
     }
+
+    // ── Scale bar — drawn in SCREEN space so it stays fixed size ──────────
+    ctx.setTransform(1, 0, 0, 1, 0, 0)
+    const barPx = (gp > 0 ? gp : 24) * z   // 1 grid block = this many screen pixels at current zoom
+    const barX = 14
+    const barY = canvas.height - 14
+    ctx.strokeStyle = '#374151'
+    ctx.fillStyle = '#374151'
+    ctx.lineWidth = 1.5
+    // horizontal rule with end caps
+    ctx.beginPath()
+    ctx.moveTo(barX, barY)
+    ctx.lineTo(barX + barPx, barY)
+    ctx.moveTo(barX, barY - 4)
+    ctx.lineTo(barX, barY + 2)
+    ctx.moveTo(barX + barPx, barY - 4)
+    ctx.lineTo(barX + barPx, barY + 2)
+    ctx.stroke()
+    ctx.font = 'bold 10px system-ui, sans-serif'
+    ctx.fillText(`${bft} ft`, barX + barPx + 6, barY + 3)
+    // Zoom level badge (top-right corner, only when not 100%)
+    if (z !== 1) {
+      ctx.font = '10px system-ui, sans-serif'
+      ctx.fillStyle = '#6b7280'
+      const label = `${Math.round(z * 100)}%`
+      const lw = ctx.measureText(label).width
+      ctx.fillText(label, canvas.width - lw - 8, 14)
+    }
   }
 
-  useEffect(() => { redraw(strokes) }, [strokes])
+  // Redraw whenever strokes, zoom, scale, or grid pitch/phase changes
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { redraw(strokes, zoom, blockFt, gridBlockPx, gridOrigin) }, [strokes, zoom, blockFt, gridBlockPx, gridOrigin])
+
   useEffect(() => {
-    // size canvas to its container on mount
     const canvas = canvasRef.current
-    if (canvas) { canvas.width = Math.min(900, canvas.parentElement?.clientWidth || 800); canvas.height = 480 }
-    redraw(strokes)
+    if (canvas) { canvas.width = Math.min(900, canvas.parentElement?.clientWidth || 800); canvas.height = 700 }
+    redraw(strokes, zoom, blockFt)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // Map screen coordinates → logical canvas coordinates (accounts for CSS scaling + zoom)
   function pos(e: React.MouseEvent | React.TouchEvent): { x: number; y: number } | null {
     const canvas = canvasRef.current
     if (!canvas) return null
     const rect = canvas.getBoundingClientRect()
+    const cssToPixelX = canvas.width / rect.width
+    const cssToPixelY = canvas.height / rect.height
     const point = 'touches' in e && e.touches && e.touches.length ? e.touches[0] : ('clientX' in e ? e : null)
     if (!point) return null
-    return { x: point.clientX - rect.left, y: point.clientY - rect.top }
+    return {
+      x: (point.clientX - rect.left) * cssToPixelX / zoom,
+      y: (point.clientY - rect.top) * cssToPixelY / zoom,
+    }
   }
+
+  function zoomIn() {
+    setZoom(z => {
+      const next = ZOOM_STEPS.find(s => s > z) ?? ZOOM_STEPS[ZOOM_STEPS.length - 1]
+      return next
+    })
+  }
+  function zoomOut() {
+    setZoom(z => {
+      const prev = [...ZOOM_STEPS].reverse().find(s => s < z) ?? ZOOM_STEPS[0]
+      return prev
+    })
+  }
+  function resetZoom() { setZoom(1) }
 
   function start(e: React.MouseEvent | React.TouchEvent) {
     e.preventDefault()
@@ -430,13 +620,16 @@ function SketchTab({ sketches, sessionId, onAdd, onRemove }: {
     if (!p) return
     if (current.current.points) current.current.points = [...current.current.points, p]
     else current.current.end = p
-    redraw([...strokes, current.current])
+    redraw([...strokes, current.current], zoom, blockFt)
   }
   function end() {
     if (!drawing.current || !current.current) return
     drawing.current = false
-    setStrokes(prev => [...prev, current.current!])
+    // Capture stroke BEFORE nulling the ref — React 18 batches state updates so
+    // the updater fn runs after current.current is already null if we don't do this.
+    const stroke = current.current
     current.current = null
+    setStrokes(prev => [...prev, stroke])
   }
   function undo() { setStrokes(prev => prev.slice(0, -1)) }
   function clearAll() { if (confirm('Clear the canvas?')) setStrokes([]) }
@@ -467,6 +660,64 @@ function SketchTab({ sketches, sessionId, onAdd, onRemove }: {
     setSaving(false)
   }
 
+  async function traceFromPhoto(file: File) {
+    setShowImportMenu(false)
+    setTracing(true)
+    setTraceError(null)
+    setTraceResult(null)
+    try {
+      // Downscale large images to max 1400px before sending — prevents nginx timeout on 3000+ px photos
+      const MAX_PX = 1400
+      let sendFile = file
+      const img = await new Promise<HTMLImageElement>((res, rej) => {
+        const i = new Image()
+        i.onload = () => res(i)
+        i.onerror = rej
+        i.src = URL.createObjectURL(file)
+      })
+      if (img.width > MAX_PX || img.height > MAX_PX) {
+        const scale = MAX_PX / Math.max(img.width, img.height)
+        const w = Math.round(img.width * scale)
+        const h = Math.round(img.height * scale)
+        const cvs = document.createElement('canvas')
+        cvs.width = w; cvs.height = h
+        cvs.getContext('2d')!.drawImage(img, 0, 0, w, h)
+        const blob = await new Promise<Blob | null>(r => cvs.toBlob(r, 'image/jpeg', 0.88))
+        if (blob) sendFile = new File([blob], 'sketch.jpg', { type: 'image/jpeg' })
+      }
+      URL.revokeObjectURL(img.src)
+      const fd = new FormData()
+      fd.append('image', sendFile)
+      const res = await fetch('/api/sketch-trace', { method: 'POST', body: fd })
+      const ct = res.headers.get('content-type') || ''
+      if (ct.includes('text/html')) {
+        setTraceError('Request timed out — try a clearer, well-lit photo with stronger contrast on the lines.')
+        return
+      }
+      const d = await res.json()
+      if (!res.ok) { setTraceError(d.error || 'Tracing failed'); return }
+      // Replace canvas strokes with the traced ones, and adopt the detected grid
+      // pitch/origin so the plan lines up square-for-square on the canvas paper.
+      setStrokes(d.strokes)
+      if (d.grid && typeof d.grid.blockPx === 'number' && d.grid.blockPx > 0) {
+        setGridBlockPx(d.grid.blockPx)
+        setGridOrigin({ x: Number(d.grid.originX) || 0, y: Number(d.grid.originY) || 0 })
+      } else {
+        setGridBlockPx(24); setGridOrigin({ x: 0, y: 0 })
+      }
+      setTraceResult({ count: d.count })
+      // Auto-dismiss success message after 4 s
+      setTimeout(() => setTraceResult(null), 4000)
+    } catch (e: any) {
+      setTraceError(e.message || 'Tracing failed')
+    } finally {
+      setTracing(false)
+      // Reset file inputs so same file can be re-selected
+      if (photoInputRef.current) photoInputRef.current.value = ''
+      if (cameraInputRef.current) cameraInputRef.current.value = ''
+    }
+  }
+
   const ToolBtn = ({ t, icon: Icon, title }: { t: StrokeTool; icon: any; title: string }) => (
     <button title={title} onClick={() => setTool(t)}
       className={`p-2 rounded-lg border transition-colors ${tool === t ? 'border-amber-300 bg-amber-50 text-amber-700' : 'border-gray-200 text-gray-500 hover:bg-gray-50'}`}>
@@ -475,9 +726,31 @@ function SketchTab({ sketches, sessionId, onAdd, onRemove }: {
   )
 
   return (
-    <div className="space-y-4">
-      <p className="text-xs text-gray-500">Sketch a rough room layout, place fixtures, and annotate measurements right on the canvas — then save it as part of this plan.</p>
+    <div className="space-y-3">
+      <p className="text-xs text-gray-500">Sketch a rough room layout, place fixtures, and annotate measurements. Use the scale and zoom controls to match real-world dimensions.</p>
 
+      {/* ── Photo import banners ── */}
+      {traceError && (
+        <div className="flex items-start gap-2 bg-red-50 border border-red-200 rounded-xl px-3 py-2.5">
+          <AlertCircle size={14} className="text-red-500 flex-shrink-0 mt-0.5" />
+          <p className="text-xs text-red-700 flex-1">{traceError}</p>
+          <button onClick={() => setTraceError(null)} className="text-red-400 hover:text-red-600"><X size={13} /></button>
+        </div>
+      )}
+      {traceResult && (
+        <div className="flex items-center gap-2 bg-green-50 border border-green-200 rounded-xl px-3 py-2.5">
+          <CheckCircle2 size={14} className="text-green-600 flex-shrink-0" />
+          <p className="text-xs text-green-800 font-medium">Traced! {traceResult.count} elements imported — edit them freely below.</p>
+        </div>
+      )}
+
+      {/* ── Hidden file inputs ── */}
+      <input ref={photoInputRef} type="file" accept="image/*" className="hidden"
+        onChange={e => { const f = e.target.files?.[0]; if (f) traceFromPhoto(f) }} />
+      <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" className="hidden"
+        onChange={e => { const f = e.target.files?.[0]; if (f) traceFromPhoto(f) }} />
+
+      {/* ── Drawing tools ── */}
       <div className="flex flex-wrap items-center gap-2 bg-gray-50 border border-gray-200 rounded-xl px-3 py-2">
         <ToolBtn t="pen" icon={PenTool} title="Pen" />
         <ToolBtn t="line" icon={Minus} title="Straight line / measurement" />
@@ -492,15 +765,112 @@ function SketchTab({ sketches, sessionId, onAdd, onRemove }: {
         <input type="range" min={1} max={14} value={width} onChange={e => setWidth(Number(e.target.value))} className="w-20" />
         <div className="flex-1" />
         <button onClick={undo} disabled={!strokes.length} title="Undo" className="p-2 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 disabled:opacity-30"><Undo2 size={14} /></button>
-        <button onClick={clearAll} disabled={!strokes.length} title="Clear" className="p-2 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 disabled:opacity-30"><RotateCcw size={14} /></button>
+        <button onClick={clearAll} disabled={!strokes.length} title="Clear all strokes" className="p-2 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 disabled:opacity-30"><RotateCcw size={14} /></button>
+        <div className="w-px h-6 bg-gray-200 mx-1" />
+        {/* Photo import dropdown */}
+        <div className="relative">
+          <button
+            onClick={() => setShowImportMenu(m => !m)}
+            disabled={tracing}
+            title="Import from photo — AI traces your hand-drawn floor plan"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-teal-300 bg-teal-50 text-teal-700 text-xs font-semibold hover:bg-teal-100 disabled:opacity-50 transition-colors">
+            {tracing ? <Loader2 size={13} className="animate-spin" /> : <ScanLine size={13} />}
+            {tracing ? 'Tracing…' : 'Import Photo'}
+          </button>
+          {showImportMenu && !tracing && (
+            <div className="absolute right-0 top-full mt-1 z-50 bg-white border border-gray-200 rounded-xl shadow-xl w-52 overflow-hidden">
+              <button
+                onClick={() => cameraInputRef.current?.click()}
+                className="w-full flex items-center gap-2.5 px-4 py-3 text-sm font-medium text-gray-800 hover:bg-teal-50 hover:text-teal-800 transition-colors">
+                <Camera size={15} className="text-teal-600" />
+                Take Photo
+                <span className="ml-auto text-[10px] text-gray-400">Camera</span>
+              </button>
+              <div className="h-px bg-gray-100" />
+              <button
+                onClick={() => photoInputRef.current?.click()}
+                className="w-full flex items-center gap-2.5 px-4 py-3 text-sm font-medium text-gray-800 hover:bg-teal-50 hover:text-teal-800 transition-colors">
+                <Upload size={15} className="text-teal-600" />
+                Choose File
+                <span className="ml-auto text-[10px] text-gray-400">Gallery</span>
+              </button>
+              {onOpenDrivePicker && <>
+                <div className="h-px bg-gray-100" />
+                <button
+                  onClick={() => { setShowImportMenu(false); onOpenDrivePicker() }}
+                  className="w-full flex items-center gap-2.5 px-4 py-3 text-sm font-medium text-gray-800 hover:bg-teal-50 hover:text-teal-800 transition-colors">
+                  <Cloud size={15} className="text-teal-600" />
+                  From Drive
+                  <span className="ml-auto text-[10px] text-gray-400">Google</span>
+                </button>
+              </>}
+              <div className="bg-teal-50 px-4 py-2.5">
+                <p className="text-[10px] text-teal-700 leading-snug">AI will trace walls, rooms, and labels from your hand-drawn sketch.</p>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
-      <div className="border border-gray-200 rounded-xl overflow-hidden bg-white">
+      {/* ── Scale + Zoom controls ── */}
+      <div className="flex flex-wrap items-center gap-3 bg-blue-50 border border-blue-100 rounded-xl px-3 py-2 text-xs">
+        {/* Scale */}
+        <div className="flex items-center gap-1.5">
+          <span className="text-gray-500 font-medium">Scale:</span>
+          <span className="text-gray-500">1 block =</span>
+          <input
+            type="number" min={0.25} max={200} step={0.25}
+            value={blockFtInput}
+            onChange={e => {
+              setBlockFtInput(e.target.value)
+              const v = parseFloat(e.target.value)
+              if (!isNaN(v) && v > 0) setBlockFt(v)
+            }}
+            className="w-14 border border-blue-200 rounded-lg px-1.5 py-0.5 text-center text-xs bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
+          />
+          <span className="text-gray-500">ft</span>
+        </div>
+        <div className="w-px h-5 bg-blue-200" />
+        {/* Zoom */}
+        <div className="flex items-center gap-1">
+          <span className="text-gray-500 font-medium">Zoom:</span>
+          <button onClick={zoomOut} disabled={zoom <= ZOOM_STEPS[0]} title="Zoom out"
+            className="p-1 rounded border border-blue-200 bg-white text-gray-600 hover:bg-blue-100 disabled:opacity-30 transition-colors">
+            <ZoomOut size={13} />
+          </button>
+          <button onClick={resetZoom}
+            className="px-2 py-0.5 rounded border border-blue-200 bg-white text-gray-700 hover:bg-blue-100 font-semibold tabular-nums min-w-[44px] text-center transition-colors"
+            title="Reset to 100%">
+            {Math.round(zoom * 100)}%
+          </button>
+          <button onClick={zoomIn} disabled={zoom >= ZOOM_STEPS[ZOOM_STEPS.length - 1]} title="Zoom in"
+            className="p-1 rounded border border-blue-200 bg-white text-gray-600 hover:bg-blue-100 disabled:opacity-30 transition-colors">
+            <ZoomIn size={13} />
+          </button>
+        </div>
+        <span className="text-blue-400 text-[10px]">Scale bar shown on canvas ↙</span>
+      </div>
+
+      {/* ── Canvas ── */}
+      <div className="relative border border-gray-200 rounded-xl overflow-hidden bg-white"
+        onClick={() => showImportMenu && setShowImportMenu(false)}>
         <canvas ref={canvasRef}
           className="w-full touch-none cursor-crosshair block"
           onMouseDown={start} onMouseMove={move} onMouseUp={end} onMouseLeave={end}
           onTouchStart={start} onTouchMove={move} onTouchEnd={end}
         />
+        {/* Tracing overlay */}
+        {tracing && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center bg-white/80 backdrop-blur-sm gap-3">
+            <div className="flex items-center gap-3 bg-white rounded-2xl border border-teal-200 shadow-lg px-6 py-4">
+              <Loader2 size={22} className="animate-spin text-teal-600" />
+              <div>
+                <p className="text-sm font-bold text-gray-900">Tracing your floor plan…</p>
+                <p className="text-xs text-gray-500 mt-0.5">Claude AI is analyzing walls, rooms, and labels</p>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="flex items-center gap-2 flex-wrap">

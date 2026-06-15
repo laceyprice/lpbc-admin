@@ -1,8 +1,9 @@
 'use client'
 import { useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { Sparkles, Loader2, ClipboardList, DollarSign, Clock, AlertTriangle, ListChecks, TrendingUp, History, Hammer, Upload, X, Image as ImageIcon, Film, FileText, Ruler, Save, FolderOpen, Plus, Trash2, Archive, Cloud, Folder, ChevronLeft, Search, Download, MapPin, Users2, Pencil, Check, RotateCcw, Wand2 } from 'lucide-react'
+import { Sparkles, Loader2, ClipboardList, DollarSign, Clock, AlertTriangle, ListChecks, TrendingUp, History, Hammer, Upload, X, Image as ImageIcon, Film, FileText, Ruler, Save, FolderOpen, Plus, Trash2, Archive, Cloud, Folder, ChevronLeft, Search, Download, MapPin, Users2, Pencil, Check, RotateCcw, Wand2, CalendarDays, ExternalLink, FolderPlus, Link2, RefreshCw } from 'lucide-react'
 import DesignStudio, { DesignData } from '@/components/admin/DesignStudio'
+import ProjectSchedule from '@/components/admin/ProjectSchedule'
 
 interface BudgetLine {
   category: string
@@ -178,8 +179,26 @@ export default function PlanJobPage() {
   const [savedAt, setSavedAt] = useState<Date | null>(null)
   const [previewing, setPreviewing] = useState<Attachment | null>(null)
   const [drivePickerOpen, setDrivePickerOpen] = useState(false)
+  const [drivePickerMoodBoard, setDrivePickerMoodBoard] = useState(false)
+  const [drivePickerForSketch, setDrivePickerForSketch] = useState(false)
+  const [sketchDriveImageUrl, setSketchDriveImageUrl] = useState<string | null>(null)
   const [progressTokens, setProgressTokens] = useState(0)
   const fileRef = useRef<HTMLInputElement>(null)
+
+  // Scope of work generation — tracks which section keys are in-flight + links to created docs
+  const [scopeGenerating, setScopeGenerating] = useState<Set<string>>(new Set())
+  const [scopeLinks, setScopeLinks] = useState<Record<string, string>>({})
+
+  // Permit requirement check
+  const [permitCheck, setPermitCheck] = useState<any>(null)
+  const [permitCheckLoading, setPermitCheckLoading] = useState(false)
+  const [permitResearching, setPermitResearching] = useState(false)
+
+  // Auto-save: track dirty state, debounce timer, and a ref to always-current save fn
+  const [isDirty, setIsDirty] = useState(false)
+  const autoSaveTimerRef = useRef<NodeJS.Timeout | null>(null)
+  const saveRef = useRef<() => Promise<void>>(async () => {})
+  const isLoadingPlanRef = useRef(false) // true while loadPlan() is running
 
   // Project linking — worksite, status, customer sharing
   const [worksiteId, setWorksiteId] = useState<string | null>(null)
@@ -192,6 +211,17 @@ export default function PlanJobPage() {
   // Design Studio — mood boards, sketches, before/after, AI design directions
   const [design, setDesign] = useState<DesignData>({})
   const [designStudioOpen, setDesignStudioOpen] = useState(false)
+
+  // Drive folder — connected Drive folder for sharing SOW / collecting COIs
+  const [driveFolderId,   setDriveFolderId]   = useState<string | null>(null)
+  const [driveFolderName, setDriveFolderName] = useState<string | null>(null)
+  const [driveFiles,      setDriveFiles]      = useState<any[]>([])
+  const [driveLoading,    setDriveLoading]    = useState(false)
+  const [driveUploading,  setDriveUploading]  = useState(false)
+  const [driveError,      setDriveError]      = useState('')
+  const [showConnectUrl,  setShowConnectUrl]  = useState(false)
+  const [connectUrlInput, setConnectUrlInput] = useState('')
+  const driveFileRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     (async () => {
@@ -233,7 +263,33 @@ export default function PlanJobPage() {
       }
       const d = await res.json()
       if (!res.ok) { setError(d.error || 'Drive import failed'); setUploading(false); return }
-      setAttachments(prev => [...prev, ...(d.uploaded || [])])
+      const uploaded = d.uploaded || []
+      setAttachments(prev => [...prev, ...uploaded])
+      // If Drive was opened from Design Studio Mood Board, auto-add images to the board
+      if (drivePickerMoodBoard) {
+        const images = uploaded.filter((a: any) => typeof a.type === 'string' && a.type.startsWith('image/'))
+        if (images.length > 0) {
+          setDesign(prev => ({
+            ...prev,
+            board: [
+              ...(prev.board || []),
+              ...images.map((att: any) => ({
+                id: `board_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+                path: att.path, signed_url: att.signed_url, name: att.name,
+                room: 'Other', label: att.name.replace(/\.[^.]+$/, ''), notes: '', price: 0,
+              })),
+            ],
+          }))
+        }
+        setDrivePickerMoodBoard(false)
+      }
+      if (drivePickerForSketch) {
+        const images = uploaded.filter((a: any) => typeof a.type === 'string' && a.type.startsWith('image/'))
+        if (images.length > 0 && images[0].signed_url) {
+          setSketchDriveImageUrl(images[0].signed_url)
+        }
+        setDrivePickerForSketch(false)
+      }
       if (Array.isArray(d.skipped) && d.skipped.length > 0) {
         const summary = d.skipped.slice(0, 5).map((s: any) => `• ${s.name}: ${s.reason}`).join('\n')
         const extra = d.skipped.length > 5 ? `\n…and ${d.skipped.length - 5} more` : ''
@@ -254,12 +310,42 @@ export default function PlanJobPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams])
 
+  // Always keep saveRef pointing at the latest save() closure (avoids stale-state in setTimeout)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { saveRef.current = save })
+
+  // Warn before closing/refreshing the tab if there are unsaved changes
+  useEffect(() => {
+    const handler = (e: BeforeUnloadEvent) => {
+      if (!isDirty) return
+      e.preventDefault()
+      e.returnValue = ''
+    }
+    window.addEventListener('beforeunload', handler)
+    return () => window.removeEventListener('beforeunload', handler)
+  }, [isDirty])
+
   async function loadPlansList() {
     try {
       const res = await fetch(`/api/job-plans${showArchived ? '?archived=true' : ''}`)
       const d = await res.json()
       setSavedPlans(Array.isArray(d) ? d : [])
     } catch {}
+  }
+
+  function markDirty() {
+    if (isLoadingPlanRef.current) return // never mark dirty during a plan load
+    setIsDirty(true)
+    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current)
+    autoSaveTimerRef.current = setTimeout(async () => {
+      await saveRef.current()
+      setIsDirty(false)
+    }, 3000)
+  }
+
+  function clearDirty() {
+    setIsDirty(false)
+    if (autoSaveTimerRef.current) { clearTimeout(autoSaveTimerRef.current); autoSaveTimerRef.current = null }
   }
 
   function reset() {
@@ -279,14 +365,21 @@ export default function PlanJobPage() {
     setEditingEstimate(false)
     setDesign({})
     setDesignStudioOpen(false)
+    setDriveFolderId(null)
+    setDriveFolderName(null)
+    setDriveFiles([])
+    setDriveError('')
+    setShowConnectUrl(false)
+    clearDirty()
   }
 
   async function loadPlan(id: string) {
+    isLoadingPlanRef.current = true
     setError('')
     try {
       const res = await fetch(`/api/job-plans?id=${id}`)
       const d = await res.json()
-      if (!res.ok) { setError(d.error || 'Failed to load plan'); return }
+      if (!res.ok) { setError(d.error || 'Failed to load plan'); isLoadingPlanRef.current = false; return }
       setPlanId(d.id)
       setTitle(d.title || '')
       setDescription(d.description || '')
@@ -303,9 +396,16 @@ export default function PlanJobPage() {
       setEditingEstimate(false)
       setDesign(d.design && typeof d.design === 'object' ? d.design : {})
       setDesignStudioOpen(false)
+      const fid = d.drive_folder_id || null
+      setDriveFolderId(fid)
+      setDriveFolderName(d.drive_folder_name || null)
+      setDriveFiles([])
+      if (fid) loadDriveFiles(fid)
+      clearDirty()
     } catch (e: any) {
       setError(e?.message || 'Failed to load plan')
     }
+    isLoadingPlanRef.current = false
   }
 
   async function save() {
@@ -317,6 +417,7 @@ export default function PlanJobPage() {
         description, measurements, session_id: sessionId,
         attachments, estimate, design,
         worksite_id: worksiteId, status, shared_with_account_id: sharedWithAccountId,
+        drive_folder_id: driveFolderId, drive_folder_name: driveFolderName,
       }
       const url = '/api/job-plans'
       const method = planId ? 'PATCH' : 'POST'
@@ -326,6 +427,7 @@ export default function PlanJobPage() {
       if (!res.ok) { setError(d.error || 'Save failed'); setSaving(false); return }
       if (!planId) setPlanId(d.id)
       setSavedAt(new Date())
+      clearDirty()
       await loadPlansList()
     } catch (e: any) {
       setError(e?.message || 'Save failed')
@@ -367,6 +469,83 @@ export default function PlanJobPage() {
   async function removeAttachment(att: Attachment) {
     await fetch(`/api/job-planning?path=${encodeURIComponent(att.path)}`, { method: 'DELETE' })
     setAttachments(prev => prev.filter(a => a.path !== att.path))
+  }
+
+  // ── Drive Folder helpers ──────────────────────────────────────────────────
+  async function loadDriveFiles(fid: string) {
+    setDriveLoading(true); setDriveError('')
+    try {
+      const res = await fetch(`/api/drive-folder?action=list&folder_id=${fid}`)
+      const d = await res.json()
+      if (!res.ok) { setDriveError(d.error || 'Could not list files'); setDriveLoading(false); return }
+      setDriveFiles(d.files || [])
+    } catch (e: any) { setDriveError(e?.message || 'Drive error') }
+    setDriveLoading(false)
+  }
+
+  async function createDriveFolder() {
+    setDriveLoading(true); setDriveError('')
+    const folderName = `${title || deriveTitle(description) || 'Project'} — Documents`
+    try {
+      const res = await fetch('/api/drive-folder?action=create-folder', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: folderName }),
+      })
+      const d = await res.json()
+      if (!res.ok) { setDriveError(d.error || 'Could not create folder'); setDriveLoading(false); return }
+      const folder = d.folder
+      setDriveFolderId(folder.id)
+      setDriveFolderName(folder.name)
+      setDriveFiles([])
+      markDirty()
+    } catch (e: any) { setDriveError(e?.message || 'Drive error') }
+    setDriveLoading(false)
+  }
+
+  async function connectFolderFromUrl() {
+    const url = connectUrlInput.trim()
+    if (!url) return
+    // Extract folder ID from Drive URL: https://drive.google.com/drive/folders/<id>
+    const match = url.match(/folders\/([a-zA-Z0-9_-]+)/) || url.match(/^([a-zA-Z0-9_-]{25,})$/)
+    const fid = match?.[1]
+    if (!fid) { setDriveError('Could not extract folder ID from that URL. Paste the full Google Drive folder URL.'); return }
+    setDriveLoading(true); setDriveError('')
+    try {
+      const res = await fetch(`/api/drive-folder?action=folder-info&folder_id=${fid}`)
+      const d = await res.json()
+      if (!res.ok) { setDriveError(d.error || 'Folder not found or not accessible'); setDriveLoading(false); return }
+      setDriveFolderId(d.folder.id)
+      setDriveFolderName(d.folder.name)
+      setShowConnectUrl(false)
+      setConnectUrlInput('')
+      loadDriveFiles(d.folder.id)
+      markDirty()
+    } catch (e: any) { setDriveError(e?.message || 'Drive error') }
+    setDriveLoading(false)
+  }
+
+  async function disconnectDriveFolder() {
+    if (!confirm('Disconnect this Drive folder? The folder itself stays in Google Drive — it just won\'t be linked to this plan.')) return
+    setDriveFolderId(null); setDriveFolderName(null); setDriveFiles([])
+    markDirty()
+  }
+
+  async function uploadToDrive(files: FileList | File[]) {
+    if (!driveFolderId || !files.length) return
+    setDriveUploading(true); setDriveError('')
+    try {
+      for (const file of Array.from(files)) {
+        const fd = new FormData()
+        fd.append('folder_id', driveFolderId)
+        fd.append('file', file)
+        const res = await fetch('/api/drive-folder?action=upload', { method: 'POST', body: fd })
+        const d = await res.json()
+        if (!res.ok) { setDriveError(d.error || 'Upload failed'); break }
+        if (d.file) setDriveFiles(prev => [d.file, ...prev])
+      }
+    } catch (e: any) { setDriveError(e?.message || 'Upload failed') }
+    setDriveUploading(false)
+    if (driveFileRef.current) driveFileRef.current.value = ''
   }
 
   async function generate() {
@@ -500,7 +679,132 @@ export default function PlanJobPage() {
   }
   function patchEstimate(patch: (e: Estimate) => Estimate) {
     setEstimate(prev => prev ? recalc(patch(prev)) : prev)
+    markDirty()
   }
+  async function generateScope(
+    sections: Array<{ name: string; items: BudgetLine[] }>,
+    key: string
+  ) {
+    setScopeGenerating(prev => new Set([...prev, key]))
+    try {
+      const worksite = worksiteOptions.find(w => w.id === worksiteId)
+      const res = await fetch('/api/scope-of-work', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jobTitle: title,
+          address: worksite?.address || '',
+          city: worksite?.city || '',
+          sections: sections.map(s => ({
+            name: s.name,
+            items: s.items.map(item => ({
+              category: item.category,
+              notes: item.notes || '',
+              estimated_cost: item.estimated_cost,
+            })),
+          })),
+        }),
+      })
+      const ct = res.headers.get('content-type') || ''
+      if (!ct.includes('application/json')) {
+        throw new Error(
+          res.status === 404
+            ? 'Scope of Work API not found — deploy the latest version to enable this feature.'
+            : `Google Docs API returned an unexpected response (${res.status}). If this is your first time using Scope of Work, you may need to re-authorize Google at /admin/google-connect to add the Google Docs permission.`
+        )
+      }
+      const d = await res.json()
+      if (!res.ok) { alert('Failed to create scope: ' + (d.error || 'Unknown error')); return }
+      setScopeLinks(prev => ({ ...prev, [key]: d.docUrl }))
+      window.open(d.docUrl, '_blank')
+    } catch (e: any) {
+      alert('Scope generation error: ' + (e?.message || String(e)))
+    } finally {
+      setScopeGenerating(prev => { const n = new Set(prev); n.delete(key); return n })
+    }
+  }
+
+  async function checkPermits() {
+    if (!estimate) return
+    setPermitCheckLoading(true)
+    setPermitCheck(null)
+    try {
+      const worksite = worksiteOptions.find(w => w.id === worksiteId)
+      const bySec = new Map<string, BudgetLine[]>()
+      estimate.materials_breakdown.forEach(m => {
+        const sec = (m.section && BUDGET_SECTIONS.includes(m.section)) ? m.section : 'Other'
+        if (!bySec.has(sec)) bySec.set(sec, [])
+        bySec.get(sec)!.push(m)
+      })
+      const sections = Array.from(bySec.entries()).map(([name, items]) => ({ name, items }))
+      const res = await fetch('/api/permit-check', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ city: worksite?.city || '', state: 'FL', sections }),
+      })
+      const d = await res.json()
+      if (!res.ok) throw new Error(d.error || 'Failed')
+      setPermitCheck(d)
+    } catch (e: any) {
+      alert('Permit check failed: ' + (e?.message || String(e)))
+    } finally {
+      setPermitCheckLoading(false)
+    }
+  }
+
+  async function researchMunicipalityPermits() {
+    const worksite = worksiteOptions.find(w => w.id === worksiteId)
+    const city = worksite?.city || ''
+    if (!city) return
+    setPermitResearching(true)
+    try {
+      // 1. Research per-trade building permit rules for this city
+      const researchRes = await fetch(
+        `/api/permit-jurisdictions?action=research-building&name=${encodeURIComponent(city)}&state=FL`
+      )
+      const researchData = await researchRes.json()
+      if (!researchRes.ok) throw new Error(researchData.error || 'Research failed')
+
+      // 2. Check if jurisdiction already exists in DB
+      const listRes = await fetch(`/api/permit-jurisdictions?search=${encodeURIComponent(city)}`)
+      const existing: any[] = await listRes.json()
+
+      if (existing.length > 0) {
+        // Update existing record with building permit notes
+        await fetch('/api/permit-jurisdictions', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: existing[0].id,
+            notes: researchData.notes,
+            ai_populated: true,
+          }),
+        })
+      } else {
+        // Create a new record for this city
+        await fetch('/api/permit-jurisdictions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: city,
+            state: 'FL',
+            notes: researchData.notes,
+            ai_populated: true,
+            inspection_required: true,
+            gas_permit_required: true,
+            lp_permit_required: true,
+          }),
+        })
+      }
+    } catch (e: any) {
+      alert('Research failed: ' + (e?.message || String(e)))
+    } finally {
+      setPermitResearching(false)
+    }
+    // 3. Rerun permit check — will now find the jurisdiction with per-trade notes
+    checkPermits()
+  }
+
   function updateMaterial(i: number, field: 'category' | 'notes' | 'section' | 'estimated_cost' | 'quoted_cost' | 'actual_cost', value: string) {
     patchEstimate(e => ({
       ...e,
@@ -577,15 +881,6 @@ export default function PlanJobPage() {
           <p className="text-gray-500 text-sm mt-0.5">Save drafts, come back later, generate estimates with AI vision + your bookkeeping history</p>
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={() => setDesignStudioOpen(true)}
-            className="flex items-center gap-1.5 text-xs font-bold px-3 py-2 rounded-xl border transition-colors"
-            style={{ borderColor: '#e8d9c8', background: '#fbf3ec', color: '#9a6a3c' }}>
-            <Wand2 size={13} /> Design Studio
-            {(() => {
-              const c = (design.board?.length || 0) + (design.sketches?.length || 0) + (design.comparisons?.length || 0) + (design.ai_suggestions?.length || 0)
-              return c > 0 ? <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-200 text-amber-800">{c}</span> : null
-            })()}
-          </button>
           <button onClick={() => setShowLoadPanel(!showLoadPanel)}
             className="flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-xl border border-gray-200 hover:bg-gray-50">
             <FolderOpen size={13} /> My Plans ({savedPlans.length})
@@ -595,6 +890,31 @@ export default function PlanJobPage() {
             <Plus size={13} /> New
           </button>
         </div>
+      </div>
+
+      {/* ── Section quick-links ──────────────────────────────────────── */}
+      <div className="flex items-center gap-2 mb-5 flex-wrap">
+        {([
+          { id: 'sec-overview', label: 'Overview',  Icon: ClipboardList },
+          { id: 'sec-schedule', label: 'Schedule',  Icon: CalendarDays },
+          { id: 'sec-drive',    label: 'Drive',     Icon: Folder },
+          { id: 'sec-estimate', label: 'Estimate',  Icon: DollarSign },
+        ] as const).map(t => (
+          <button key={t.id}
+            onClick={() => document.getElementById(t.id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+            className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-xl border border-gray-200 bg-white hover:bg-gray-50 text-gray-600 transition-colors shadow-sm">
+            <t.Icon size={12} /> {t.label}
+          </button>
+        ))}
+        <button onClick={() => setDesignStudioOpen(true)}
+          className="flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-xl border transition-colors shadow-sm ml-auto"
+          style={{ borderColor: '#e8d9c8', background: '#fbf3ec', color: '#9a6a3c' }}>
+          <Wand2 size={12} /> Design Studio
+          {(() => {
+            const c = (design.board?.length || 0) + (design.sketches?.length || 0) + (design.comparisons?.length || 0) + (design.ai_suggestions?.length || 0)
+            return c > 0 ? <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 ml-0.5">{c}</span> : null
+          })()}
+        </button>
       </div>
 
       {/* Saved plans panel */}
@@ -641,16 +961,20 @@ export default function PlanJobPage() {
 
       {/* Title + status bar */}
       <div className="bg-white rounded-2xl shadow-sm border border-gray-100 px-4 py-3 mb-5 flex items-center gap-3 flex-wrap">
-        <input value={title} onChange={e => setTitle(e.target.value)}
+        <input value={title} onChange={e => { setTitle(e.target.value); markDirty() }}
           placeholder="Plan title (auto-generated from description if blank)"
           className="flex-1 min-w-[200px] px-3 py-2 rounded-xl border border-gray-200 text-sm font-semibold focus:outline-none focus:ring-2 focus:border-blue-400" />
         <div className="text-[11px] text-gray-500 flex items-center gap-2">
-          {planId ? (
+          {saving ? (
+            <span className="text-blue-500 font-semibold flex items-center gap-1"><Loader2 size={10} className="animate-spin" /> Saving…</span>
+          ) : isDirty ? (
+            <span className="text-amber-600 font-semibold">● Unsaved changes</span>
+          ) : planId ? (
             <span className="text-blue-600 font-semibold">Editing saved plan</span>
           ) : (
             <span className="text-amber-700 font-semibold">Unsaved draft</span>
           )}
-          {savedAt && <span>· Saved {savedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>}
+          {savedAt && !isDirty && !saving && <span>· Saved {savedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>}
         </div>
         <button onClick={save} disabled={saving || (!description && !measurements && attachments.length === 0)}
           className="flex items-center gap-1.5 text-sm font-bold px-4 py-2 rounded-xl border border-gray-200 hover:bg-gray-50 disabled:opacity-50">
@@ -663,7 +987,7 @@ export default function PlanJobPage() {
       <div className="bg-white rounded-2xl shadow-sm border border-gray-100 px-4 py-3 mb-5 grid grid-cols-1 sm:grid-cols-3 gap-3">
         <div>
           <label className="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1 flex items-center gap-1"><MapPin size={11} /> Worksite</label>
-          <select value={worksiteId || ''} onChange={e => setWorksiteId(e.target.value || null)}
+          <select value={worksiteId || ''} onChange={e => { setWorksiteId(e.target.value || null); markDirty() }}
             className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:border-blue-400 bg-white">
             <option value="">— Not linked —</option>
             {worksiteOptions.map(w => <option key={w.id} value={w.id}>{w.address}{w.city ? `, ${w.city}` : ''}</option>)}
@@ -671,7 +995,7 @@ export default function PlanJobPage() {
         </div>
         <div>
           <label className="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1">Project Status</label>
-          <select value={status} onChange={e => setStatus(e.target.value)}
+          <select value={status} onChange={e => { setStatus(e.target.value); markDirty() }}
             className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:border-blue-400 bg-white">
             <option value="draft">Draft</option>
             <option value="estimated">Estimate Ready</option>
@@ -696,12 +1020,12 @@ export default function PlanJobPage() {
       </div>
 
       {/* Input panel */}
-      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5 mb-6 space-y-4">
+      <div id="sec-overview" className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5 mb-6 space-y-4">
         <div>
           <label className="block text-sm font-semibold text-gray-700 mb-2">Job description</label>
           <textarea
             value={description}
-            onChange={e => setDescription(e.target.value)}
+            onChange={e => { setDescription(e.target.value); markDirty() }}
             rows={4}
             placeholder="e.g. Full master bathroom remodel — tear out existing tub/shower/vanity/tile, walk-in shower with custom tile, double vanity, new toilet, paint, lighting. Approx 12x10 ft."
             className="w-full px-4 py-3 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:border-blue-400"
@@ -712,7 +1036,7 @@ export default function PlanJobPage() {
           <label className="block text-sm font-semibold text-gray-700 mb-2 flex items-center gap-1.5"><Ruler size={13} /> Measurements & scope notes (optional)</label>
           <textarea
             value={measurements}
-            onChange={e => setMeasurements(e.target.value)}
+            onChange={e => { setMeasurements(e.target.value); markDirty() }}
             rows={3}
             placeholder={`Room: 12'×10'×8' ceiling\nShower wall: 6'×4'\nWindow: 36"×48"\nExisting flooring: porcelain tile, mud-set\nPlumbing: PEX, accessible from attic`}
             className="w-full px-4 py-3 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:border-blue-400 font-mono"
@@ -786,6 +1110,155 @@ export default function PlanJobPage() {
         {error && <div className="bg-red-50 border border-red-100 text-red-700 text-sm px-4 py-3 rounded-xl whitespace-pre-wrap break-words">{error}</div>}
       </div>
 
+      {/* ── Project Schedule ─────────────────────────────────────────────── */}
+      <div id="sec-schedule" className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden mb-5">
+        <div className="px-5 py-3 border-b border-gray-100 flex items-center gap-2">
+          <CalendarDays size={14} style={{ color: '#b8895a' }} />
+          <h2 className="font-bold text-gray-900 text-sm">Project Schedule</h2>
+          <span className="text-[11px] text-gray-400 ml-1">Tasks, milestones, deliveries &amp; inspections</span>
+        </div>
+        {planId ? (
+          <div className="p-5">
+            <ProjectSchedule planId={planId} />
+          </div>
+        ) : (
+          <div className="px-5 py-6 text-center text-gray-400 text-sm">
+            Save this plan first to start building the schedule.
+          </div>
+        )}
+      </div>
+
+      {/* ── Project Drive Folder ─────────────────────────────────────────── */}
+      <div id="sec-drive" className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden mb-6">
+        <div className="px-5 py-3 border-b border-gray-100 flex items-center gap-2">
+          <Folder size={14} style={{ color: '#b8895a' }} />
+          <h2 className="font-bold text-gray-900 text-sm">Project Drive Folder</h2>
+          <span className="text-[11px] text-gray-400 ml-1">Share scope of work · collect COIs &amp; docs from subs</span>
+          <div className="flex-1" />
+          {driveFolderId && (
+            <button onClick={() => loadDriveFiles(driveFolderId!)} disabled={driveLoading} title="Refresh files"
+              className="p-1.5 rounded-lg border border-gray-200 hover:bg-gray-50 disabled:opacity-40">
+              <RefreshCw size={12} className={driveLoading ? 'animate-spin text-blue-500' : 'text-gray-500'} />
+            </button>
+          )}
+        </div>
+
+        <div className="p-5">
+          {driveError && (
+            <div className="mb-3 bg-red-50 border border-red-100 text-red-700 text-xs px-3 py-2 rounded-lg">{driveError}</div>
+          )}
+
+          {!driveFolderId ? (
+            /* No folder connected yet */
+            <div className="space-y-3">
+              <p className="text-xs text-gray-500">
+                Connect a Google Drive folder to this project — upload scope of work PDFs for subs, and have them drop COIs &amp; signed docs right into the same folder.
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <button onClick={createDriveFolder} disabled={driveLoading}
+                  className="flex items-center gap-1.5 text-xs font-bold px-4 py-2 rounded-xl text-white disabled:opacity-50"
+                  style={{ background: '#2f5a5e' }}>
+                  {driveLoading ? <Loader2 size={11} className="animate-spin" /> : <FolderPlus size={12} />}
+                  Create New Folder
+                </button>
+                <button onClick={() => { setShowConnectUrl(v => !v); setDriveError('') }}
+                  className="flex items-center gap-1.5 text-xs font-semibold px-4 py-2 rounded-xl border border-gray-200 hover:bg-gray-50">
+                  <Link2 size={12} /> Connect Existing Folder
+                </button>
+              </div>
+              {showConnectUrl && (
+                <div className="flex items-center gap-2 mt-2">
+                  <input value={connectUrlInput} onChange={e => setConnectUrlInput(e.target.value)}
+                    placeholder="Paste Google Drive folder URL or folder ID"
+                    className="flex-1 px-3 py-2 rounded-xl border border-gray-200 text-xs focus:outline-none focus:ring-2 focus:border-blue-400" />
+                  <button onClick={connectFolderFromUrl} disabled={!connectUrlInput.trim() || driveLoading}
+                    className="flex items-center gap-1 text-xs font-bold px-3 py-2 rounded-xl text-white disabled:opacity-50"
+                    style={{ background: '#b8895a' }}>
+                    {driveLoading ? <Loader2 size={11} className="animate-spin" /> : <Check size={11} />} Connect
+                  </button>
+                </div>
+              )}
+            </div>
+          ) : (
+            /* Folder is connected */
+            <div className="space-y-4">
+              {/* Folder info bar */}
+              <div className="flex items-center gap-3 bg-green-50 border border-green-200 rounded-xl px-4 py-3">
+                <Folder size={16} className="text-green-600 flex-shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-bold text-green-800 truncate">{driveFolderName || 'Project Folder'}</div>
+                  <div className="text-[11px] text-green-600">{driveFiles.length} file{driveFiles.length !== 1 ? 's' : ''} in folder</div>
+                </div>
+                <a href={`https://drive.google.com/drive/folders/${driveFolderId}`} target="_blank" rel="noopener noreferrer"
+                  className="flex items-center gap-1 text-xs font-semibold text-green-700 hover:text-green-900">
+                  Open in Drive <ExternalLink size={11} />
+                </a>
+                <button onClick={disconnectDriveFolder} className="text-gray-400 hover:text-red-500 ml-2 p-1 rounded-lg hover:bg-red-50 transition-colors" title="Disconnect folder">
+                  <X size={13} />
+                </button>
+              </div>
+
+              {/* Sharing tip */}
+              <div className="bg-blue-50 border border-blue-100 rounded-xl px-4 py-3 text-xs text-blue-800">
+                <strong>Sharing with subs:</strong> Open the folder in Drive → click Share → paste the sub's email or copy the link. Anyone with the link can view files. To let subs upload, grant Editor access.
+              </div>
+
+              {/* Upload area */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-semibold text-gray-700">Upload to Project Folder</span>
+                  <label className="flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-xl text-white cursor-pointer disabled:opacity-50"
+                    style={{ background: '#b8895a' }}>
+                    {driveUploading ? <Loader2 size={11} className="animate-spin" /> : <Upload size={11} />}
+                    {driveUploading ? 'Uploading…' : 'Upload File'}
+                    <input ref={driveFileRef} type="file" multiple className="hidden"
+                      onChange={e => e.target.files && uploadToDrive(e.target.files)} />
+                  </label>
+                </div>
+
+                {/* File list */}
+                {driveLoading && driveFiles.length === 0 ? (
+                  <div className="text-center py-4 text-gray-400 text-xs flex items-center justify-center gap-1">
+                    <Loader2 size={12} className="animate-spin" /> Loading files…
+                  </div>
+                ) : driveFiles.length === 0 ? (
+                  <div className="text-center py-4 text-gray-400 text-xs">No files yet — upload a scope of work, COI, or other docs.</div>
+                ) : (
+                  <div className="divide-y divide-gray-100 border border-gray-100 rounded-xl overflow-hidden">
+                    {driveFiles.slice(0, 20).map((f: any) => (
+                      <a key={f.id} href={f.webViewLink} target="_blank" rel="noopener noreferrer"
+                        className="flex items-center gap-3 px-3 py-2.5 hover:bg-gray-50 transition-colors group">
+                        {f.thumbnailLink
+                          ? <img src={f.thumbnailLink} alt="" className="w-8 h-8 rounded object-cover flex-shrink-0" />
+                          : <FileText size={16} className="text-gray-400 flex-shrink-0" />
+                        }
+                        <div className="flex-1 min-w-0">
+                          <div className="text-xs font-semibold text-gray-800 truncate group-hover:text-blue-700">{f.name}</div>
+                          <div className="text-[10px] text-gray-400">
+                            {f.mimeType?.split('.').pop()?.split('/').pop()?.toUpperCase() || 'File'}
+                            {f.size ? ` · ${Math.round(Number(f.size) / 1024)} KB` : ''}
+                            {f.modifiedTime ? ` · ${new Date(f.modifiedTime).toLocaleDateString()}` : ''}
+                          </div>
+                        </div>
+                        <ExternalLink size={11} className="text-gray-300 group-hover:text-blue-500 flex-shrink-0" />
+                      </a>
+                    ))}
+                    {driveFiles.length > 20 && (
+                      <a href={`https://drive.google.com/drive/folders/${driveFolderId}`} target="_blank" rel="noopener noreferrer"
+                        className="flex items-center justify-center gap-1 px-3 py-2 text-xs text-blue-600 hover:bg-blue-50 font-semibold">
+                        View all {driveFiles.length} files in Drive <ExternalLink size={10} />
+                      </a>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div id="sec-estimate" />
+
       {loading && (
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-8 text-center text-gray-400">
           <Loader2 size={28} className="animate-spin mx-auto mb-3" style={{ color: '#b8895a' }} />
@@ -844,8 +1317,43 @@ export default function PlanJobPage() {
           </div>
 
           <Section title="Budget Breakdown" icon={ListChecks}>
-            <div className="px-5 pt-3 pb-1 text-[11px] text-gray-400">
-              Materials, labor, and subcontractor costs all live here as one unified budget. Fill in <span className="text-blue-600 font-semibold">Quoted</span> once a real quote comes in, and <span className="text-emerald-600 font-semibold">Actual Billed</span> once the job wraps — the spread shows automatically.
+            <div className="px-5 pt-3 pb-2 flex items-start justify-between gap-4">
+              <p className="text-[11px] text-gray-400 flex-1">
+                Materials, labor, and subcontractor costs all live here as one unified budget. Fill in <span className="text-blue-600 font-semibold">Quoted</span> once a real quote comes in, and <span className="text-emerald-600 font-semibold">Actual Billed</span> once the job wraps — the spread shows automatically.
+              </p>
+              {estimate.materials_breakdown.length > 0 && (() => {
+                // Build the full section list for the "all sections" scope button
+                const bySec = new Map<string, BudgetLine[]>()
+                estimate.materials_breakdown.forEach(m => {
+                  const sec = (m.section && BUDGET_SECTIONS.includes(m.section)) ? m.section : 'Other'
+                  if (!bySec.has(sec)) bySec.set(sec, [])
+                  bySec.get(sec)!.push(m)
+                })
+                const allSecs = [
+                  ...BUDGET_SECTIONS.filter(s => bySec.has(s)),
+                  ...Array.from(bySec.keys()).filter(s => !BUDGET_SECTIONS.includes(s)),
+                ].map(name => ({ name, items: bySec.get(name)! }))
+                const isGenerating = scopeGenerating.has('__all__')
+                return (
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    {scopeLinks['__all__'] && (
+                      <a href={scopeLinks['__all__']} target="_blank" rel="noopener noreferrer"
+                        className="text-[10px] text-blue-600 underline font-semibold whitespace-nowrap">
+                        View Full Scope ↗
+                      </a>
+                    )}
+                    <button
+                      onClick={() => generateScope(allSecs, '__all__')}
+                      disabled={isGenerating}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-semibold text-white disabled:opacity-60 transition-colors whitespace-nowrap"
+                      style={{ background: '#b8895a' }}
+                    >
+                      {isGenerating ? <Loader2 size={11} className="animate-spin" /> : <FileText size={11} />}
+                      Full Scope of Work
+                    </button>
+                  </div>
+                )
+              })()}
             </div>
             <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -877,10 +1385,33 @@ export default function PlanJobPage() {
                   return (
                     <tbody key={section} className="divide-y divide-gray-50">
                       <tr className="bg-gray-50/70">
-                        <td colSpan={colSpan} className="px-4 py-1.5 text-[11px] font-bold text-gray-500 uppercase tracking-wider">
+                        <td colSpan={colSpan} className="px-4 py-1.5">
                           <div className="flex items-center justify-between">
-                            <span>{section} <span className="font-normal normal-case text-gray-400">· {indices.length} item{indices.length === 1 ? '' : 's'}</span></span>
-                            <span className="font-mono text-gray-600">${subtotal.toFixed(2)}</span>
+                            <span className="text-[11px] font-bold text-gray-500 uppercase tracking-wider">
+                              {section} <span className="font-normal normal-case text-gray-400">· {indices.length} item{indices.length === 1 ? '' : 's'}</span>
+                            </span>
+                            <div className="flex items-center gap-2">
+                              {scopeLinks[section] && (
+                                <a href={scopeLinks[section]} target="_blank" rel="noopener noreferrer"
+                                  className="text-[10px] text-blue-500 underline font-semibold">
+                                  View ↗
+                                </a>
+                              )}
+                              <button
+                                onClick={() => generateScope(
+                                  [{ name: section, items: indices.map(i => estimate.materials_breakdown[i]) }],
+                                  section
+                                )}
+                                disabled={scopeGenerating.has(section)}
+                                className="flex items-center gap-1 text-[10px] font-semibold text-gray-400 hover:text-blue-600 disabled:opacity-50 transition-colors"
+                                title={`Generate scope of work for ${section}`}
+                              >
+                                {scopeGenerating.has(section)
+                                  ? <Loader2 size={10} className="animate-spin" />
+                                  : <FileText size={10} />}
+                                Scope
+                              </button>
+                            </div>
                           </div>
                         </td>
                       </tr>
@@ -900,8 +1431,18 @@ export default function PlanJobPage() {
                                     className="w-full px-2 py-1 rounded-lg border border-gray-200 text-sm font-medium focus:outline-none focus:ring-2 focus:border-blue-400" />
                                 </td>
                                 <td className="px-4 py-1.5">
-                                  <input value={m.notes} onChange={e => updateMaterial(i, 'notes', e.target.value)}
-                                    className="w-full px-2 py-1 rounded-lg border border-gray-200 text-xs text-gray-600 focus:outline-none focus:ring-2 focus:border-blue-400" />
+                                  <textarea
+                                    ref={el => { if (el) { el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px' } }}
+                                    value={m.notes}
+                                    onChange={e => {
+                                      updateMaterial(i, 'notes', e.target.value)
+                                      const t = e.currentTarget
+                                      t.style.height = 'auto'
+                                      t.style.height = t.scrollHeight + 'px'
+                                    }}
+                                    rows={1}
+                                    className="w-full px-2 py-1 rounded-lg border border-gray-200 text-xs text-gray-600 focus:outline-none focus:ring-2 focus:border-blue-400 resize-none overflow-hidden leading-relaxed"
+                                  />
                                 </td>
                                 <td className="px-4 py-1.5">
                                   <div className="flex items-center justify-end gap-1">
@@ -943,6 +1484,15 @@ export default function PlanJobPage() {
                           </tr>
                         )
                       })}
+                      <tr className="border-t border-gray-100 bg-gray-50/40">
+                        <td colSpan={2} className="px-4 py-1.5 text-right text-[11px] text-gray-400 uppercase tracking-wider font-semibold">
+                          {section} subtotal
+                        </td>
+                        <td className="px-4 py-1.5 text-right font-mono text-sm font-bold text-gray-700">
+                          ${subtotal.toFixed(2)}
+                        </td>
+                        <td colSpan={editingEstimate ? 3 : 2} />
+                      </tr>
                       {editingEstimate && (
                         <tr>
                           <td colSpan={colSpan} className="px-4 py-1.5">
@@ -1047,6 +1597,146 @@ export default function PlanJobPage() {
             )}
           </Section>
 
+          {/* ── Permit Requirements ─────────────────────────── */}
+          <Section title="Permit Requirements" icon={ClipboardList}>
+            <div className="px-5 py-4">
+              {!permitCheck && !permitCheckLoading && !permitResearching && (
+                <div className="flex items-center justify-between">
+                  <p className="text-sm text-gray-500">
+                    {worksiteId
+                      ? `Check whether this scope of work requires permits in ${worksiteOptions.find(w => w.id === worksiteId)?.city || 'this municipality'}.`
+                      : 'Link a worksite above to enable municipality-specific permit checking.'}
+                  </p>
+                  <button
+                    onClick={checkPermits}
+                    disabled={!estimate?.materials_breakdown?.length}
+                    className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold text-white disabled:opacity-40 transition-colors flex-shrink-0 ml-4"
+                    style={{ background: '#185FA5' }}
+                  >
+                    <Sparkles size={14} /> Check Permit Requirements
+                  </button>
+                </div>
+              )}
+
+              {(permitResearching || permitCheckLoading) && (
+                <div className="flex items-center gap-3 py-4 text-gray-500 text-sm">
+                  <Loader2 size={18} className="animate-spin text-blue-500" />
+                  {permitResearching
+                    ? `Researching ${worksiteOptions.find(w => w.id === worksiteId)?.city || 'municipality'} permit rules…`
+                    : `Analyzing scope against ${worksiteOptions.find(w => w.id === worksiteId)?.city || 'municipality'} building codes…`
+                  }
+                </div>
+              )}
+
+              {permitCheck && (
+                <div className="space-y-4">
+                  {/* Header row */}
+                  <div className="flex items-start justify-between gap-4">
+                    <p className="text-sm text-gray-700">{permitCheck.summary}</p>
+                    <button
+                      onClick={checkPermits}
+                      disabled={permitCheckLoading || permitResearching}
+                      className="flex items-center gap-1.5 text-[11px] font-semibold text-gray-400 hover:text-blue-600 flex-shrink-0 transition-colors"
+                    >
+                      <RotateCcw size={11} /> Recheck
+                    </button>
+                  </div>
+
+                  {/* Data source badge + research button */}
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {permitCheck.jurisdictionSource === 'database' && permitCheck.hasDetailedRules ? (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-green-50 text-green-700 border border-green-200">
+                        <MapPin size={10} /> {permitCheck.jurisdiction?.name || permitCheck.city} – municipality-specific rules
+                      </span>
+                    ) : permitCheck.jurisdictionSource === 'database' ? (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-blue-50 text-blue-700 border border-blue-200">
+                        <MapPin size={10} /> {permitCheck.jurisdiction?.name || permitCheck.city} – on file (gas/LP data only)
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-50 text-amber-700 border border-amber-200">
+                        <AlertTriangle size={10} /> General FL building code — no {permitCheck.city || 'city'} data on file
+                      </span>
+                    )}
+                    {!permitCheck.hasDetailedRules && permitCheck.city && (
+                      <button
+                        onClick={researchMunicipalityPermits}
+                        disabled={permitResearching || permitCheckLoading}
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-white text-blue-600 border border-blue-200 hover:bg-blue-50 transition-colors disabled:opacity-50"
+                      >
+                        <Sparkles size={10} /> Research {permitCheck.city} rules →
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Permit list */}
+                  {permitCheck.permits.length === 0 ? (
+                    <div className="flex items-center gap-2 p-3 bg-green-50 rounded-xl text-sm text-green-700 font-medium">
+                      <Check size={16} /> No permits appear to be required for this scope of work.
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 gap-2">
+                      {permitCheck.permits.map((p: any, i: number) => (
+                        <div key={i} className={`flex items-start gap-3 p-3 rounded-xl border ${
+                          p.required === 'yes' ? 'bg-red-50 border-red-100' :
+                          p.required === 'maybe' ? 'bg-amber-50 border-amber-100' :
+                          'bg-green-50 border-green-100'
+                        }`}>
+                          <div className={`mt-0.5 flex-shrink-0 text-xs font-bold px-2 py-0.5 rounded-full ${
+                            p.required === 'yes' ? 'bg-red-600 text-white' :
+                            p.required === 'maybe' ? 'bg-amber-500 text-white' :
+                            'bg-green-600 text-white'
+                          }`}>
+                            {p.required === 'yes' ? 'REQUIRED' : p.required === 'maybe' ? 'MAYBE' : 'NOT REQ.'}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="font-semibold text-sm text-gray-900">{p.type}</div>
+                            <div className="text-xs text-gray-600 mt-0.5">{p.reason}</div>
+                            {p.triggeredBy?.length > 0 && (
+                              <div className="flex flex-wrap gap-1 mt-1.5">
+                                {p.triggeredBy.map((sec: string) => (
+                                  <span key={sec} className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-white/70 text-gray-500 border border-gray-200">{sec}</span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                          <a
+                            href={`/admin/permits?prefill=${encodeURIComponent(JSON.stringify({ permit_type: p.type.toLowerCase().replace(' permit',''), city: permitCheck.city }))}`}
+                            className="flex-shrink-0 text-[11px] font-semibold text-blue-600 hover:underline whitespace-nowrap"
+                          >
+                            + Create Record
+                          </a>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Jurisdiction info */}
+                  {permitCheck.jurisdiction && (
+                    <div className="p-3 bg-gray-50 rounded-xl text-xs text-gray-600 space-y-1 border border-gray-100">
+                      <div className="font-semibold text-gray-800 text-sm">{permitCheck.jurisdiction.name}</div>
+                      {permitCheck.jurisdiction.permit_office_phone && (
+                        <div>📞 {permitCheck.jurisdiction.permit_office_phone}</div>
+                      )}
+                      {permitCheck.jurisdiction.typical_fee_range && (
+                        <div>💰 Typical fees: {permitCheck.jurisdiction.typical_fee_range}</div>
+                      )}
+                      {permitCheck.jurisdiction.typical_processing_days && (
+                        <div>⏱ Processing: ~{permitCheck.jurisdiction.typical_processing_days} business days</div>
+                      )}
+                      {permitCheck.jurisdiction.website_url && (
+                        <a href={permitCheck.jurisdiction.website_url} target="_blank" rel="noopener noreferrer"
+                          className="text-blue-600 underline block">🌐 {permitCheck.jurisdiction.website_url}</a>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Disclaimer */}
+                  <p className="text-[11px] text-gray-400 italic">{permitCheck.disclaimer}</p>
+                </div>
+              )}
+            </div>
+          </Section>
+
           <Section title="Design + PM Fee Rationale" icon={DollarSign}>
             <div className="px-5 py-4">
               <div className="flex items-baseline gap-3 mb-2">
@@ -1121,16 +1811,21 @@ export default function PlanJobPage() {
         open={designStudioOpen}
         onClose={() => setDesignStudioOpen(false)}
         design={design}
-        onChange={setDesign}
+        onChange={d => { setDesign(d); markDirty() }}
         attachments={attachments}
         sessionId={sessionId}
         description={description}
         measurements={measurements}
+        onAddAttachments={atts => setAttachments(prev => [...prev, ...atts])}
+        onOpenDrivePicker={() => { setDrivePickerMoodBoard(true); setDrivePickerOpen(true) }}
+        onOpenDrivePickerForSketch={() => { setDrivePickerForSketch(true); setDrivePickerOpen(true) }}
+        sketchDriveImageUrl={sketchDriveImageUrl}
+        onSketchDriveImageConsumed={() => setSketchDriveImageUrl(null)}
       />
 
       {drivePickerOpen && (
         <DrivePickerLite
-          onClose={() => setDrivePickerOpen(false)}
+          onClose={() => { setDrivePickerOpen(false); setDrivePickerMoodBoard(false); setDrivePickerForSketch(false) }}
           onImport={async (files) => {
             setDrivePickerOpen(false)
             await importFromDrive(files)

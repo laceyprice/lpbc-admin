@@ -95,30 +95,33 @@ async function getPnL(supabase: any, from: string | null, to: string | null, acc
 
 // ─── BALANCE SHEET ──────────────────────────────────────────
 async function getBalanceSheet(supabase: any, year: number, asOf: string | null, accountId?: string | null) {
-  const { data: accounts } = await supabase
-    .from('chart_of_accounts')
-    .select('*')
-    .eq('is_active', true)
-    .order('sort_order')
+  const [accountsResult, openingsResult, entriesResult, unpaidInvoicesResult] = await Promise.all([
+    supabase.from('chart_of_accounts').select('*').eq('is_active', true).order('sort_order'),
+    supabase.from('opening_balances').select('*').eq('year', year),
+    (() => {
+      let q = supabase.from('accounting_entries').select('*')
+      if (asOf) q = q.lte('transaction_date', asOf)
+      if (accountId) q = q.eq('financial_account_id', accountId)
+      return q
+    })(),
+    // Unpaid invoices drive the Accounts Receivable balance
+    supabase.from('invoices')
+      .select('id, amount_due, amount_paid, invoice_status, customer_name, invoice_number')
+      .not('invoice_status', 'in', '(paid,cancelled,void)')
+      .gt('amount_due', 0),
+  ])
 
-  // Opening balances for the year
-  const { data: openings } = await supabase
-    .from('opening_balances')
-    .select('*')
-    .eq('year', year)
-
-  // All accounting entries up to asOf date (or all time)
-  let query = supabase.from('accounting_entries').select('*')
-  if (asOf) query = query.lte('transaction_date', asOf)
-  if (accountId) query = query.eq('financial_account_id', accountId)
-  const { data: entries } = await query
-
-  const txs = entries || []
-  const accts = accounts || []
+  const txs = entriesResult.data || []
+  const accts = accountsResult.data || []
   const openMap: Record<string, number> = {}
-  for (const o of (openings || [])) {
+  for (const o of (openingsResult.data || [])) {
     openMap[o.account_id] = Number(o.opening_amount)
   }
+
+  // Compute AR balance from unpaid invoices: sum of (amount_due - amount_paid)
+  const unpaidInvoices = unpaidInvoicesResult.data || []
+  const arBalance = unpaidInvoices.reduce((sum: number, inv: any) =>
+    sum + Math.max(0, Number(inv.amount_due) - Number(inv.amount_paid || 0)), 0)
 
   // Sum activity by account
   const activity: Record<string, number> = {}
@@ -131,15 +134,23 @@ async function getBalanceSheet(supabase: any, year: number, asOf: string | null,
   function buildLines(types: string[]) {
     return accts
       .filter((a: any) => types.includes(a.account_type))
-      .map((a: any) => ({
-        id: a.id,
-        name: a.name,
-        group: a.report_group,
-        type: a.account_type,
-        opening: openMap[a.id] || 0,
-        activity: activity[a.id] || 0,
-        balance: (openMap[a.id] || 0) + (activity[a.id] || 0),
-      }))
+      .map((a: any) => {
+        const isAR = /accounts?\s*receivable/i.test(a.name)
+        const bal = isAR
+          ? arBalance   // always driven by unpaid invoices
+          : (openMap[a.id] || 0) + (activity[a.id] || 0)
+        return {
+          id: a.id,
+          name: a.name,
+          group: a.report_group,
+          type: a.account_type,
+          opening: openMap[a.id] || 0,
+          activity: isAR ? arBalance : (activity[a.id] || 0),
+          balance: bal,
+          isAR,
+          arInvoiceCount: isAR ? unpaidInvoices.length : undefined,
+        }
+      })
   }
 
   const assets = buildLines(['asset'])
@@ -168,6 +179,8 @@ async function getBalanceSheet(supabase: any, year: number, asOf: string | null,
     netIncome,
     totalLiabilitiesAndEquity: totalLiabilities + totalEquity + netIncome,
     year,
+    arBalance,
+    unpaidInvoices,
   }
 }
 

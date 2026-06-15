@@ -289,6 +289,111 @@ export async function sendContactMessage({ name, email, phone, message }: { name
   })
 }
 
+// ── Digital Signature Emails ──────────────────────────────────────────────
+
+export async function sendSignatureRequestEmail({
+  to, signerName, documentName, signingUrl, senderMessage, expiresAt,
+}: {
+  to: string; signerName: string; documentName: string; signingUrl: string
+  senderMessage?: string; expiresAt?: string
+}) {
+  const expiryStr = expiresAt
+    ? new Date(expiresAt).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
+    : undefined
+  return getResend().emails.send({
+    from: `L. Price Building Company <${FROM}>`,
+    to,
+    subject: `Action Required: Please Sign — ${documentName}`,
+    html: baseHtml(`
+      <h2 style="color:#2f5a5e;margin-top:0">Document Ready for Your Signature</h2>
+      <p>Hi ${signerName},</p>
+      <p>L. Price Building Company has sent you a document that requires your electronic signature.</p>
+      ${senderMessage ? `<div style="background:#f3ede3;border-left:4px solid #b8895a;border-radius:4px;padding:14px 18px;margin:16px 0"><p style="margin:0;color:#1f2a2e;line-height:1.5;white-space:pre-wrap">${senderMessage.replace(/\n/g, '<br>')}</p></div>` : ''}
+      <table style="width:100%;border-collapse:collapse;margin:20px 0;border-radius:8px;overflow:hidden">
+        <tr style="background:#f3ede3"><td style="padding:12px;font-weight:bold;color:#2f5a5e;width:140px">Document</td><td style="padding:12px">${documentName}</td></tr>
+        ${expiryStr ? `<tr><td style="padding:12px;font-weight:bold;color:#2f5a5e">Expires</td><td style="padding:12px">${expiryStr}</td></tr>` : ''}
+      </table>
+      <div style="text-align:center;margin:28px 0">
+        <a href="${signingUrl}" style="background:#2f5a5e;color:white;padding:16px 36px;border-radius:10px;text-decoration:none;font-size:16px;font-weight:bold;display:inline-block">&#9998; Review &amp; Sign Document</a>
+      </div>
+      <p style="font-size:13px;color:#6b7280;text-align:center">By clicking the button you'll be taken to a secure page where you can read and sign the document electronically.</p>
+      <p style="font-size:12px;color:#9ca3af;text-align:center">If you weren't expecting this, please contact us at <a href="mailto:Lacey@LaceyNPrice.com" style="color:#2f5a5e">Lacey@LaceyNPrice.com</a> or <a href="tel:8505989128" style="color:#2f5a5e">850-598-9128</a>.</p>
+      <div style="border-top:1px solid #e2e8f0;padding-top:16px;margin-top:24px">
+        <p style="margin:0 0 8px">With gratitude,</p>
+        <p style="margin:0;font-weight:bold;font-size:16px">Lacey Price</p>
+        <p style="margin:2px 0;color:#6b7280">L. Price Building Company</p>
+        <p style="margin:2px 0"><a href="tel:8505989128" style="color:#2f5a5e;text-decoration:none">850-598-9128</a></p>
+      </div>
+    `),
+  })
+}
+
+export async function sendSignatureConfirmationEmail({
+  to, signerName, documentName, signedAt,
+}: {
+  to: string; signerName: string; documentName: string; signedAt: string
+}) {
+  const signedStr = new Date(signedAt).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+  return getResend().emails.send({
+    from: `L. Price Building Company <${FROM}>`,
+    to,
+    subject: `Signed: ${documentName} — Confirmation`,
+    html: baseHtml(`
+      <h2 style="color:#16a34a;margin-top:0">&#10003; Document Signed Successfully</h2>
+      <p>Hi ${signerName},</p>
+      <p>This email confirms that you have electronically signed the following document on behalf of yourself.</p>
+      <table style="width:100%;border-collapse:collapse;margin:20px 0;border-radius:8px;overflow:hidden">
+        <tr style="background:#f3ede3"><td style="padding:12px;font-weight:bold;color:#2f5a5e;width:140px">Document</td><td style="padding:12px">${documentName}</td></tr>
+        <tr><td style="padding:12px;font-weight:bold;color:#2f5a5e">Signer</td><td style="padding:12px">${signerName}</td></tr>
+        <tr style="background:#f3ede3"><td style="padding:12px;font-weight:bold;color:#2f5a5e">Signed On</td><td style="padding:12px">${signedStr}</td></tr>
+      </table>
+      <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:16px;margin:20px 0;text-align:center">
+        <p style="margin:0;font-weight:bold;color:#15803d;font-size:15px">&#10003; Signature Recorded</p>
+        <p style="margin:6px 0 0;font-size:13px;color:#166534">Please keep this email as your record of signing.</p>
+      </div>
+      <p style="font-size:13px;color:#6b7280">Your electronic signature is legally binding under the ESIGN Act and UETA. If you have any questions, please contact us.</p>
+      <div style="border-top:1px solid #e2e8f0;padding-top:16px;margin-top:24px">
+        <p style="margin:0 0 8px">With gratitude,</p>
+        <p style="margin:0;font-weight:bold;font-size:16px">Lacey Price</p>
+        <p style="margin:2px 0;color:#6b7280">L. Price Building Company</p>
+        <p style="margin:2px 0"><a href="tel:8505989128" style="color:#2f5a5e;text-decoration:none">850-598-9128</a></p>
+        <p style="margin:2px 0"><a href="mailto:Lacey@LaceyNPrice.com" style="color:#2f5a5e;text-decoration:none">Lacey@LaceyNPrice.com</a></p>
+      </div>
+    `),
+  })
+}
+
+export async function sendSignedNotificationEmail({
+  documentName, signerName, signerEmail, signedAt, signatureData,
+}: {
+  documentName: string; signerName: string; signerEmail: string; signedAt: string; signatureData: string
+}) {
+  const signedStr = new Date(signedAt).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+  const adminEmail = process.env.ADMIN_EMAIL || 'Lacey@LaceyNPrice.com'
+  return getResend().emails.send({
+    from: `L. Price Building Company <${FROM}>`,
+    to: adminEmail,
+    subject: `✅ Signed: ${documentName} — ${signerName}`,
+    html: baseHtml(`
+      <h2 style="color:#16a34a;margin-top:0">&#10003; Document Signed</h2>
+      <p>A signer has completed their electronic signature.</p>
+      <table style="width:100%;border-collapse:collapse;margin:20px 0;border-radius:8px;overflow:hidden">
+        <tr style="background:#f3ede3"><td style="padding:12px;font-weight:bold;color:#2f5a5e;width:140px">Document</td><td style="padding:12px">${documentName}</td></tr>
+        <tr><td style="padding:12px;font-weight:bold;color:#2f5a5e">Signer</td><td style="padding:12px">${signerName}</td></tr>
+        <tr style="background:#f3ede3"><td style="padding:12px;font-weight:bold;color:#2f5a5e">Email</td><td style="padding:12px">${signerEmail}</td></tr>
+        <tr><td style="padding:12px;font-weight:bold;color:#2f5a5e">Signed On</td><td style="padding:12px">${signedStr}</td></tr>
+      </table>
+      <p style="font-weight:bold;color:#2f5a5e;margin-bottom:8px;">Signature:</p>
+      <div style="background:white;border:1px solid #e2e8f0;border-radius:8px;padding:12px;display:inline-block">
+        <img src="${signatureData}" alt="Signature" style="max-height:80px;display:block"/>
+      </div>
+      <div style="text-align:center;margin:20px 0">
+        <a href="${APP}/admin/documents" style="background:#b8895a;color:white;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:bold;font-size:14px">View in Admin Dashboard</a>
+      </div>
+    `),
+  })
+}
+
 export async function sendDeclineEmail({ to, customerName, reason }: { to: string; customerName: string; reason?: string }) {
   return getResend().emails.send({
     from: `L. Price Building Company <${FROM}>`,

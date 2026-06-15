@@ -115,12 +115,12 @@ IMPORTANT — "materials_breakdown" is really a UNIFIED BUDGET BREAKDOWN, not ma
 - Do NOT return separate labor_estimate or subcontractor_estimate fields — they no longer exist in this schema.
 - Instead, fold EVERY cost into "materials_breakdown" as individual line items — materials AND labor AND subcontractor work all belong in this same list, each as its own line with a clear category.
 - Use categories like "Labor — Demo & Framing", "Labor — Finish Carpentry / Paint", "Subcontractor — Plumbing Rough-in", "Subcontractor — Electrical", alongside material categories like "Tile & Flooring Materials", "Cabinetry & Countertops", etc.
-- For labor line items, show your math in "notes" (e.g. "approx. 40 hrs @ $75/hr — demo, framing, drywall").
+- For labor line items, show your math in "notes" (e.g. "approx. 40 hrs @ $150/hr — demo, framing, drywall").
 - "estimated_total" = the sum of every line in materials_breakdown (materials + labor + subs combined). Do not add anything on top of that sum.
 
 Pricing guidance:
 - Anchor pricing to the Top Vendors list — those are LPBC's actual suppliers — but DO NOT name any retail chain or store (e.g. Lowe's, Home Depot, Menards, Ferguson, etc.) anywhere in your output, including materials_breakdown notes, assumptions, risks, or rationale — UNLESS that exact business name appears verbatim in the Top Vendors list provided to you. Never guess or suggest a generic big-box retailer as a sourcing location. Describe materials generically instead (e.g. "mid-grade stock cabinets," "standard porcelain tile," "supplier-sourced fixtures").
-- Labor rate: estimate from past expense entries for labor/subcontractor payees, or use $65-85/hr if no data — and bake the resulting dollar total directly into its own line item(s) as described above.
+- Labor rate: LPBC's standard rate is $150/hr — always use $150/hr for all LPBC labor line items. Only use a different rate for named subcontractors if their historical rate from past expense data clearly differs.
 - Design/PM fee: LPBC's standard baseline is 20% of job cost — use 20% by default. Only deviate from it when complexity clearly warrants: simple, single-trade service work with no design/sourcing involved can go as low as ~15%; highly complex multi-trade remodels with heavy permitting/coordination can go up to ~25%. Explain any deviation from the 20% baseline in design_pm_fee_rationale.
 - Be specific and grounded.`
 

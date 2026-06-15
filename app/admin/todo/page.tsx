@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Sparkles, Loader2, RefreshCw, CheckCircle2, Circle, ArrowRight, AlertCircle, Calendar, FileText, BookOpen, Users, Plus, X, Trash2 } from 'lucide-react'
+import { Sparkles, Loader2, RefreshCw, CheckCircle2, Circle, ArrowRight, AlertCircle, Calendar, CalendarPlus, FileText, BookOpen, Users, Plus, X, Trash2, Check } from 'lucide-react'
 
 interface Todo {
   id: string
@@ -70,6 +70,12 @@ export default function TodoPage() {
   const [savingTodo, setSavingTodo] = useState(false)
   const [addedRefs, setAddedRefs] = useState<Set<string>>(new Set())
   const [team, setTeam] = useState<TeamMember[]>([])
+
+  // Calendar scheduling — inline date/time picker per task
+  const [calendarPickerId, setCalendarPickerId] = useState<string | null>(null)
+  const [calForm, setCalForm] = useState({ date: '', startTime: '09:00', endTime: '10:00' })
+  const [calAdding, setCalAdding] = useState<Set<string>>(new Set())
+  const [calAdded, setCalAdded] = useState<Set<string>>(new Set())
 
   // Filter state
   const [statusFilter, setStatusFilter] = useState<'pending' | 'all' | 'done'>('pending')
@@ -168,6 +174,46 @@ export default function TodoPage() {
     if (!confirm('Delete this todo?')) return
     await fetch(`/api/todos?id=${id}`, { method: 'DELETE' })
     setMyTodos(prev => prev.filter(x => x.id !== id))
+  }
+
+  function openCalendarPicker(t: MyTodo) {
+    // Default date: task due_date if set, otherwise today
+    const defaultDate = t.due_date || new Date().toISOString().split('T')[0]
+    setCalForm({ date: defaultDate, startTime: '09:00', endTime: '10:00' })
+    setCalendarPickerId(prev => prev === t.id ? null : t.id)
+  }
+
+  async function addToCalendar(t: MyTodo) {
+    if (!calForm.date) return
+    setCalAdding(prev => new Set([...prev, t.id]))
+    try {
+      const start = `${calForm.date}T${calForm.startTime}:00`
+      const end   = `${calForm.date}T${calForm.endTime}:00`
+      const res = await fetch('/api/appointments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: t.title,
+          notes: t.description || '',
+          customer_name: 'Internal',
+          start_time: start,
+          end_time: end,
+          service_type: t.category,
+          status: 'scheduled',
+        }),
+      })
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}))
+        alert('Failed to add to calendar: ' + (d.error || 'Unknown error'))
+        return
+      }
+      setCalAdded(prev => new Set([...prev, t.id]))
+      setCalendarPickerId(null)
+    } catch (e: any) {
+      alert('Calendar error: ' + (e?.message || String(e)))
+    } finally {
+      setCalAdding(prev => { const n = new Set(prev); n.delete(t.id); return n })
+    }
   }
 
   // Load cached todos from localStorage on mount
@@ -347,41 +393,119 @@ export default function TodoPage() {
               const cat = CATEGORY_STYLES[t.category] || CATEGORY_STYLES.invoicing
               const ps = PRIORITY_STYLES[t.priority as keyof typeof PRIORITY_STYLES] || PRIORITY_STYLES.medium
               const isDone = t.status === 'done'
+              const isPickerOpen = calendarPickerId === t.id
+              const isAdding = calAdding.has(t.id)
+              const wasAdded = calAdded.has(t.id)
               return (
-                <div key={t.id} className={`bg-white border border-gray-100 rounded-2xl p-3.5 shadow-sm flex items-start gap-3 ${isDone ? 'opacity-60' : ''}`}>
-                  <button onClick={() => toggleMyTodo(t)} className={`mt-0.5 flex-shrink-0 transition-colors ${isDone ? 'text-green-500' : 'text-gray-300 hover:text-green-500'}`}>
-                    {isDone ? <CheckCircle2 size={20} /> : <Circle size={20} />}
-                  </button>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex flex-wrap items-center gap-2 mb-0.5">
-                      <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${ps.badge}`}>{ps.label}</span>
-                      <span className={`text-xs font-medium ${cat.color} flex items-center gap-1`}>{t.category}</span>
-                      {t.source === 'ai' && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-purple-50 text-purple-600 font-bold">AI</span>}
-                      {t.due_date && <span className="text-[10px] text-gray-500">Due {new Date(t.due_date + 'T00:00:00').toLocaleDateString()}</span>}
-                      {team.length > 0 && (
-                        <select value={t.assigned_to_user_id || ''} onChange={e => reassignTodo(t.id, e.target.value)}
-                          onClick={e => e.stopPropagation()}
-                          className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-100 focus:outline-none">
-                          <option value="">Unassigned</option>
-                          {team.map(m => (
-                            <option key={m.user_id} value={m.user_id}>{m.display_name || m.email}</option>
-                          ))}
-                        </select>
-                      )}
-                    </div>
-                    <h3 className={`text-sm font-bold text-gray-900 ${isDone ? 'line-through' : ''}`}>{t.title}</h3>
-                    {t.description && <p className="text-xs text-gray-600 mt-0.5">{t.description}</p>}
-                  </div>
-                  <div className="flex items-center gap-1 flex-shrink-0">
-                    {t.action_url && !isDone && (
-                      <button onClick={() => router.push(t.action_url!)} className="px-2 py-1 rounded-lg bg-blue-50 text-blue-600 text-xs font-bold hover:bg-blue-100 flex items-center gap-1">
-                        Go <ArrowRight size={11} />
-                      </button>
-                    )}
-                    <button onClick={() => deleteMyTodo(t.id)} className="p-1.5 text-gray-400 hover:text-red-600 rounded-lg hover:bg-red-50">
-                      <Trash2 size={13} />
+                <div key={t.id} className={`bg-white border rounded-2xl shadow-sm overflow-hidden ${isDone ? 'opacity-60' : ''} ${isPickerOpen ? 'border-blue-200' : 'border-gray-100'}`}>
+                  <div className="p-3.5 flex items-start gap-3">
+                    <button onClick={() => toggleMyTodo(t)} className={`mt-0.5 flex-shrink-0 transition-colors ${isDone ? 'text-green-500' : 'text-gray-300 hover:text-green-500'}`}>
+                      {isDone ? <CheckCircle2 size={20} /> : <Circle size={20} />}
                     </button>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex flex-wrap items-center gap-2 mb-0.5">
+                        <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${ps.badge}`}>{ps.label}</span>
+                        <span className={`text-xs font-medium ${cat.color} flex items-center gap-1`}>{t.category}</span>
+                        {t.source === 'ai' && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-purple-50 text-purple-600 font-bold">AI</span>}
+                        {t.due_date && <span className="text-[10px] text-gray-500">Due {new Date(t.due_date + 'T00:00:00').toLocaleDateString()}</span>}
+                        {wasAdded && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-green-50 text-green-600 font-bold flex items-center gap-0.5">
+                            <Check size={9} /> On Calendar
+                          </span>
+                        )}
+                        {team.length > 0 && (
+                          <select value={t.assigned_to_user_id || ''} onChange={e => reassignTodo(t.id, e.target.value)}
+                            onClick={e => e.stopPropagation()}
+                            className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-100 focus:outline-none">
+                            <option value="">Unassigned</option>
+                            {team.map(m => (
+                              <option key={m.user_id} value={m.user_id}>{m.display_name || m.email}</option>
+                            ))}
+                          </select>
+                        )}
+                      </div>
+                      <h3 className={`text-sm font-bold text-gray-900 ${isDone ? 'line-through' : ''}`}>{t.title}</h3>
+                      {t.description && <p className="text-xs text-gray-600 mt-0.5">{t.description}</p>}
+                    </div>
+                    <div className="flex items-center gap-1 flex-shrink-0">
+                      {t.action_url && !isDone && (
+                        <button onClick={() => router.push(t.action_url!)} className="px-2 py-1 rounded-lg bg-blue-50 text-blue-600 text-xs font-bold hover:bg-blue-100 flex items-center gap-1">
+                          Go <ArrowRight size={11} />
+                        </button>
+                      )}
+                      {!isDone && (
+                        <button
+                          onClick={() => openCalendarPicker(t)}
+                          title="Schedule on calendar"
+                          className={`p-1.5 rounded-lg transition-colors ${isPickerOpen ? 'bg-blue-100 text-blue-600' : wasAdded ? 'text-green-500 hover:bg-green-50' : 'text-gray-400 hover:text-blue-600 hover:bg-blue-50'}`}
+                        >
+                          <CalendarPlus size={14} />
+                        </button>
+                      )}
+                      <button onClick={() => deleteMyTodo(t.id)} className="p-1.5 text-gray-400 hover:text-red-600 rounded-lg hover:bg-red-50">
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
                   </div>
+
+                  {/* Inline calendar scheduler */}
+                  {isPickerOpen && (
+                    <div className="border-t border-blue-100 bg-blue-50/50 px-4 py-3">
+                      <p className="text-[11px] font-bold text-blue-700 uppercase tracking-wide mb-2">Schedule on Calendar</p>
+                      <div className="flex flex-wrap items-end gap-2">
+                        <div>
+                          <label className="block text-[10px] font-semibold text-gray-500 mb-1">Date</label>
+                          <input
+                            type="date"
+                            value={calForm.date}
+                            onChange={e => setCalForm(f => ({ ...f, date: e.target.value }))}
+                            className="px-2 py-1.5 rounded-lg border border-blue-200 bg-white text-sm focus:outline-none focus:ring-2 focus:border-blue-400"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-semibold text-gray-500 mb-1">Start Time</label>
+                          <input
+                            type="time"
+                            value={calForm.startTime}
+                            onChange={e => {
+                              const start = e.target.value
+                              // Auto-advance end time by 1 hour
+                              const [h, m] = start.split(':').map(Number)
+                              const endH = String(Math.min(h + 1, 23)).padStart(2, '0')
+                              setCalForm(f => ({ ...f, startTime: start, endTime: `${endH}:${String(m).padStart(2, '0')}` }))
+                            }}
+                            className="px-2 py-1.5 rounded-lg border border-blue-200 bg-white text-sm focus:outline-none focus:ring-2 focus:border-blue-400"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-semibold text-gray-500 mb-1">End Time</label>
+                          <input
+                            type="time"
+                            value={calForm.endTime}
+                            onChange={e => setCalForm(f => ({ ...f, endTime: e.target.value }))}
+                            className="px-2 py-1.5 rounded-lg border border-blue-200 bg-white text-sm focus:outline-none focus:ring-2 focus:border-blue-400"
+                          />
+                        </div>
+                        <div className="flex gap-2 pb-0.5">
+                          <button
+                            onClick={() => addToCalendar(t)}
+                            disabled={!calForm.date || isAdding}
+                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-white text-xs font-bold disabled:opacity-50"
+                            style={{ background: '#185FA5' }}
+                          >
+                            {isAdding ? <Loader2 size={12} className="animate-spin" /> : <CalendarPlus size={12} />}
+                            Add to Calendar
+                          </button>
+                          <button
+                            onClick={() => setCalendarPickerId(null)}
+                            className="px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-semibold text-gray-600 hover:bg-gray-50"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )
             })}

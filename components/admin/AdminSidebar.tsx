@@ -11,7 +11,7 @@ const nav = [
   { href: '/admin', label: 'Dashboard', icon: LayoutDashboard, exact: true, roles: ['admin', 'bookkeeper', 'invoicing'] },
   { href: '/admin/crm', label: 'CRM / Email', icon: Users, roles: ['admin', 'bookkeeper', 'invoicing'] },
   { href: '/admin/invoices', label: 'Invoices & Quotes', icon: FileText, roles: ['admin', 'bookkeeper', 'invoicing'] },
-  { href: '/admin/plan-job', label: 'Plan New Job', icon: Hammer, roles: ['admin', 'bookkeeper'] },
+  { href: '/admin/plan-job', label: 'Plan & Design Studio', icon: Hammer, roles: ['admin', 'bookkeeper'] },
   { href: '/admin/calendar', label: 'Calendar', icon: Calendar, roles: ['admin', 'bookkeeper'] },
   { href: '/admin/todo', label: 'Todo List', icon: Sparkles, roles: ['admin', 'bookkeeper', 'invoicing'] },
   { href: '/admin/schedule-requests', label: 'Schedule Requests', icon: ClipboardList, roles: ['admin', 'bookkeeper'] },

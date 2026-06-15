@@ -33,7 +33,8 @@ export async function GET(req: NextRequest) {
         'https://www.googleapis.com/auth/gmail.send',
         'https://www.googleapis.com/auth/gmail.modify',
         'https://www.googleapis.com/auth/gmail.compose',
-        'https://www.googleapis.com/auth/drive.readonly',
+        'https://www.googleapis.com/auth/drive',          // full Drive — needed for folder create/upload
+        'https://www.googleapis.com/auth/documents',
       ],
     })
     return NextResponse.json({ authUrl })

@@ -1,7 +1,7 @@
 'use client'
-import { Component, useEffect, useState, useRef } from 'react'
+import { Component, useCallback, useEffect, useState, useRef } from 'react'
 import type { ErrorInfo, ReactNode } from 'react'
-import { Upload, Search, Download, TrendingUp, TrendingDown, DollarSign, FileText, Loader2, X, Paperclip, Receipt, FileImage, Trash2, Plus, File, Camera, Image as ImageIcon, Link2, RefreshCw, Unplug, Edit3, FolderOpen, Sparkles, CheckCircle2, AlertCircle, Scale, CheckSquare, Square, Wand2, CheckCheck } from 'lucide-react'
+import { Upload, Search, Download, TrendingUp, TrendingDown, DollarSign, FileText, Loader2, X, Paperclip, Receipt, FileImage, Trash2, Plus, File, Camera, Image as ImageIcon, Link2, RefreshCw, Unplug, Edit3, FolderOpen, Sparkles, CheckCircle2, AlertCircle, Scale, CheckSquare, Square, Wand2, CheckCheck, RotateCcw } from 'lucide-react'
 import { formatCurrency, formatDateShort } from '@/lib/utils'
 import Script from 'next/script'
 import DrivePicker from '@/components/admin/DrivePicker'
@@ -287,6 +287,85 @@ class BookkeepingBoundary extends Component<{ children: ReactNode }, { error: Er
   }
 }
 
+// ── Searchable account/category combobox ─────────────────────────────────────
+function AccountCombobox({
+  accounts,
+  value,
+  onChange,
+  placeholder = 'Set account…',
+  inputClassName = '',
+}: {
+  accounts: Account[]
+  value: string
+  onChange: (id: string) => void
+  placeholder?: string
+  inputClassName?: string
+}) {
+  const [query, setQuery] = useState('')
+  const [open, setOpen] = useState(false)
+  const wrapRef = useRef<HTMLDivElement>(null)
+
+  const selected = accounts.find(a => a.id === value)
+
+  // Always sort alphabetically, filter by query
+  const filtered = (query.trim()
+    ? accounts.filter(a => a.name.toLowerCase().includes(query.trim().toLowerCase()))
+    : accounts
+  ).sort((a, b) => a.name.localeCompare(b.name))
+
+  // Close on outside click
+  useEffect(() => {
+    function handler(e: MouseEvent) {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) {
+        setOpen(false)
+        setQuery('')
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
+
+  return (
+    <div ref={wrapRef} className="relative">
+      <input
+        type="text"
+        value={open ? query : (selected?.name ?? '')}
+        placeholder={open ? 'Type to filter…' : placeholder}
+        className={inputClassName}
+        onChange={e => { setQuery(e.target.value); setOpen(true) }}
+        onFocus={() => { setQuery(''); setOpen(true) }}
+        onKeyDown={e => { if (e.key === 'Escape') { setOpen(false); setQuery('') } }}
+        autoComplete="off"
+      />
+      {open && (
+        <div className="absolute z-[300] mt-1 w-full max-h-60 overflow-y-auto bg-white border border-gray-200 rounded-xl shadow-2xl">
+          {value && (
+            <button
+              type="button"
+              className="w-full text-left px-3 py-2 text-sm text-gray-400 hover:bg-gray-50 border-b border-gray-100"
+              onMouseDown={e => { e.preventDefault(); onChange(''); setQuery(''); setOpen(false) }}>
+              — Clear —
+            </button>
+          )}
+          {filtered.length === 0 ? (
+            <p className="px-3 py-2 text-sm text-gray-400 italic">No matches</p>
+          ) : (
+            filtered.map(a => (
+              <button
+                key={a.id}
+                type="button"
+                className={`w-full text-left px-3 py-2 text-sm ${a.id === value ? 'font-semibold bg-amber-50 text-amber-700' : 'text-gray-800 hover:bg-amber-50'}`}
+                onMouseDown={e => { e.preventDefault(); onChange(a.id); setQuery(''); setOpen(false) }}>
+                {a.name}
+              </button>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function BookkeepingPage() {
   const [tab, setTab] = useState<'bank'|'accounting'|'reconciliation'|'statements'|'uploads'|'accounts'>('bank')
   const [txs, setTxs] = useState<Tx[]>([])
@@ -363,6 +442,18 @@ function BookkeepingPage() {
   const [bulkAccountId, setBulkAccountId] = useState('')
   const [bulkSaving, setBulkSaving] = useState(false)
 
+  // ── Undo system ────────────────────────────────────────────────────────────
+  // Captures the before-state for every bulk (and single) categorization so the
+  // user can reverse any accidental mass-recategorization without touching the DB.
+  interface UndoSnapshot {
+    id: string
+    description: string
+    rows: Array<{ id: string; account_id: string | null; payee: string | null; had_entry: boolean }>
+  }
+  const [undoStack, setUndoStack]   = useState<UndoSnapshot[]>([])
+  const [undoing,   setUndoing]     = useState(false)
+  const undoRef = useRef<{ stack: UndoSnapshot[]; fn: (() => void) | null }>({ stack: [], fn: null })
+
   // Plaid accounts (one bank login may expose multiple accounts; each one
   // needs to be mapped to a financial_account so transactions land in the right place).
   const [plaidAccounts, setPlaidAccounts] = useState<any[]>([])
@@ -396,6 +487,7 @@ function BookkeepingPage() {
     else { setSortCol(col); setSortDir('desc') }
   }
   const [editing, setEditing] = useState<Tx | null>(null)
+  const [editAccountId, setEditAccountId] = useState<string>('')
   const [imgUploading, setImgUploading] = useState<null | 'receipt' | 'check'>(null)
   const [showAddAccount, setShowAddAccount] = useState(false)
   const [addingSaving, setAddingSaving] = useState(false)
@@ -590,24 +682,72 @@ function BookkeepingPage() {
     else setSelected(new Set(filtered.map(t => t.id)))
   }
 
-  // Apply payee and/or account to all selected transactions at once
+  // Apply payee and/or account to all selected transactions at once.
+  // Captures a before-snapshot so the action can be fully reversed.
   async function bulkUpdate() {
     if (selected.size === 0) return
     if (!bulkPayee && !bulkAccountId) { alert('Enter a payee or pick an account first'); return }
+
+    // Build human-readable description for the undo toast
+    const accountName = bulkAccountId
+      ? (accounts.find(a => a.id === bulkAccountId)?.name ?? bulkAccountId)
+      : null
+    const descParts: string[] = []
+    if (accountName) descParts.push(`Categorized ${selected.size} transaction${selected.size !== 1 ? 's' : ''} as "${accountName}"`)
+    if (bulkPayee)   descParts.push(`Set payee "${bulkPayee}" on ${accountName ? '' : `${selected.size} `}transactions`)
+    const description = descParts.join(' · ')
+
+    // Snapshot current state of every affected row BEFORE changing anything
+    const snapshot: UndoSnapshot = {
+      id: `undo_${Date.now()}`,
+      description,
+      rows: Array.from(selected).map(id => {
+        const tx = txs.find(t => t.id === id)
+        return {
+          id,
+          account_id: tx?.account_id ?? null,
+          payee:      tx?.payee      ?? null,
+          had_entry:  postedIds.has(id),
+        }
+      }),
+    }
+
     setBulkSaving(true)
     try {
       const body: any = { ids: Array.from(selected) }
-      if (bulkPayee) body.payee = bulkPayee
+      if (bulkPayee)    body.payee      = bulkPayee
       if (bulkAccountId) body.account_id = bulkAccountId
       const res = await fetch('/api/bookkeeping?action=bulk-update', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       })
       if (!res.ok) { const e = await res.json(); alert(e.error || 'Failed to update'); return }
+
+      // Push snapshot to undo stack (keep last 20 actions)
+      setUndoStack(prev => [...prev.slice(-19), snapshot])
       setBulkPayee(''); setBulkAccountId('')
       await load()
     } finally { setBulkSaving(false) }
+  }
+
+  // Undo the most recent action on the stack
+  async function undoLastAction() {
+    const snapshot = undoStack[undoStack.length - 1]
+    if (!snapshot || undoing) return
+    setUndoing(true)
+    try {
+      const res = await fetch('/api/bookkeeping?action=undo-bulk-update', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rows: snapshot.rows }),
+      })
+      if (!res.ok) {
+        const e = await res.json()
+        alert(`Undo failed: ${e.error || 'Unknown error'}\n\nYou can manually fix transactions by selecting them and re-categorizing.`)
+        return
+      }
+      setUndoStack(prev => prev.slice(0, -1))
+      await load()
+    } finally { setUndoing(false) }
   }
 
   // Permanently delete all selected transactions (and any linked accounting entries)
@@ -690,7 +830,7 @@ function BookkeepingPage() {
         return
       }
       setPostedIds(prev => new Set(prev).add(tx.id))
-      await load()
+      setTxs(prev => prev.map(t => t.id === tx.id ? { ...t, _posted: true } : t))
     } finally {
       setAccepting(prev => { const n = new Set(prev); n.delete(tx.id); return n })
     }
@@ -723,6 +863,31 @@ function BookkeepingPage() {
     setLoading(false)
   }
 
+  // Keep ref in sync so the Ctrl+Z handler always calls the latest closure
+  useEffect(() => {
+    undoRef.current.stack = undoStack
+    undoRef.current.fn    = undoLastAction
+  })
+
+  // Ctrl+Z / Cmd+Z — undo the last categorization action
+  useEffect(() => {
+    function handleKey(e: KeyboardEvent) {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
+        if (undoRef.current.stack.length > 0 && undoRef.current.fn) {
+          e.preventDefault()
+          undoRef.current.fn()
+        }
+      }
+    }
+    window.addEventListener('keydown', handleKey)
+    return () => window.removeEventListener('keydown', handleKey)
+  }, []) // registered once — reads current values through the ref
+
+  // Sync editAccountId whenever the editing transaction changes
+  useEffect(() => {
+    setEditAccountId(editing?.account_id ?? '')
+  }, [editing])
+
   async function handleCSV(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]; if (!file) return
     setUploading(true)
@@ -740,6 +905,31 @@ function BookkeepingPage() {
 
   async function updateTx(id: string, updates: Partial<Tx>) {
     const table = tab === 'bank' ? 'bank_transactions' : 'accounting_entries'
+
+    // Capture single-row snapshot if categorization is changing
+    if (table === 'bank_transactions' && (updates.account_id !== undefined || updates.payee !== undefined)) {
+      const tx = txs.find(t => t.id === id)
+      if (tx) {
+        const accountName = updates.account_id
+          ? (accounts.find(a => a.id === updates.account_id)?.name ?? updates.account_id)
+          : null
+        const snapshot: UndoSnapshot = {
+          id: `undo_${Date.now()}`,
+          description: accountName
+            ? `Categorized "${tx.description?.slice(0, 40) || 'transaction'}" as "${accountName}"`
+            : `Changed payee on "${tx.description?.slice(0, 40) || 'transaction'}"`,
+          rows: [{ id, account_id: tx.account_id ?? null, payee: tx.payee ?? null, had_entry: postedIds.has(id) }],
+        }
+        // Push after successful save below
+        const res = await fetch('/api/bookkeeping', { method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({id, table, ...updates}) })
+        if (!res.ok) { alert('Failed to save'); return }
+        setUndoStack(prev => [...prev.slice(-19), snapshot])
+        await load()
+        setEditing(null)
+        return
+      }
+    }
+
     const res = await fetch('/api/bookkeeping', { method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({id, table, ...updates}) })
     if (!res.ok) { alert('Failed to save'); return }
     await load()
@@ -832,11 +1022,8 @@ function BookkeepingPage() {
       const d = await res.json()
       if (d.error) { alert(d.error); setAddingSaving(false); return }
       await loadAccounts()
-      // Auto-select the new account in the dropdown
-      setTimeout(() => {
-        const sel = document.getElementById('account_id') as HTMLSelectElement
-        if (sel && d.id) sel.value = d.id
-      }, 100)
+      // Auto-select the newly created account in the combobox
+      if (d.id) setEditAccountId(d.id)
       setShowAddAccount(false)
     } catch { alert('Failed to create account') }
     finally { setAddingSaving(false) }
@@ -1112,6 +1299,9 @@ function BookkeepingPage() {
     return a ? a.name : null
   }
 
+  // Alphabetically sorted accounts — used by AccountCombobox
+  const sortedAccounts = [...accounts].sort((a, b) => a.name.localeCompare(b.name))
+
   // Group accounts by report_group for the dropdown
   const groupedAccounts = accounts.reduce((acc, a) => {
     const key = a.report_group || (a.account_type || 'other').toUpperCase()
@@ -1227,10 +1417,13 @@ function BookkeepingPage() {
               </div>
               <div>
                 <label className="text-xs font-semibold text-gray-700">Category (optional)</label>
-                <select value={addTxForm.account_id} onChange={e => setAddTxForm({ ...addTxForm, account_id: e.target.value })} className={inputCls}>
-                  <option value="">— Uncategorized —</option>
-                  {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-                </select>
+                <AccountCombobox
+                  accounts={sortedAccounts}
+                  value={addTxForm.account_id}
+                  onChange={id => setAddTxForm({ ...addTxForm, account_id: id })}
+                  placeholder="— Uncategorized —"
+                  inputClassName={inputCls}
+                />
               </div>
               <div>
                 <label className="text-xs font-semibold text-gray-700">Check # (optional)</label>
@@ -1847,15 +2040,13 @@ function BookkeepingPage() {
             placeholder="Set payee…"
             className="px-3 py-1.5 rounded-lg border border-amber-200 bg-white text-sm focus:outline-none focus:ring-2 focus:border-amber-400 w-40"
           />
-          <select
+          <AccountCombobox
+            accounts={sortedAccounts.filter(a => a.is_active !== false)}
             value={bulkAccountId}
-            onChange={e => setBulkAccountId(e.target.value)}
-            className="px-3 py-1.5 rounded-lg border border-amber-200 bg-white text-sm focus:outline-none focus:ring-2 focus:border-amber-400">
-            <option value="">Set account…</option>
-            {accounts.filter(a => a.is_active !== false).map(a => (
-              <option key={a.id} value={a.id}>{a.name}</option>
-            ))}
-          </select>
+            onChange={setBulkAccountId}
+            placeholder="Set account…"
+            inputClassName="w-52 px-3 py-1.5 rounded-lg border border-amber-200 bg-white text-sm focus:outline-none focus:ring-2 focus:border-amber-400"
+          />
           <button onClick={bulkUpdate} disabled={bulkSaving || (!bulkPayee && !bulkAccountId)}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-white text-xs font-bold disabled:opacity-50"
             style={{ background: '#b8895a' }}>
@@ -2010,14 +2201,15 @@ function BookkeepingPage() {
 
               <div>
                 <label className="block text-sm font-semibold text-gray-700 mb-1">Account</label>
-                <select defaultValue={editing.account_id || ''} id="account_id" className={inputCls}>
-                  <option value="">Select account...</option>
-                  {Object.entries(groupedAccounts).map(([group, items]) => (
-                    <optgroup key={group} label={group}>
-                      {items.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-                    </optgroup>
-                  ))}
-                </select>
+                {/* Hidden input keeps the legacy getElementById('account_id') save path working */}
+                <input type="hidden" id="account_id" value={editAccountId} readOnly />
+                <AccountCombobox
+                  accounts={sortedAccounts}
+                  value={editAccountId}
+                  onChange={setEditAccountId}
+                  placeholder="Select account..."
+                  inputClassName={inputCls}
+                />
                 <button type="button" onClick={() => setShowAddAccount(!showAddAccount)}
                   className="flex items-center gap-1 text-xs font-semibold mt-1.5 hover:underline" style={{ color: '#b8895a' }}>
                   <Plus size={12} /> {showAddAccount ? 'Cancel' : 'Add New Category'}
@@ -2308,6 +2500,39 @@ function BookkeepingPage() {
               <p className="text-white text-center text-sm mt-2 font-medium">{lightboxImage.name}</p>
             )}
           </div>
+        </div>
+      )}
+
+      {/* ── Undo Toast ─────────────────────────────────────────────────────────
+           Floats above everything at the bottom of the screen after any
+           categorization action. Press Ctrl+Z or click Undo to reverse it.   */}
+      {undoStack.length > 0 && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[200] flex items-center gap-3 bg-gray-900 text-white px-4 py-3 rounded-2xl shadow-2xl border border-gray-700 max-w-[min(560px,90vw)]">
+          <RotateCcw size={14} className="text-amber-300 flex-shrink-0" />
+          <div className="flex-1 min-w-0">
+            <div className="text-sm font-semibold truncate">{undoStack[undoStack.length - 1].description}</div>
+            {undoStack.length > 1 && (
+              <div className="text-[11px] text-gray-400">{undoStack.length - 1} more action{undoStack.length > 2 ? 's' : ''} available</div>
+            )}
+          </div>
+          <button
+            onClick={undoLastAction}
+            disabled={undoing}
+            className="flex items-center gap-1.5 text-sm font-bold text-amber-300 hover:text-amber-200 px-2 py-1 rounded-lg hover:bg-white/10 disabled:opacity-50 transition-colors flex-shrink-0"
+          >
+            {undoing
+              ? <><Loader2 size={12} className="animate-spin" /> Undoing…</>
+              : <><RotateCcw size={12} /> Undo</>
+            }
+          </button>
+          <span className="text-[11px] text-gray-500 hidden sm:block flex-shrink-0">Ctrl+Z</span>
+          <button
+            onClick={() => setUndoStack([])}
+            className="text-gray-500 hover:text-white p-1 rounded-lg hover:bg-white/10 flex-shrink-0 transition-colors"
+            title="Dismiss"
+          >
+            <X size={13} />
+          </button>
         </div>
       )}
     </div>
