@@ -82,6 +82,43 @@ function detectPitch(data: Uint8Array | Buffer, w: number, h: number): { pitch: 
   return { pitch: fallback ? fallback.lag : 0, confident: false }
 }
 
+// ── Door symbol ──────────────────────────────────────────────────────────────
+// Claude returns each door as hinge/latch (the opening, along the wall) + a point
+// inside the room it opens into. We stamp the standard architectural symbol: the
+// open leaf (a line) plus a quarter-circle swing arc (a smooth polyline). Drawing
+// it server-side keeps every door clean and consistent instead of hand-wobbled.
+type GPtM = { x: number; y: number }
+type GStrokeM = { tool: string; color: string; width: number; points?: GPtM[]; start?: GPtM; end?: GPtM; text?: string }
+function expandDoor(d: any): GStrokeM[] {
+  const n = (v: any) => (typeof v === 'number' && isFinite(v) ? v : null)
+  const hx = n(d?.hinge?.x), hy = n(d?.hinge?.y), lx = n(d?.latch?.x), ly = n(d?.latch?.y)
+  if (hx === null || hy === null || lx === null || ly === null) return []
+  const wx = lx - hx, wy = ly - hy
+  const len = Math.hypot(wx, wy)
+  if (len < 0.4 || len > 20) return []
+  // Perpendicular to the wall (same magnitude as the wall vector).
+  let px = -wy, py = wx
+  const ix = n(d?.into?.x), iy = n(d?.into?.y)
+  if (ix !== null && iy !== null && ((ix - hx) * px + (iy - hy) * py) < 0) { px = -px; py = -py }
+  const P = { x: hx + px, y: hy + py } // open leaf tip (|perp| === len)
+  const color = '#b8895a', width = 1.5
+  const a0 = Math.atan2(ly - hy, lx - hx)
+  const a1 = Math.atan2(P.y - hy, P.x - hx)
+  let delta = a1 - a0
+  while (delta > Math.PI) delta -= 2 * Math.PI
+  while (delta < -Math.PI) delta += 2 * Math.PI
+  const steps = 14
+  const arc: GPtM[] = []
+  for (let i = 0; i <= steps; i++) {
+    const a = a0 + delta * (i / steps)
+    arc.push({ x: hx + len * Math.cos(a), y: hy + len * Math.sin(a) })
+  }
+  return [
+    { tool: 'line', color, width, start: { x: hx, y: hy }, end: { x: P.x, y: P.y } },
+    { tool: 'pen', color, width, points: arc },
+  ]
+}
+
 type TraceResult = { status: number; payload: any }
 
 async function runTrace(file: File): Promise<TraceResult> {
@@ -161,14 +198,28 @@ Output ALL coordinates in GRID-SQUARE UNITS, where 1 unit = one printed graph sq
 • Walls run ALONG the printed grid lines — so almost every endpoint is an INTEGER (whole number). Only use a fraction like .5 when a line genuinely runs through the middle of a square.
 • Corners that meet MUST share identical coordinates. A wall ending at (12,7) and another starting there must both read (12,7).
 
+═══ MATCH THE WRITTEN DIMENSIONS (critical for a professional draft) ═══
+Find the scale note (e.g. "SCALE: 1 sq = 1 ft"). One grid square = that real distance.
+When a room has a written dimension, SIZE THE ROOM TO MATCH IT — trust the numbers over the rough hand-drawing.
+• Convert feet to squares at the scale: at 1 sq = 1 ft, a room labeled 10' x 14'3" is 10 squares by 14.25 squares (3 inches = 0.25 ft).
+• Lay rooms out edge-to-edge so shared walls stay shared and the exterior stays rectangular; reconcile small conflicts by trusting the labeled rooms.
+
 Also report the drawing's overall size: "gridCols" (total squares wide) and "gridRows" (total squares tall).
 
 ═══ TRACE EVERYTHING, IN THIS ORDER (for correct layering) ═══
 1. OUTER PERIMETER — exterior walls as connected "line" strokes (color "#1f2937", width 3).
 2. INTERIOR WALLS — each wall segment as a "line" (color "#374151", width 2). Shared corners share coordinates.
-3. DOORS — opening gap + swing arc as "line" strokes (color "#b8895a", width 1.5).
-4. WINDOWS — short double-line mark in the wall (color "#2563eb", width 1.5).
-5. LABELS — room names AND their written dimensions as "text" (color "#6b7280", width 2), placed near the room center. Preserve the exact text, e.g. "M. BED 10' x 14'3\"".
+3. LABELS — room names AND their written dimensions as "text" (color "#6b7280", width 2), placed near the room center. Preserve the exact text, e.g. "M. BED 10' x 14'3\"".
+
+Do NOT draw door swing arcs yourself as lines. Instead return every door/opening in the separate "doors" array described below — the system draws clean swing arcs from it.
+
+═══ DOORS (return in the "doors" array, NOT as strokes) ═══
+For each door or doorway opening, give three grid points:
+• "hinge": the point the door pivots on (one side of the opening).
+• "latch": the other side of the opening, along the SAME wall (hinge→latch spans the door width and tells us the wall direction).
+• "into": any point clearly inside the room the door swings INTO (used only to pick which way it opens).
+A door 3 squares wide in the wall from (5,10) to (8,10), opening downward into the room below: { "hinge":{"x":5,"y":10}, "latch":{"x":8,"y":10}, "into":{"x":6,"y":12} }.
+Include exterior entries the same way.
 
 ═══ STROKE FORMAT (coordinates in grid squares) ═══
 • line: { "tool":"line", "color":"...", "width":N, "start":{"x":gx,"y":gy}, "end":{"x":gx,"y":gy} }
@@ -176,7 +227,7 @@ Also report the drawing's overall size: "gridCols" (total squares wide) and "gri
 • text: { "tool":"text", "color":"#6b7280", "width":2, "start":{"x":gx,"y":gy}, "text":"..." }
 
 Return ONLY valid JSON — no markdown, no commentary:
-{"gridCols":N,"gridRows":N,"strokes":[...]}`,
+{"gridCols":N,"gridRows":N,"strokes":[...],"doors":[...]}`,
           },
         ],
       }],
@@ -185,7 +236,7 @@ Return ONLY valid JSON — no markdown, no commentary:
     const raw = message.content.find(c => c.type === 'text')?.text?.trim() ?? ''
     const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim()
 
-    let parsed: { strokes: any[]; gridCols?: number; gridRows?: number }
+    let parsed: { strokes: any[]; gridCols?: number; gridRows?: number; doors?: any[] }
     try {
       parsed = JSON.parse(cleaned)
     } catch {
@@ -235,6 +286,16 @@ Return ONLY valid JSON — no markdown, no commentary:
       } else {
         const start = pt(s.start), end = pt(s.end)
         if (start && end) { see(start); see(end); gStrokes.push({ tool: s.tool, color, width, start, end }) }
+      }
+    }
+
+    // Stamp clean door swing symbols from the semantic doors array.
+    if (Array.isArray(parsed.doors)) {
+      for (const d of parsed.doors) {
+        for (const s of expandDoor(d)) {
+          if (s.points) { s.points.forEach(see); gStrokes.push(s as GStroke) }
+          else if (s.start && s.end) { see(s.start); see(s.end); gStrokes.push(s as GStroke) }
+        }
       }
     }
 
