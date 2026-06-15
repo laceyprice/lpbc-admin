@@ -7,7 +7,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import {
   MousePointer2, Minus, Square, DoorOpen, RectangleHorizontal, Hand,
-  ZoomIn, ZoomOut, Trash2, RotateCcw, Copy, Check,
+  ZoomIn, ZoomOut, Trash2, RotateCcw, Copy, Check, ScanLine, Loader2, AlertCircle, X,
 } from 'lucide-react'
 
 // ── Model ────────────────────────────────────────────────────────────────────
@@ -15,8 +15,12 @@ type Pt = { x: number; y: number }            // world units = feet
 type Wall = { id: string; a: Pt; b: Pt }
 type Opening = { id: string; wallId: string; t: number; width: number; kind: 'door' | 'window'; flip: boolean }
 type Room = { id: string; at: Pt; w: number; h: number; name: string }
+type Label = { id: string; at: Pt; text: string }
 type Tool = 'select' | 'wall' | 'room' | 'door' | 'window' | 'pan'
-type Sel = { kind: 'wall' | 'opening' | 'room' | 'vertex'; id: string; vx?: Pt } | null
+type Sel = { kind: 'wall' | 'opening' | 'room' | 'vertex' | 'label'; id: string; vx?: Pt } | null
+
+export type PlanDoc = { walls?: Wall[]; openings?: Opening[]; rooms?: Room[]; labels?: Label[] }
+type FloorPlannerProps = { value?: PlanDoc; onChange?: (doc: PlanDoc) => void }
 
 const uid = () => Math.random().toString(36).slice(2, 9)
 const SNAP_FT = 0.25                            // snap to 3 inches
@@ -51,13 +55,28 @@ function nearestOnSeg(p: Pt, a: Pt, b: Pt) {
   return { t, point, dist: dist(p, point) }
 }
 
-export default function FloorPlanner() {
-  const [walls, setWalls] = useState<Wall[]>([])
-  const [openings, setOpenings] = useState<Opening[]>([])
-  const [rooms, setRooms] = useState<Room[]>([])
+export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}) {
+  const [walls, setWalls] = useState<Wall[]>(value?.walls || [])
+  const [openings, setOpenings] = useState<Opening[]>(value?.openings || [])
+  const [rooms, setRooms] = useState<Room[]>(value?.rooms || [])
+  const [labels, setLabels] = useState<Label[]>(value?.labels || [])
   const [tool, setTool] = useState<Tool>('wall')
   const [sel, setSel] = useState<Sel>(null)
   const [copied, setCopied] = useState(false)
+
+  // AI sketch import
+  const [importing, setImporting] = useState(false)
+  const [importErr, setImportErr] = useState('')
+  const fileRef = useRef<HTMLInputElement>(null)
+
+  // Persist changes upward (Design Studio saves this with the job plan). We seed
+  // from `value` once on mount, then emit on every edit — skip the very first run.
+  const firstEmit = useRef(true)
+  useEffect(() => {
+    if (firstEmit.current) { firstEmit.current = false; return }
+    onChange?.({ walls, openings, rooms, labels })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [walls, openings, rooms, labels])
 
   // view
   const [ppf, setPpf] = useState(16)            // pixels per foot at zoom 1
@@ -232,7 +251,59 @@ export default function FloorPlanner() {
       setOpenings(prev => prev.filter(o => o.wallId !== sel.id))
     } else if (sel.kind === 'opening') setOpenings(prev => prev.filter(o => o.id !== sel.id))
     else if (sel.kind === 'room') setRooms(prev => prev.filter(r => r.id !== sel.id))
+    else if (sel.kind === 'label') setLabels(prev => prev.filter(l => l.id !== sel.id))
     setSel(null)
+  }
+
+  // ── AI sketch import → editable geometry ─────────────────────────────────────
+  async function importSketch(file: File) {
+    setImporting(true); setImportErr('')
+    try {
+      const fd = new FormData()
+      fd.append('image', file)
+      const res = await fetch('/api/sketch-trace', { method: 'POST', body: fd })
+      const text = await res.text()   // endpoint streams keep-alive whitespace then JSON
+      let d: any
+      try { d = JSON.parse(text.trim()) } catch { setImportErr('The server was busy finishing the trace — please try again.'); return }
+      if (d.error || (d._status && d._status !== 200)) { setImportErr(d.error || 'Import failed — try again.'); return }
+      const plan = d.plan
+      if (!plan || !Array.isArray(plan.walls) || plan.walls.length === 0) { setImportErr('No walls were found in that image. Try a clearer, straight-on photo.'); return }
+      loadPlan(plan)
+    } catch (e: any) {
+      setImportErr(e?.message || 'Import failed')
+    } finally {
+      setImporting(false)
+      if (fileRef.current) fileRef.current.value = ''
+    }
+  }
+
+  // Convert the trace's grid-feet plan into editable walls/openings/labels.
+  function loadPlan(plan: any) {
+    const newWalls: Wall[] = (plan.walls || [])
+      .filter((w: any) => w?.a && w?.b)
+      .map((w: any) => ({ id: uid(), a: { x: +w.a.x, y: +w.a.y }, b: { x: +w.b.x, y: +w.b.y } }))
+    const newOpenings: Opening[] = []
+    for (const o of (plan.openings || [])) {
+      if (!o?.center) continue
+      const c = { x: +o.center.x, y: +o.center.y }
+      let best: { w: Wall; t: number; d: number } | null = null
+      for (const w of newWalls) { const r = nearestOnSeg(c, w.a, w.b); if (!best || r.dist < best.d) best = { w, t: r.t, d: r.dist } }
+      if (best && best.d < 1.5) {
+        const base = perp(norm(sub(best.w.b, best.w.a)))
+        let flip = false
+        if (o.into) { const into = { x: +o.into.x, y: +o.into.y }; if (((into.x - c.x) * base.x + (into.y - c.y) * base.y) < 0) flip = true }
+        const wlen = dist(best.w.a, best.w.b) || 1
+        const width = Math.min(+o.width || 3, wlen * 0.9)
+        newOpenings.push({ id: uid(), wallId: best.w.id, t: best.t, width, kind: o.kind === 'window' ? 'window' : 'door', flip })
+      }
+    }
+    const newLabels: Label[] = (plan.labels || [])
+      .filter((l: any) => l?.at && l?.text)
+      .map((l: any) => ({ id: uid(), at: { x: +l.at.x, y: +l.at.y }, text: String(l.text) }))
+
+    setWalls(newWalls); setOpenings(newOpenings); setRooms([]); setLabels(newLabels)
+    setSel(null); wallChain.current = null
+    setTool('select'); setZoom(1); setPan({ x: 48, y: 48 })
   }
 
   // keyboard: delete + escape
@@ -263,7 +334,7 @@ export default function FloorPlanner() {
   function clearAll() { if (confirm('Clear the whole plan?')) { setWalls([]); setOpenings([]); setRooms([]); setSel(null); wallChain.current = null } }
 
   function copyJSON() {
-    const doc = { units: 'feet', walls, openings, rooms }
+    const doc = { units: 'feet', walls, openings, rooms, labels }
     navigator.clipboard?.writeText(JSON.stringify(doc, null, 2)).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500) })
   }
 
@@ -348,6 +419,16 @@ export default function FloorPlanner() {
         <ToolBtn t="window" icon={RectangleHorizontal} label="Window" />
         <ToolBtn t="pan" icon={Hand} label="Pan" />
         <div className="w-px h-6 bg-gray-200 mx-1" />
+        {/* AI sketch import */}
+        <input ref={fileRef} type="file" accept="image/*" className="hidden"
+          onChange={e => { const f = e.target.files?.[0]; if (f) importSketch(f) }} />
+        <button onClick={() => fileRef.current?.click()} disabled={importing}
+          title="Import a photo of a hand sketch — AI drafts editable walls, doors and labels you can correct"
+          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-teal-300 bg-teal-50 text-teal-700 text-xs font-semibold hover:bg-teal-100 disabled:opacity-50 transition-colors">
+          {importing ? <Loader2 size={13} className="animate-spin" /> : <ScanLine size={13} />}
+          <span className="hidden sm:inline">{importing ? 'Tracing…' : 'Import sketch (AI)'}</span>
+        </button>
+        <div className="w-px h-6 bg-gray-200 mx-1" />
         <button onClick={() => zoomBy(1 / 1.2)} title="Zoom out" className="p-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50"><ZoomOut size={14} /></button>
         <button onClick={() => { setZoom(1); setPan({ x: 60, y: 60 }) }} className="px-2 py-1 rounded-lg border border-gray-200 text-gray-700 text-xs font-semibold tabular-nums min-w-[46px]">{Math.round(zoom * 100)}%</button>
         <button onClick={() => zoomBy(1.2)} title="Zoom in" className="p-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50"><ZoomIn size={14} /></button>
@@ -360,12 +441,21 @@ export default function FloorPlanner() {
       </div>
 
       <p className="text-xs text-gray-500">
-        Grid = 1 ft, snapping to 3&quot;. <strong>Wall</strong>: click to chain corners, double-click to finish.{' '}
-        <strong>Room</strong>: drag a rectangle. <strong>Door/Window</strong>: click on a wall. <strong>Select</strong>: drag corners to move, Delete to remove.
+        Grid = 1 ft, snapping to 3&quot;. <strong>Import sketch (AI)</strong> drafts an editable plan from a photo, then refine it:{' '}
+        <strong>Wall</strong> click-chains corners (double-click to finish), <strong>Room</strong> drags a rectangle,{' '}
+        <strong>Door/Window</strong> clicks a wall, <strong>Select</strong> drags corners / Delete removes.
       </p>
 
+      {importErr && (
+        <div className="flex items-start gap-2 bg-red-50 border border-red-200 rounded-xl px-3 py-2.5">
+          <AlertCircle size={14} className="text-red-500 flex-shrink-0 mt-0.5" />
+          <p className="text-xs text-red-700 flex-1">{importErr}</p>
+          <button onClick={() => setImportErr('')} className="text-red-400 hover:text-red-600"><X size={13} /></button>
+        </div>
+      )}
+
       {/* Canvas */}
-      <div ref={wrapRef} className="border border-gray-200 rounded-xl overflow-hidden bg-white">
+      <div ref={wrapRef} className="relative border border-gray-200 rounded-xl overflow-hidden bg-white">
         <svg ref={svgRef} width={size.w} height={size.h}
           style={{ display: 'block', cursor: tool === 'pan' ? 'grab' : tool === 'select' ? 'default' : 'crosshair', touchAction: 'none' }}
           onMouseDown={onDown} onMouseMove={onMove} onMouseUp={onUp} onMouseLeave={onUp} onDoubleClick={onDouble} onWheel={onWheel}>
@@ -398,6 +488,15 @@ export default function FloorPlanner() {
 
           {/* openings */}
           {openings.map(renderOpening)}
+
+          {/* labels (room names / dimensions imported from a sketch) */}
+          {labels.map(l => {
+            const p = toPx(l.at)
+            const seld = sel?.kind === 'label' && sel.id === l.id
+            return <text key={l.id} x={p.x} y={p.y} textAnchor="middle" fontSize={11} fontWeight={600}
+              fill={seld ? '#f59e0b' : '#374151'} style={{ cursor: tool === 'select' ? 'pointer' : undefined }}
+              onClick={() => tool === 'select' && setSel({ kind: 'label', id: l.id })}>{l.text}</text>
+          })}
 
           {/* wall dimensions */}
           {walls.map(wl => {
@@ -437,6 +536,19 @@ export default function FloorPlanner() {
           {/* snap cursor */}
           {cursor && tool !== 'pan' && tool !== 'select' && (() => { const p = toPx(cursor); return <circle cx={p.x} cy={p.y} r={3.5} fill="#b8895a" /> })()}
         </svg>
+
+        {/* AI tracing overlay */}
+        {importing && (
+          <div className="absolute inset-0 flex items-center justify-center bg-white/80 backdrop-blur-sm">
+            <div className="flex items-center gap-3 bg-white rounded-2xl border border-teal-200 shadow-lg px-6 py-4">
+              <Loader2 size={22} className="animate-spin text-teal-600" />
+              <div>
+                <p className="text-sm font-bold text-gray-900">Drafting from your sketch…</p>
+                <p className="text-xs text-gray-500 mt-0.5">AI is tracing walls, doors and labels — this can take a moment</p>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="flex items-center gap-4 text-[11px] text-gray-400">

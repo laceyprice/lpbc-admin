@@ -281,6 +281,10 @@ Return ONLY valid JSON — no markdown, no commentary:
     type GStroke = { tool: string; color: string; width: number; points?: GPt[]; start?: GPt; end?: GPt; text?: string }
 
     const gStrokes: GStroke[] = []
+    // Parallel "plan" model (grid-feet): walls + labels here, openings from doors below.
+    // This is what the editable Floor Planner imports; strokes stay for the legacy canvas.
+    const planWallsRaw: { a: GPt; b: GPt }[] = []
+    const planLabelsRaw: { at: GPt; text: string }[] = []
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
     const see = (p: GPt | null | undefined) => {
       if (!p) return
@@ -303,10 +307,13 @@ Return ONLY valid JSON — no markdown, no commentary:
         if (pts.length > 1) { pts.forEach(see); gStrokes.push({ tool: s.tool, color, width, points: pts }) }
       } else if (s.tool === 'text') {
         const start = pt(s.start)
-        if (start && s.text) { see(start); gStrokes.push({ tool: 'text', color, width, start, text: String(s.text) }) }
+        if (start && s.text) { see(start); gStrokes.push({ tool: 'text', color, width, start, text: String(s.text) }); planLabelsRaw.push({ at: start, text: String(s.text) }) }
       } else {
         const start = pt(s.start), end = pt(s.end)
-        if (start && end) { see(start); see(end); gStrokes.push({ tool: s.tool, color, width, start, end }) }
+        if (start && end) {
+          see(start); see(end); gStrokes.push({ tool: s.tool, color, width, start, end })
+          if (s.tool === 'line') planWallsRaw.push({ a: start, b: end })
+        }
       }
     }
 
@@ -346,6 +353,28 @@ Return ONLY valid JSON — no markdown, no commentary:
       return { ...base, start: mapPt(s.start!), end: mapPt(s.end!) }
     })
 
+    // ── Build the editable Floor Planner model in grid-feet (1 square = 1 ft),
+    // origin-shifted so the drawing starts at (0,0). Openings carry their "into"
+    // point so the client can pick the swing side after snapping to a wall.
+    const r2 = (n: number) => Math.round(n * 100) / 100
+    const shift = (p: GPt): GPt => ({ x: r2(p.x - minX), y: r2(p.y - minY) })
+    const planWalls = planWallsRaw
+      .map(w => ({ a: shift(w.a), b: shift(w.b) }))
+      .filter(w => Math.hypot(w.b.x - w.a.x, w.b.y - w.a.y) > 0.25)
+    const planLabels = planLabelsRaw.map(l => ({ at: shift(l.at), text: l.text }))
+    const planOpenings: any[] = []
+    if (Array.isArray(parsed.doors)) {
+      for (const d of parsed.doors) {
+        const h = pt(d?.hinge), l = pt(d?.latch)
+        if (!h || !l) continue
+        const width = Math.hypot(l.x - h.x, l.y - h.y)
+        if (width < 0.4 || width > 20) continue
+        const center = shift({ x: (h.x + l.x) / 2, y: (h.y + l.y) / 2 })
+        const into = pt(d?.into) ? shift(pt(d.into)!) : null
+        planOpenings.push({ center, width: r2(width), kind: 'door', into })
+      }
+    }
+
     return {
       status: 200,
       payload: {
@@ -359,6 +388,7 @@ Return ONLY valid JSON — no markdown, no commentary:
           detected: pitch > 0,
           confident,
         },
+        plan: { units: 'feet', walls: planWalls, openings: planOpenings, labels: planLabels },
       },
     }
   } catch (err: any) {

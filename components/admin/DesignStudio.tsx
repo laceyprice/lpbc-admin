@@ -4,8 +4,9 @@ import type { ErrorInfo, ReactNode } from 'react'
 import {
   X, Palette, PenTool, Images, Sparkles, Loader2, Plus, Trash2, Save,
   Square, Minus, Type, Eraser, Undo2, RotateCcw, Wand2, Check, DollarSign,
-  Camera, Upload, Cloud, ZoomIn, ZoomOut, ScanLine, AlertCircle, CheckCircle2,
+  Camera, Upload, Cloud, ZoomIn, ZoomOut, ScanLine, AlertCircle, CheckCircle2, PencilRuler,
 } from 'lucide-react'
+import FloorPlanner, { type PlanDoc } from './FloorPlanner'
 
 // ── Types ──────────────────────────────────────────────────────────────────
 export interface BoardItem {
@@ -49,6 +50,7 @@ export interface DesignData {
   comparisons?: ComparisonItem[]
   ai_suggestions?: DesignSuggestion[]
   notes?: string
+  floorplan?: PlanDoc
 }
 interface AttachmentLike {
   path: string
@@ -61,7 +63,7 @@ interface AttachmentLike {
 const ROOMS = ['Kitchen', 'Primary Bath', 'Bathroom', 'Living Room', 'Bedroom', 'Exterior', 'Outdoor / Patio', 'Laundry', 'Office', 'Other']
 const TABS = [
   { key: 'board', label: 'Mood Board', icon: Palette },
-  { key: 'sketch', label: 'Sketch Canvas', icon: PenTool },
+  { key: 'sketch', label: 'Floor Plan', icon: PencilRuler },
   { key: 'compare', label: 'Before / After', icon: Images },
   { key: 'ai', label: 'AI Suggestions', icon: Sparkles },
 ] as const
@@ -177,7 +179,7 @@ function DesignStudioInner({
           {TABS.map(t => {
             const Icon = t.icon
             const active = tab === t.key
-            const count = t.key === 'board' ? board.length : t.key === 'sketch' ? sketches.length : t.key === 'compare' ? comparisons.length : suggestions.length
+            const count = t.key === 'board' ? board.length : t.key === 'sketch' ? (design.floorplan?.walls?.length || 0) : t.key === 'compare' ? comparisons.length : suggestions.length
             return (
               <button key={t.key} onClick={() => setTab(t.key)}
                 className={`flex items-center gap-1.5 text-xs font-bold px-3.5 py-2 rounded-t-xl border-b-2 transition-colors whitespace-nowrap ${active ? 'border-current text-gray-900' : 'border-transparent text-gray-400 hover:text-gray-600'}`}
@@ -201,13 +203,7 @@ function DesignStudioInner({
             />
           )}
           {tab === 'sketch' && (
-            <SketchTab sketches={sketches} sessionId={sessionId}
-              onAdd={s => patch({ sketches: [...sketches, s] })}
-              onRemove={i => patch({ sketches: sketches.filter((_, idx) => idx !== i) })}
-              onOpenDrivePicker={onOpenDrivePickerForSketch}
-              driveImageUrl={sketchDriveImageUrl}
-              onDriveImageConsumed={onSketchDriveImageConsumed}
-            />
+            <FloorPlanner value={design.floorplan} onChange={fp => patch({ floorplan: fp })} />
           )}
           {tab === 'compare' && (
             <CompareTab comparisons={comparisons} attachments={attachments}
