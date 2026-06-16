@@ -48,6 +48,11 @@ function fmtFt(ft: number): string {
   return inches ? `${whole}'-${inches}"` : `${whole}'`
 }
 
+// constrain p to be horizontal or vertical relative to an anchor (Shift-draw)
+function ortho(anchor: Pt, p: Pt): Pt {
+  return Math.abs(p.x - anchor.x) >= Math.abs(p.y - anchor.y) ? { x: p.x, y: anchor.y } : { x: anchor.x, y: p.y }
+}
+
 // nearest point on segment a→b to p; returns param t (0..1) and distance
 function nearestOnSeg(p: Pt, a: Pt, b: Pt) {
   const ab = sub(b, a)
@@ -66,6 +71,15 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
   const [tool, setTool] = useState<Tool>('wall')
   const [sel, setSel] = useState<Sel>(null)
   const [copied, setCopied] = useState(false)
+  // default sizes for newly-placed openings (feet)
+  const [defDoorW, setDefDoorW] = useState(3)
+  const [defWinW, setDefWinW] = useState(3)
+
+  // element editors
+  const updOpening = (id: string, p: Partial<Opening>) => setOpenings(prev => prev.map(o => o.id === id ? { ...o, ...p } : o))
+  const updRoom = (id: string, p: Partial<Room>) => setRooms(prev => prev.map(r => r.id === id ? { ...r, ...p } : r))
+  const updLabel = (id: string, p: Partial<Label>) => setLabels(prev => prev.map(l => l.id === id ? { ...l, ...p } : l))
+  const wallLenOf = (wallId: string) => { const w = walls.find(x => x.id === wallId); return w ? dist(w.a, w.b) : 0 }
 
   // AI sketch import
   const [importing, setImporting] = useState(false)
@@ -154,10 +168,11 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
     if (tool === 'wall') {
       if (!wallChain.current) { wallChain.current = sp }
       else {
-        if (dist(wallChain.current, sp) > 0.01) {
-          setWalls(prev => [...prev, { id: uid(), a: wallChain.current!, b: sp }])
+        const end = e.shiftKey ? snap(ortho(wallChain.current, sp)) : sp   // Shift = straight
+        if (dist(wallChain.current, end) > 0.01) {
+          setWalls(prev => [...prev, { id: uid(), a: wallChain.current!, b: end }])
         }
-        wallChain.current = sp
+        wallChain.current = end
       }
       force(n => n + 1)
       return
@@ -168,9 +183,13 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
     if (tool === 'door' || tool === 'window') {
       const hit = nearestWall(w)
       if (hit && hit.dist < 0.8) {
-        setOpenings(prev => [...prev, {
-          id: uid(), wallId: hit.wall.id, t: hit.t, width: tool === 'door' ? 3 : 3, kind: tool, flip: false,
-        }])
+        const wl = dist(hit.wall.a, hit.wall.b) || 1
+        const width = Math.min(tool === 'door' ? defDoorW : defWinW, wl * 0.95)
+        const half = (width / 2) / wl
+        const t = Math.max(half, Math.min(1 - half, hit.t))
+        const id = uid()
+        setOpenings(prev => [...prev, { id, wallId: hit.wall.id, t, width, kind: tool, flip: false }])
+        setSel({ kind: 'opening', id })   // select it so you can tweak immediately
       }
       return
     }
@@ -184,7 +203,9 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
 
   function onMove(e: React.MouseEvent) {
     const w = evtWorld(e)
-    setCursor(snapSmart(w))
+    let c = snapSmart(w)
+    if (tool === 'wall' && wallChain.current && e.shiftKey) c = snap(ortho(wallChain.current, c))
+    setCursor(c)
 
     const d = dragging.current
     if (d?.kind === 'pan') {
@@ -434,6 +455,32 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
     </button>
   )
 
+  // width stepper in feet (¼-ft increments) with a live foot-inch readout
+  const SizeStepper = ({ value, onChange, min = 0.5, max = 40 }: { value: number; onChange: (v: number) => void; min?: number; max?: number }) => {
+    const clamp = (v: number) => Math.max(min, Math.min(max, Math.round(v * 4) / 4))
+    return (
+      <div className="flex items-center gap-1">
+        <button onClick={() => onChange(clamp(value - 0.25))} className="w-6 h-6 rounded border border-gray-200 bg-white text-gray-600 hover:bg-gray-50">−</button>
+        <input type="number" step={0.25} min={min} max={max} value={value}
+          onChange={e => onChange(clamp(Number(e.target.value) || min))}
+          className="w-14 border border-gray-200 rounded px-1.5 py-0.5 text-center text-xs bg-white focus:outline-none focus:ring-1 focus:ring-blue-400" />
+        <span className="text-gray-500 tabular-nums w-12 text-center">{fmtFt(value)}</span>
+        <button onClick={() => onChange(clamp(value + 0.25))} className="w-6 h-6 rounded border border-gray-200 bg-white text-gray-600 hover:bg-gray-50">+</button>
+      </div>
+    )
+  }
+
+  // resize an opening, keeping it inside its wall
+  function setOpeningWidth(id: string, newW: number) {
+    setOpenings(prev => prev.map(o => {
+      if (o.id !== id) return o
+      const wl = wallLenOf(o.wallId) || 1
+      const width = Math.max(0.5, Math.min(newW, wl * 0.95))
+      const half = (width / 2) / wl
+      return { ...o, width, t: Math.max(half, Math.min(1 - half, o.t)) }
+    }))
+  }
+
   return (
     <div className="space-y-3">
       {/* Toolbar */}
@@ -486,6 +533,77 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
           <button onClick={() => setImportErr('')} className="text-red-400 hover:text-red-600"><X size={13} /></button>
         </div>
       )}
+
+      {/* Default size when placing a door/window */}
+      {(tool === 'door' || tool === 'window') && (
+        <div className="flex flex-wrap items-center gap-2 bg-teal-50 border border-teal-100 rounded-xl px-3 py-2 text-xs">
+          <span className="font-semibold text-teal-800">New {tool} width:</span>
+          <SizeStepper value={tool === 'door' ? defDoorW : defWinW} onChange={v => tool === 'door' ? setDefDoorW(v) : setDefWinW(v)} max={tool === 'door' ? 12 : 12} />
+          <span className="text-gray-400">— then click a wall to place it.</span>
+        </div>
+      )}
+
+      {/* Inspector — edit the selected element */}
+      {sel && (() => {
+        if (sel.kind === 'opening') {
+          const o = openings.find(x => x.id === sel.id); if (!o) return null
+          const wl = wallLenOf(o.wallId) || 1
+          const half = (o.width / 2) / wl
+          return (
+            <div className="flex flex-wrap items-center gap-2 bg-blue-50 border border-blue-100 rounded-xl px-3 py-2 text-xs">
+              <span className="font-bold text-blue-800 capitalize">{o.kind}</span>
+              <div className="flex rounded-lg overflow-hidden border border-blue-200">
+                {(['door', 'window'] as const).map(k => (
+                  <button key={k} onClick={() => updOpening(o.id, { kind: k })}
+                    className={`px-2 py-0.5 capitalize ${o.kind === k ? 'bg-blue-600 text-white' : 'bg-white text-gray-600 hover:bg-blue-100'}`}>{k}</button>
+                ))}
+              </div>
+              <div className="w-px h-5 bg-blue-200" />
+              <span className="text-gray-500">Width</span>
+              <SizeStepper value={o.width} onChange={v => setOpeningWidth(o.id, v)} max={Math.max(1, wl * 0.95)} />
+              <div className="w-px h-5 bg-blue-200" />
+              <span className="text-gray-500">Position</span>
+              <input type="range" min={half} max={1 - half} step={0.01} value={o.t} onChange={e => updOpening(o.id, { t: Number(e.target.value) })} className="w-28" />
+              {o.kind === 'door' && (
+                <button onClick={() => updOpening(o.id, { flip: !o.flip })} className="px-2 py-0.5 rounded border border-blue-200 bg-white text-gray-600 hover:bg-blue-100 font-semibold">Flip swing</button>
+              )}
+              <button onClick={deleteSel} className="ml-auto flex items-center gap-1 text-red-500 hover:text-red-700 font-semibold"><Trash2 size={12} /> Delete</button>
+            </div>
+          )
+        }
+        if (sel.kind === 'room') {
+          const r = rooms.find(x => x.id === sel.id); if (!r) return null
+          return (
+            <div className="flex flex-wrap items-center gap-2 bg-blue-50 border border-blue-100 rounded-xl px-3 py-2 text-xs">
+              <span className="font-bold text-blue-800">Room</span>
+              <input value={r.name} onChange={e => updRoom(r.id, { name: e.target.value })} className="border border-blue-200 rounded px-2 py-0.5 text-xs bg-white focus:outline-none focus:ring-1 focus:ring-blue-400" />
+              <span className="text-gray-500">{fmtFt(r.w)} × {fmtFt(r.h)} · {Math.round(r.w * r.h)} sq ft</span>
+              <button onClick={deleteSel} className="ml-auto flex items-center gap-1 text-red-500 hover:text-red-700 font-semibold"><Trash2 size={12} /> Delete</button>
+            </div>
+          )
+        }
+        if (sel.kind === 'label') {
+          const l = labels.find(x => x.id === sel.id); if (!l) return null
+          return (
+            <div className="flex flex-wrap items-center gap-2 bg-blue-50 border border-blue-100 rounded-xl px-3 py-2 text-xs">
+              <span className="font-bold text-blue-800">Label</span>
+              <input value={l.text} onChange={e => updLabel(l.id, { text: e.target.value })} className="flex-1 min-w-[160px] border border-blue-200 rounded px-2 py-0.5 text-xs bg-white focus:outline-none focus:ring-1 focus:ring-blue-400" />
+              <button onClick={deleteSel} className="flex items-center gap-1 text-red-500 hover:text-red-700 font-semibold"><Trash2 size={12} /> Delete</button>
+            </div>
+          )
+        }
+        if (sel.kind === 'wall') {
+          const wll = walls.find(x => x.id === sel.id); if (!wll) return null
+          return (
+            <div className="flex flex-wrap items-center gap-2 bg-blue-50 border border-blue-100 rounded-xl px-3 py-2 text-xs">
+              <span className="font-bold text-blue-800">Wall</span>
+              <span className="text-gray-500">Length {fmtFt(dist(wll.a, wll.b))}</span>
+              <button onClick={deleteSel} className="ml-auto flex items-center gap-1 text-red-500 hover:text-red-700 font-semibold"><Trash2 size={12} /> Delete</button>
+            </div>
+          )
+        }
+        return null
+      })()}
 
       {/* Underlay controls */}
       {underlay && (
