@@ -201,7 +201,7 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
   const [, force] = useState(0)
   const roomDrag = useRef<{ a: Pt } | null>(null)
   const [roomPreview, setRoomPreview] = useState<{ a: Pt; b: Pt } | null>(null)
-  const dragging = useRef<{ kind: 'vertex' | 'pan' | 'fixture'; from: Pt; orig?: Pt; panFrom?: Pt; id?: string; fixFrom?: Pt } | null>(null)
+  const dragging = useRef<{ kind: 'vertex' | 'pan' | 'fixture' | 'label' | 'room'; from: Pt; orig?: Pt; panFrom?: Pt; id?: string; fixFrom?: Pt } | null>(null)
 
   const wrapRef = useRef<HTMLDivElement>(null)
   const svgRef = useRef<SVGSVGElement>(null)
@@ -307,6 +307,8 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
       setSel(h)
       if (h?.kind === 'vertex' && h.vx) dragging.current = { kind: 'vertex', from: w, orig: h.vx }
       if (h?.kind === 'fixture') dragging.current = { kind: 'fixture', from: w, id: h.id, fixFrom: fixtures.find(f => f.id === h.id)?.at }
+      if (h?.kind === 'label') dragging.current = { kind: 'label', from: w, id: h.id }
+      if (h?.kind === 'room') dragging.current = { kind: 'room', from: w, id: h.id }
     }
   }
 
@@ -330,6 +332,8 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
       return
     }
     if (d?.kind === 'fixture' && d.id) { updFixture(d.id, { at: snap(w) }); return }
+    if (d?.kind === 'label' && d.id) { updLabel(d.id, { at: w }); return }   // free placement for text
+    if (d?.kind === 'room' && d.id) { updRoom(d.id, { at: w }); return }
     if (roomDrag.current) setRoomPreview({ a: roomDrag.current.a, b: snap(w) })
   }
 
@@ -387,6 +391,8 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
       const a2 = add(d.a, mul(n, d.off)), b2 = add(d.b, mul(n, d.off))
       if (nearestOnSeg(p, a2, b2).dist * scale < tolPx) return { kind: 'dim', id: d.id }
     }
+    // text labels (room names / dimensions) — grab a wide box so they're easy to hit
+    for (const l of labels) { const c = toPx(l.at); if (Math.abs(toPx(p).x - c.x) < 6 + l.text.length * 3.5 && Math.abs(toPx(p).y - c.y) < 9) return { kind: 'label', id: l.id } }
     // room labels
     for (const r of rooms) if (dist(toPx(p), toPx(r.at)) < 26) return { kind: 'room', id: r.id }
     // walls
@@ -810,7 +816,7 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
       <p className="text-xs text-gray-500">
         Grid = 1 ft, snapping to 3&quot;. <strong>Import sketch (AI)</strong> drafts an editable plan from a photo, then refine it:{' '}
         <strong>Wall</strong> click-chains corners (double-click to finish), <strong>Room</strong> drags a rectangle,{' '}
-        <strong>Door/Window</strong> clicks a wall, <strong>Select</strong> drags corners / Delete removes.
+        <strong>Door/Window</strong> clicks a wall, <strong>Select</strong> drags corners, labels & fixtures (Delete removes).
       </p>
 
       {importErr && (
@@ -1054,7 +1060,7 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
             const p = toPx(l.at)
             const seld = sel?.kind === 'label' && sel.id === l.id
             return <text key={l.id} x={p.x} y={p.y} textAnchor="middle" fontSize={11} fontWeight={600}
-              fill={seld ? '#f59e0b' : '#374151'} style={{ cursor: tool === 'select' ? 'pointer' : undefined }}
+              fill={seld ? '#f59e0b' : '#374151'} style={{ cursor: tool === 'select' ? 'move' : undefined }}
               onClick={() => tool === 'select' && setSel({ kind: 'label', id: l.id })}>{l.text}</text>
           })}
 
