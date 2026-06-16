@@ -210,10 +210,12 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
   useEffect(() => {
     const el = wrapRef.current
     if (!el) return
-    const ro = new ResizeObserver(() => setSize({ w: el.clientWidth, h: 620 }))
+    const measure = () => setSize({ w: el.clientWidth, h: Math.max(460, Math.min(920, window.innerHeight - 290)) })
+    const ro = new ResizeObserver(measure)
     ro.observe(el)
-    setSize({ w: el.clientWidth, h: 620 })
-    return () => ro.disconnect()
+    window.addEventListener('resize', measure)
+    measure()
+    return () => { ro.disconnect(); window.removeEventListener('resize', measure) }
   }, [])
 
   const scale = ppf * zoom

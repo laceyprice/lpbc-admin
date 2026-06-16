@@ -164,8 +164,8 @@ function DesignStudioInner({
   function patch(p: Partial<DesignData>) { onChange({ ...design, ...p }) }
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/40 flex items-stretch sm:items-center justify-center p-0 sm:p-6">
-      <div className="bg-white w-full sm:max-w-5xl sm:rounded-2xl shadow-xl flex flex-col h-full sm:h-[88vh] overflow-hidden">
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-stretch justify-center p-0 sm:p-4">
+      <div className="bg-white w-full sm:max-w-none sm:rounded-2xl shadow-xl flex flex-col h-full overflow-hidden">
         {/* Header */}
         <div className="px-5 py-3.5 border-b border-gray-100 flex items-center justify-between flex-shrink-0">
           <h2 className="font-extrabold text-gray-900 text-base flex items-center gap-2">
