@@ -153,6 +153,7 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
   const [defDoorW, setDefDoorW] = useState(3)
   const [defWinW, setDefWinW] = useState(3)
   const [wallThick, setWallThick] = useState(0.5)   // wall thickness in feet (6")
+  const [wallStyle, setWallStyle] = useState<'outline' | 'solid'>('outline')  // double-line vs poché
 
   // element editors
   const updOpening = (id: string, p: Partial<Opening>) => setOpenings(prev => prev.map(o => o.id === id ? { ...o, ...p } : o))
@@ -217,6 +218,11 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
 
   const scale = ppf * zoom
   const wallPx = Math.max(3, wallThick * scale)   // wall draw thickness in screen px
+  // Double-line ("outline") walls: a dark stroke (full thickness) under a white
+  // stroke (interior) leaves two dark faces; overlap at shared corners mitres
+  // cleanly with no geometry solving. faceW = thickness of each drawn face.
+  const faceW = Math.min(2.5, Math.max(1, wallPx * 0.16))
+  const wallInnerPx = Math.max(0.5, wallPx - 2 * faceW)
   const toPx = useCallback((p: Pt): Pt => ({ x: p.x * scale + pan.x, y: p.y * scale + pan.y }), [scale, pan])
   const toWorld = useCallback((sx: number, sy: number): Pt => ({ x: (sx - pan.x) / scale, y: (sy - pan.y) / scale }), [scale, pan])
   const snap = (p: Pt): Pt => ({ x: Math.round(p.x / SNAP_FT) * SNAP_FT, y: Math.round(p.y / SNAP_FT) * SNAP_FT })
@@ -524,14 +530,17 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
     const X = (p: Pt) => +((p.x - x0) * ppf + pad).toFixed(1)
     const Y = (p: Pt) => +((p.y - y0) * ppf + pad).toFixed(1)
     const wpx = Math.max(2, wallThick * ppf)
+    const pFace = Math.min(2.5, Math.max(0.7, wpx * 0.16)), pInner = Math.max(0.4, wpx - 2 * pFace)
     const esc = (s: string) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     const P: string[] = []
     for (const w of walls) P.push(`<line x1="${X(w.a)}" y1="${Y(w.a)}" x2="${X(w.b)}" y2="${Y(w.b)}" stroke="#111827" stroke-width="${wpx.toFixed(1)}" stroke-linecap="round"/>`)
+    if (wallStyle === 'outline') for (const w of walls) P.push(`<line x1="${X(w.a)}" y1="${Y(w.a)}" x2="${X(w.b)}" y2="${Y(w.b)}" stroke="#fff" stroke-width="${pInner.toFixed(1)}" stroke-linecap="round"/>`)
     for (const o of openings) {
       const wl = walls.find(w => w.id === o.wallId); if (!wl) continue
       const u = norm(sub(wl.b, wl.a)), c = add(wl.a, mul(sub(wl.b, wl.a), o.t)), half = o.width / 2
       const j1 = sub(c, mul(u, half)), j2 = add(c, mul(u, half)), n = mul(perp(u), o.flip ? -1 : 1)
       P.push(`<line x1="${X(j1)}" y1="${Y(j1)}" x2="${X(j2)}" y2="${Y(j2)}" stroke="#fff" stroke-width="${(wpx + 1).toFixed(1)}"/>`)
+      if (wallStyle === 'outline') { const jd = perp(u), ht = wallThick / 2; for (const j of [j1, j2]) { const q1 = add(j, mul(jd, ht)), q2 = sub(j, mul(jd, ht)); P.push(`<line x1="${X(q1)}" y1="${Y(q1)}" x2="${X(q2)}" y2="${Y(q2)}" stroke="#111827" stroke-width="${pFace.toFixed(1)}" stroke-linecap="round"/>`) } }
       if (o.kind === 'door') {
         const tip = add(j1, mul(n, o.width))
         const a0 = Math.atan2(j2.y - j1.y, j2.x - j1.x), a1 = Math.atan2(tip.y - j1.y, tip.x - j1.x)
@@ -669,6 +678,14 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
     const els: JSX.Element[] = [
       <line key="mask" x1={pj1.x} y1={pj1.y} x2={pj2.x} y2={pj2.y} stroke="#ffffff" strokeWidth={maskW} strokeLinecap="butt" />,
     ]
+    // outline walls: close the wall at each jamb with a short cross line
+    if (wallStyle === 'outline') {
+      const jd = perp(u), ht = wallThick / 2
+      ;[j1, j2].forEach((j, i) => {
+        const q1 = toPx(add(j, mul(jd, ht))), q2 = toPx(sub(j, mul(jd, ht)))
+        els.push(<line key={`jamb${i}`} x1={q1.x} y1={q1.y} x2={q2.x} y2={q2.y} stroke="#1f2937" strokeWidth={faceW} strokeLinecap="round" />)
+      })
+    }
     if (o.kind === 'door') {
       const tip = add(j1, mul(n, o.width))     // open leaf tip
       const ptip = toPx(tip)
@@ -773,6 +790,11 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
             <option value={0.667}>8&quot;</option>
             <option value={0.0625}>thin</option>
           </select>
+          <button onClick={() => setWallStyle(s => s === 'outline' ? 'solid' : 'outline')}
+            title="Toggle double-line / solid walls"
+            className="px-2 py-1 rounded-lg border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 text-xs">
+            {wallStyle === 'outline' ? 'double-line' : 'solid'}
+          </button>
         </div>
         <button onClick={exportPDF} title="Export a print-ready PDF at scale" className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-gray-200 text-xs font-semibold text-gray-600 hover:bg-gray-50">
           <FileDown size={13} /> <span className="hidden sm:inline">PDF</span>
@@ -965,7 +987,7 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
             )
           })}
 
-          {/* walls */}
+          {/* walls — dark faces (full thickness) */}
           {walls.map(wl => {
             const a = toPx(wl.a), b = toPx(wl.b)
             const seld = sel?.kind === 'wall' && sel.id === wl.id
@@ -973,6 +995,12 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
               stroke={seld ? '#f59e0b' : '#1f2937'} strokeWidth={wallPx} strokeLinecap="round"
               onClick={() => tool === 'select' && setSel({ kind: 'wall', id: wl.id })}
               style={{ cursor: tool === 'select' ? 'pointer' : undefined }} />
+          })}
+          {/* walls — white interior (double-line look); corners mitre via overlap */}
+          {wallStyle === 'outline' && walls.map(wl => {
+            const a = toPx(wl.a), b = toPx(wl.b)
+            return <line key={wl.id + '_in'} x1={a.x} y1={a.y} x2={b.x} y2={b.y}
+              stroke="#ffffff" strokeWidth={wallInnerPx} strokeLinecap="round" style={{ pointerEvents: 'none' }} />
           })}
 
           {/* openings */}
