@@ -154,6 +154,7 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
   const [defWinW, setDefWinW] = useState(3)
   const [wallThick, setWallThick] = useState(0.5)   // wall thickness in feet (6")
   const [wallStyle, setWallStyle] = useState<'outline' | 'solid'>('outline')  // double-line vs poché
+  const [showWallDims, setShowWallDims] = useState(true)   // auto per-wall length labels
 
   // element editors
   const updOpening = (id: string, p: Partial<Opening>) => setOpenings(prev => prev.map(o => o.id === id ? { ...o, ...p } : o))
@@ -803,6 +804,11 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
             className="px-2 py-1 rounded-lg border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 text-xs">
             {wallStyle === 'outline' ? 'double-line' : 'solid'}
           </button>
+          <button onClick={() => setShowWallDims(v => !v)}
+            title="Show/hide automatic wall length labels"
+            className={`px-2 py-1 rounded-lg border text-xs ${showWallDims ? 'border-blue-200 bg-blue-50 text-blue-700' : 'border-gray-200 bg-white text-gray-400'}`}>
+            dims
+          </button>
         </div>
         <button onClick={exportPDF} title="Export a print-ready PDF at scale" className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-gray-200 text-xs font-semibold text-gray-600 hover:bg-gray-50">
           <FileDown size={13} /> <span className="hidden sm:inline">PDF</span>
@@ -1066,16 +1072,17 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
               onClick={() => tool === 'select' && setSel({ kind: 'label', id: l.id })}>{l.text}</text>
           })}
 
-          {/* wall dimensions */}
-          {walls.map(wl => {
+          {/* wall dimensions — offset clear of the wall + white halo so they read */}
+          {showWallDims && walls.map(wl => {
             const l = dist(wl.a, wl.b)
             if (l < 0.5) return null
             const mid = mul(add(wl.a, wl.b), 0.5)
             const n = mul(perp(norm(sub(wl.b, wl.a))), 1)
-            const off = toPx(add(mid, mul(n, 0.6)))
+            const off = toPx(add(mid, mul(n, wallThick / 2 + 0.55)))
             const ang = Math.atan2(wl.b.y - wl.a.y, wl.b.x - wl.a.x) * 180 / Math.PI
             const a2 = ang > 90 || ang < -90 ? ang + 180 : ang
-            return <text key={`d${wl.id}`} x={off.x} y={off.y} textAnchor="middle" fontSize={10} fill="#2563eb"
+            return <text key={`d${wl.id}`} x={off.x} y={off.y} textAnchor="middle" fontSize={11} fontWeight={600} fill="#2563eb"
+              stroke="#ffffff" strokeWidth={3} paintOrder="stroke" strokeLinejoin="round"
               transform={`rotate(${a2} ${off.x} ${off.y})`} style={{ pointerEvents: 'none' }}>{fmtFt(l)}</text>
           })}
 
