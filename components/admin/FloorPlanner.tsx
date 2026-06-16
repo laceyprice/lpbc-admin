@@ -8,7 +8,7 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import {
   MousePointer2, Minus, Square, DoorOpen, RectangleHorizontal, Hand,
   ZoomIn, ZoomOut, Trash2, RotateCcw, Copy, Check, ScanLine, Loader2, AlertCircle, X,
-  Image as ImageIcon, Eye, EyeOff, Move,
+  Image as ImageIcon, Eye, EyeOff, Move, FileDown,
 } from 'lucide-react'
 
 type Underlay = { src: string; x: number; y: number; w: number; h: number; opacity: number; visible: boolean }
@@ -74,6 +74,7 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
   // default sizes for newly-placed openings (feet)
   const [defDoorW, setDefDoorW] = useState(3)
   const [defWinW, setDefWinW] = useState(3)
+  const [wallThick, setWallThick] = useState(0.5)   // wall thickness in feet (6")
 
   // element editors
   const updOpening = (id: string, p: Partial<Opening>) => setOpenings(prev => prev.map(o => o.id === id ? { ...o, ...p } : o))
@@ -137,6 +138,7 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
   }, [])
 
   const scale = ppf * zoom
+  const wallPx = Math.max(3, wallThick * scale)   // wall draw thickness in screen px
   const toPx = useCallback((p: Pt): Pt => ({ x: p.x * scale + pan.x, y: p.y * scale + pan.y }), [scale, pan])
   const toWorld = useCallback((sx: number, sy: number): Pt => ({ x: (sx - pan.x) / scale, y: (sy - pan.y) / scale }), [scale, pan])
   const snap = (p: Pt): Pt => ({ x: Math.round(p.x / SNAP_FT) * SNAP_FT, y: Math.round(p.y / SNAP_FT) * SNAP_FT })
@@ -385,6 +387,73 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
     navigator.clipboard?.writeText(JSON.stringify(doc, null, 2)).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500) })
   }
 
+  // ── PDF export — a print-ready sheet at a real architectural scale + title block.
+  // Drawn in CSS px at 96 px/in so the browser prints at true scale (Save as PDF).
+  function exportPDF() {
+    if (!walls.length) { alert('Draw or import a plan first.'); return }
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity
+    const see = (p: Pt) => { if (p.x < x0) x0 = p.x; if (p.y < y0) y0 = p.y; if (p.x > x1) x1 = p.x; if (p.y > y1) y1 = p.y }
+    walls.forEach(w => { see(w.a); see(w.b) }); labels.forEach(l => see(l.at)); rooms.forEach(r => see(r.at))
+    const bw = Math.max(1, x1 - x0), bh = Math.max(1, y1 - y0)
+    const SCALES = [
+      { v: 0.25, l: '1/4" = 1\'-0"' }, { v: 0.1875, l: '3/16" = 1\'-0"' }, { v: 0.125, l: '1/8" = 1\'-0"' },
+      { v: 0.09375, l: '3/32" = 1\'-0"' }, { v: 0.0625, l: '1/16" = 1\'-0"' }, { v: 0.03125, l: '1/32" = 1\'-0"' },
+    ]
+    const DPI = 96, maxW = 9.4 * DPI, maxH = 6.5 * DPI
+    let chosen = SCALES[SCALES.length - 1]
+    for (const s of SCALES) { if (bw * s.v * DPI <= maxW && bh * s.v * DPI <= maxH) { chosen = s; break } }
+    const ppf = chosen.v * DPI, pad = 0.4 * DPI
+    const W = bw * ppf + pad * 2, H = bh * ppf + pad * 2
+    const X = (p: Pt) => +((p.x - x0) * ppf + pad).toFixed(1)
+    const Y = (p: Pt) => +((p.y - y0) * ppf + pad).toFixed(1)
+    const wpx = Math.max(2, wallThick * ppf)
+    const esc = (s: string) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    const P: string[] = []
+    for (const w of walls) P.push(`<line x1="${X(w.a)}" y1="${Y(w.a)}" x2="${X(w.b)}" y2="${Y(w.b)}" stroke="#111827" stroke-width="${wpx.toFixed(1)}" stroke-linecap="round"/>`)
+    for (const o of openings) {
+      const wl = walls.find(w => w.id === o.wallId); if (!wl) continue
+      const u = norm(sub(wl.b, wl.a)), c = add(wl.a, mul(sub(wl.b, wl.a), o.t)), half = o.width / 2
+      const j1 = sub(c, mul(u, half)), j2 = add(c, mul(u, half)), n = mul(perp(u), o.flip ? -1 : 1)
+      P.push(`<line x1="${X(j1)}" y1="${Y(j1)}" x2="${X(j2)}" y2="${Y(j2)}" stroke="#fff" stroke-width="${(wpx + 1).toFixed(1)}"/>`)
+      if (o.kind === 'door') {
+        const tip = add(j1, mul(n, o.width))
+        const a0 = Math.atan2(j2.y - j1.y, j2.x - j1.x), a1 = Math.atan2(tip.y - j1.y, tip.x - j1.x)
+        let dl = a1 - a0; while (dl > Math.PI) dl -= 2 * Math.PI; while (dl < -Math.PI) dl += 2 * Math.PI
+        const pts: string[] = []
+        for (let i = 0; i <= 16; i++) { const a = a0 + dl * (i / 16); const pp = { x: j1.x + o.width * Math.cos(a), y: j1.y + o.width * Math.sin(a) }; pts.push(`${X(pp)},${Y(pp)}`) }
+        P.push(`<line x1="${X(j1)}" y1="${Y(j1)}" x2="${X(tip)}" y2="${Y(tip)}" stroke="#111827" stroke-width="1"/>`)
+        P.push(`<polyline points="${pts.join(' ')}" fill="none" stroke="#111827" stroke-width="1"/>`)
+      } else {
+        P.push(`<line x1="${X(j1)}" y1="${Y(j1)}" x2="${X(j2)}" y2="${Y(j2)}" stroke="#111827" stroke-width="1.5"/>`)
+      }
+    }
+    for (const w of walls) {
+      const L = dist(w.a, w.b); if (L < 1) continue
+      const m = add(mul(add(w.a, w.b), 0.5), mul(perp(norm(sub(w.b, w.a))), 0.6))
+      const ang = Math.atan2(w.b.y - w.a.y, w.b.x - w.a.x) * 180 / Math.PI, a2 = (ang > 90 || ang < -90) ? ang + 180 : ang
+      P.push(`<text x="${X(m)}" y="${Y(m)}" font-size="8" fill="#374151" text-anchor="middle" transform="rotate(${a2.toFixed(1)} ${X(m)} ${Y(m)})">${esc(fmtFt(L))}</text>`)
+    }
+    for (const r of rooms) {
+      P.push(`<text x="${X(r.at)}" y="${Y(r.at)}" font-size="9" font-weight="bold" fill="#111827" text-anchor="middle">${esc(r.name)}</text>`)
+      P.push(`<text x="${X(r.at)}" y="${(Y(r.at) + 11).toFixed(1)}" font-size="8" fill="#374151" text-anchor="middle">${esc(fmtFt(r.w) + ' x ' + fmtFt(r.h))}</text>`)
+    }
+    for (const l of labels) P.push(`<text x="${X(l.at)}" y="${Y(l.at)}" font-size="9" font-weight="bold" fill="#111827" text-anchor="middle">${esc(l.text)}</text>`)
+    const svg = `<svg width="${W.toFixed(0)}" height="${H.toFixed(0)}" viewBox="0 0 ${W.toFixed(0)} ${H.toFixed(0)}" xmlns="http://www.w3.org/2000/svg">${P.join('')}</svg>`
+    const today = new Date().toLocaleDateString()
+    const html = `<!doctype html><html><head><meta charset="utf-8"><title>Floor Plan</title><style>
+@page{size:letter landscape;margin:0.4in}*{box-sizing:border-box}body{margin:0;font-family:Arial,Helvetica,sans-serif;color:#111}
+.plan{display:flex;justify-content:center}.tb{margin-top:8px;border:1.5px solid #111;display:flex;font-size:11px}
+.tb div{padding:6px 10px;border-right:1px solid #111}.tb .grow{flex:1;font-weight:bold;font-size:13px}.tb .last{border-right:none}
+.noprint{position:fixed;top:8px;right:8px}@media print{.noprint{display:none}}</style></head><body>
+<div class="noprint"><button onclick="window.print()" style="padding:8px 14px;font-weight:bold;border:1px solid #111;border-radius:6px;background:#b8895a;color:#fff;cursor:pointer">Print / Save PDF</button></div>
+<div class="plan">${svg}</div>
+<div class="tb"><div class="grow">FLOOR PLAN</div><div>Scale: ${chosen.l}</div><div>Date: ${esc(today)}</div><div class="last">L. Price Building Co.</div></div>
+<script>window.onload=function(){setTimeout(function(){window.print()},350)}</script></body></html>`
+    const win = window.open('', '_blank')
+    if (!win) { alert('Please allow pop-ups to export the PDF.'); return }
+    win.document.open(); win.document.write(html); win.document.close()
+  }
+
   // ── grid lines ─────────────────────────────────────────────────────────────
   const gridLines: JSX.Element[] = []
   {
@@ -419,7 +488,7 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
     const stroke = o.kind === 'door' ? '#b8895a' : '#2563eb'
 
     // mask the wall under the opening (white gap)
-    const maskW = WALL_PX + 3
+    const maskW = wallPx + 2
     const els: JSX.Element[] = [
       <line key="mask" x1={pj1.x} y1={pj1.y} x2={pj2.x} y2={pj2.y} stroke="#ffffff" strokeWidth={maskW} strokeLinecap="butt" />,
     ]
@@ -515,6 +584,20 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
         <div className="flex-1" />
         <button onClick={deleteSel} disabled={!sel} title="Delete selection" className="p-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 disabled:opacity-30"><Trash2 size={14} /></button>
         <button onClick={clearAll} title="Clear all" className="p-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50"><RotateCcw size={14} /></button>
+        {/* Wall thickness */}
+        <div className="flex items-center gap-1 text-xs text-gray-500">
+          <span className="hidden sm:inline">Wall</span>
+          <select value={wallThick} onChange={e => setWallThick(Number(e.target.value))}
+            title="Wall thickness" className="border border-gray-200 rounded-lg px-1.5 py-1 bg-white text-xs focus:outline-none">
+            <option value={0.333}>4&quot;</option>
+            <option value={0.5}>6&quot;</option>
+            <option value={0.667}>8&quot;</option>
+            <option value={0.0625}>thin</option>
+          </select>
+        </div>
+        <button onClick={exportPDF} title="Export a print-ready PDF at scale" className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-gray-200 text-xs font-semibold text-gray-600 hover:bg-gray-50">
+          <FileDown size={13} /> <span className="hidden sm:inline">PDF</span>
+        </button>
         <button onClick={copyJSON} title="Copy plan data (JSON)" className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-gray-200 text-xs font-semibold text-gray-600 hover:bg-gray-50">
           {copied ? <Check size={13} className="text-green-600" /> : <Copy size={13} />} {copied ? 'Copied' : 'Plan JSON'}
         </button>
@@ -663,7 +746,7 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
             const a = toPx(wl.a), b = toPx(wl.b)
             const seld = sel?.kind === 'wall' && sel.id === wl.id
             return <line key={wl.id} x1={a.x} y1={a.y} x2={b.x} y2={b.y}
-              stroke={seld ? '#f59e0b' : '#1f2937'} strokeWidth={WALL_PX} strokeLinecap="round"
+              stroke={seld ? '#f59e0b' : '#1f2937'} strokeWidth={wallPx} strokeLinecap="round"
               onClick={() => tool === 'select' && setSel({ kind: 'wall', id: wl.id })}
               style={{ cursor: tool === 'select' ? 'pointer' : undefined }} />
           })}
@@ -703,7 +786,7 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
           {tool === 'wall' && wallChain.current && cursor && (() => {
             const a = toPx(wallChain.current), b = toPx(cursor)
             return <>
-              <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="#b8895a" strokeWidth={WALL_PX} strokeLinecap="round" opacity={0.5} />
+              <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="#b8895a" strokeWidth={wallPx} strokeLinecap="round" opacity={0.5} />
               <text x={(a.x + b.x) / 2} y={(a.y + b.y) / 2 - 6} textAnchor="middle" fontSize={10} fill="#b8895a">{fmtFt(dist(wallChain.current, cursor))}</text>
             </>
           })()}
