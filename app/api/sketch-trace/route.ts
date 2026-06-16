@@ -133,6 +133,7 @@ async function runTrace(file: File): Promise<TraceResult> {
     let normBuf: Buffer = inputBuf
     let normW = 0, normH = 0
     let pitch = 0, confident = false
+    let inkBox: { x0: number; y0: number; x1: number; y1: number } | null = null  // pencil extent, in normBuf px
     if (sharp) {
       try {
         const oriented = sharp(inputBuf).rotate()
@@ -154,6 +155,26 @@ async function runTrace(file: File): Promise<TraceResult> {
         // express pitch in normBuf pixels
         pitch = det.pitch * (normW / info.width)
         confident = det.confident
+        // Pencil extent = bounding box of the darkest pixels (ink is darker than
+        // the graph grid). Lets the client align the underlay photo to the walls.
+        {
+          const W = info.width, H = info.height, THRESH = 90
+          let x0 = W, y0 = H, x1 = 0, y1 = 0, found = false
+          for (let y = 0; y < H; y++) {
+            const row = y * W
+            for (let x = 0; x < W; x++) {
+              if (data[row + x] < THRESH) {
+                found = true
+                if (x < x0) x0 = x; if (x > x1) x1 = x
+                if (y < y0) y0 = y; if (y > y1) y1 = y
+              }
+            }
+          }
+          if (found && x1 > x0 && y1 > y0) {
+            const f = normW / W   // scale DETECT_W px → normBuf px
+            inkBox = { x0: x0 * f, y0: y0 * f, x1: x1 * f, y1: y1 * f }
+          }
+        }
       } catch (e) {
         // sharp failed (unsupported format etc.) — fall back to the raw upload, no detection
         normBuf = inputBuf
@@ -375,6 +396,23 @@ Return ONLY valid JSON — no markdown, no commentary:
       }
     }
 
+    // Underlay: place the whole photo in plan-feet so its pencil drawing lines up
+    // with the traced walls (ink top-left ↔ plan origin; ink span ↔ cols×rows).
+    let underlay: any = null
+    if (inkBox && normW > 0) {
+      const inkW = inkBox.x1 - inkBox.x0, inkH = inkBox.y1 - inkBox.y0
+      if (inkW > 1 && inkH > 1) {
+        const feetPerPx = ((cols / inkW) + (rows / inkH)) / 2
+        underlay = {
+          image: `data:image/jpeg;base64,${base64}`,
+          x: r2(-inkBox.x0 * feetPerPx),
+          y: r2(-inkBox.y0 * feetPerPx),
+          w: r2(normW * feetPerPx),
+          h: r2(normH * feetPerPx),
+        }
+      }
+    }
+
     return {
       status: 200,
       payload: {
@@ -388,7 +426,7 @@ Return ONLY valid JSON — no markdown, no commentary:
           detected: pitch > 0,
           confident,
         },
-        plan: { units: 'feet', walls: planWalls, openings: planOpenings, labels: planLabels },
+        plan: { units: 'feet', walls: planWalls, openings: planOpenings, labels: planLabels, underlay },
       },
     }
   } catch (err: any) {

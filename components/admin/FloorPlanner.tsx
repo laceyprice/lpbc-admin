@@ -8,7 +8,10 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import {
   MousePointer2, Minus, Square, DoorOpen, RectangleHorizontal, Hand,
   ZoomIn, ZoomOut, Trash2, RotateCcw, Copy, Check, ScanLine, Loader2, AlertCircle, X,
+  Image as ImageIcon, Eye, EyeOff, Move,
 } from 'lucide-react'
+
+type Underlay = { src: string; x: number; y: number; w: number; h: number; opacity: number; visible: boolean }
 
 // ── Model ────────────────────────────────────────────────────────────────────
 type Pt = { x: number; y: number }            // world units = feet
@@ -68,6 +71,20 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
   const [importing, setImporting] = useState(false)
   const [importErr, setImportErr] = useState('')
   const fileRef = useRef<HTMLInputElement>(null)
+
+  // Sketch underlay — the original photo faded behind the grid, aligned to the
+  // walls, so you can trace the lines the AI missed. (Local only; not persisted.)
+  const [underlay, setUnderlay] = useState<Underlay | null>(null)
+  const underlayRef = useRef<HTMLInputElement>(null)
+  function loadUnderlayImage(file: File) {
+    const url = URL.createObjectURL(file)
+    const img = new Image()
+    img.onload = () => {
+      const aspect = img.height / Math.max(1, img.width)
+      setUnderlay({ src: url, x: 0, y: 0, w: 30, h: 30 * aspect, opacity: 0.4, visible: true })
+    }
+    img.src = url
+  }
 
   // Persist changes upward (Design Studio saves this with the job plan). We seed
   // from `value` once on mount, then emit on every edit — skip the very first run.
@@ -302,6 +319,15 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
       .map((l: any) => ({ id: uid(), at: { x: +l.at.x, y: +l.at.y }, text: String(l.text) }))
 
     setWalls(newWalls); setOpenings(newOpenings); setRooms([]); setLabels(newLabels)
+    // Drop the original photo in as an aligned underlay so you can trace the rest.
+    if (plan.underlay?.image) {
+      setUnderlay({
+        src: plan.underlay.image,
+        x: +plan.underlay.x || 0, y: +plan.underlay.y || 0,
+        w: +plan.underlay.w || 30, h: +plan.underlay.h || 30,
+        opacity: 0.4, visible: true,
+      })
+    }
     setSel(null); wallChain.current = null
     setTool('select'); setZoom(1); setPan({ x: 48, y: 48 })
   }
@@ -428,6 +454,13 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
           {importing ? <Loader2 size={13} className="animate-spin" /> : <ScanLine size={13} />}
           <span className="hidden sm:inline">{importing ? 'Tracing…' : 'Import sketch (AI)'}</span>
         </button>
+        {/* Manual photo underlay (trace over any image) */}
+        <input ref={underlayRef} type="file" accept="image/*" className="hidden"
+          onChange={e => { const f = e.target.files?.[0]; if (f) loadUnderlayImage(f); if (underlayRef.current) underlayRef.current.value = '' }} />
+        <button onClick={() => underlayRef.current?.click()} title="Load a photo to trace over (underlay)"
+          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-gray-200 text-gray-500 text-xs font-semibold hover:bg-gray-50">
+          <ImageIcon size={13} /> <span className="hidden sm:inline">Underlay</span>
+        </button>
         <div className="w-px h-6 bg-gray-200 mx-1" />
         <button onClick={() => zoomBy(1 / 1.2)} title="Zoom out" className="p-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50"><ZoomOut size={14} /></button>
         <button onClick={() => { setZoom(1); setPan({ x: 60, y: 60 }) }} className="px-2 py-1 rounded-lg border border-gray-200 text-gray-700 text-xs font-semibold tabular-nums min-w-[46px]">{Math.round(zoom * 100)}%</button>
@@ -454,6 +487,30 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
         </div>
       )}
 
+      {/* Underlay controls */}
+      {underlay && (
+        <div className="flex flex-wrap items-center gap-2 bg-amber-50 border border-amber-100 rounded-xl px-3 py-2 text-xs">
+          <ImageIcon size={13} className="text-amber-700" />
+          <span className="font-semibold text-amber-800">Sketch underlay</span>
+          <button onClick={() => setUnderlay(u => u && { ...u, visible: !u.visible })} className="p-1 rounded border border-amber-200 bg-white text-gray-600 hover:bg-amber-100" title={underlay.visible ? 'Hide' : 'Show'}>
+            {underlay.visible ? <Eye size={13} /> : <EyeOff size={13} />}
+          </button>
+          <span className="text-gray-500 ml-1">Fade</span>
+          <input type="range" min={0} max={1} step={0.05} value={underlay.opacity} onChange={e => setUnderlay(u => u && { ...u, opacity: Number(e.target.value) })} className="w-24" />
+          <div className="w-px h-5 bg-amber-200" />
+          <Move size={12} className="text-gray-400" />
+          <div className="flex items-center gap-0.5">
+            {([['◀', -0.5, 0], ['▶', 0.5, 0], ['▲', 0, -0.5], ['▼', 0, 0.5]] as const).map(([s, dx, dy]) => (
+              <button key={s} onClick={() => setUnderlay(u => u && { ...u, x: u.x + dx, y: u.y + dy })} className="w-6 h-6 rounded border border-amber-200 bg-white text-gray-600 hover:bg-amber-100">{s}</button>
+            ))}
+          </div>
+          <span className="text-gray-500 ml-1">Size</span>
+          <button onClick={() => setUnderlay(u => u && { ...u, w: u.w / 1.03, h: u.h / 1.03 })} className="w-6 h-6 rounded border border-amber-200 bg-white text-gray-600 hover:bg-amber-100">−</button>
+          <button onClick={() => setUnderlay(u => u && { ...u, w: u.w * 1.03, h: u.h * 1.03 })} className="w-6 h-6 rounded border border-amber-200 bg-white text-gray-600 hover:bg-amber-100">+</button>
+          <button onClick={() => setUnderlay(null)} className="ml-auto flex items-center gap-1 text-red-500 hover:text-red-700 font-semibold"><X size={12} /> Remove</button>
+        </div>
+      )}
+
       {/* Canvas */}
       <div ref={wrapRef} className="relative border border-gray-200 rounded-xl overflow-hidden bg-white">
         <svg ref={svgRef} width={size.w} height={size.h}
@@ -461,6 +518,13 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
           onMouseDown={onDown} onMouseMove={onMove} onMouseUp={onUp} onMouseLeave={onUp} onDoubleClick={onDouble} onWheel={onWheel}>
           <rect x={0} y={0} width={size.w} height={size.h} fill="#ffffff" />
           {gridLines}
+
+          {/* sketch underlay (faded photo, traced on top of) */}
+          {underlay?.visible && (() => {
+            const p = toPx({ x: underlay.x, y: underlay.y })
+            return <image href={underlay.src} x={p.x} y={p.y} width={underlay.w * scale} height={underlay.h * scale}
+              opacity={underlay.opacity} preserveAspectRatio="none" style={{ pointerEvents: 'none' }} />
+          })()}
 
           {/* rooms (fill + label) */}
           {rooms.map(r => {
