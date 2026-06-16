@@ -8,7 +8,7 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import {
   MousePointer2, Minus, Square, DoorOpen, RectangleHorizontal, Hand,
   ZoomIn, ZoomOut, Trash2, RotateCcw, Copy, Check, ScanLine, Loader2, AlertCircle, X,
-  Image as ImageIcon, Eye, EyeOff, Move, FileDown,
+  Image as ImageIcon, Eye, EyeOff, Move, FileDown, Ruler, Bath, RotateCw,
 } from 'lucide-react'
 
 type Underlay = { src: string; x: number; y: number; w: number; h: number; opacity: number; visible: boolean }
@@ -19,10 +19,83 @@ type Wall = { id: string; a: Pt; b: Pt }
 type Opening = { id: string; wallId: string; t: number; width: number; kind: 'door' | 'window'; flip: boolean }
 type Room = { id: string; at: Pt; w: number; h: number; name: string }
 type Label = { id: string; at: Pt; text: string }
-type Tool = 'select' | 'wall' | 'room' | 'door' | 'window' | 'pan'
-type Sel = { kind: 'wall' | 'opening' | 'room' | 'vertex' | 'label'; id: string; vx?: Pt } | null
+type FixtureKind = 'toilet' | 'sink' | 'tub' | 'shower' | 'range' | 'fridge'
+type Fixture = { id: string; kind: FixtureKind; at: Pt; w: number; h: number; rot: number }  // rot = degrees
+type Dim = { id: string; a: Pt; b: Pt; off: number }   // off = perpendicular offset of the dim line (ft)
+type Tool = 'select' | 'wall' | 'room' | 'door' | 'window' | 'dim' | 'fixture' | 'pan'
+type Sel = { kind: 'wall' | 'opening' | 'room' | 'vertex' | 'label' | 'fixture' | 'dim'; id: string; vx?: Pt } | null
 
-export type PlanDoc = { walls?: Wall[]; openings?: Opening[]; rooms?: Room[]; labels?: Label[] }
+export type PlanDoc = { walls?: Wall[]; openings?: Opening[]; rooms?: Room[]; labels?: Label[]; fixtures?: Fixture[]; dims?: Dim[] }
+
+// Default footprint (ft) per fixture kind.
+const FIXTURES: Record<FixtureKind, { w: number; h: number; label: string }> = {
+  toilet: { w: 1.5, h: 2.3, label: 'Toilet' },
+  sink: { w: 2, h: 1.8, label: 'Sink' },
+  tub: { w: 2.5, h: 5, label: 'Tub' },
+  shower: { w: 3, h: 3, label: 'Shower' },
+  range: { w: 2.5, h: 2.5, label: 'Range' },
+  fridge: { w: 3, h: 2.7, label: 'Fridge' },
+}
+// Primitive shapes in LOCAL feet (centered at origin, canonical orientation).
+type Prim =
+  | { t: 'rect'; x: number; y: number; w: number; h: number }
+  | { t: 'ellipse'; cx: number; cy: number; rx: number; ry: number }
+  | { t: 'circle'; cx: number; cy: number; r: number }
+  | { t: 'line'; x1: number; y1: number; x2: number; y2: number }
+function fixturePrims(kind: FixtureKind, w: number, h: number): Prim[] {
+  const x = -w / 2, y = -h / 2
+  switch (kind) {
+    case 'toilet': return [
+      { t: 'rect', x, y, w, h: h * 0.28 },                                  // tank
+      { t: 'ellipse', cx: 0, cy: y + h * 0.62, rx: w * 0.42, ry: h * 0.34 }, // bowl
+    ]
+    case 'sink': return [
+      { t: 'rect', x, y, w, h },
+      { t: 'ellipse', cx: 0, cy: 0, rx: w * 0.36, ry: h * 0.34 },
+      { t: 'circle', cx: 0, cy: y + h * 0.16, r: Math.min(w, h) * 0.06 },   // faucet
+    ]
+    case 'tub': return [
+      { t: 'rect', x, y, w, h },
+      { t: 'ellipse', cx: 0, cy: 0, rx: w * 0.38, ry: h * 0.42 },
+      { t: 'circle', cx: 0, cy: y + h * 0.86, r: Math.min(w, h) * 0.05 },   // drain
+    ]
+    case 'shower': return [
+      { t: 'rect', x, y, w, h },
+      { t: 'line', x1: x, y1: y, x2: x + w, y2: y + h },
+      { t: 'line', x1: x + w, y1: y, x2: x, y2: y + h },
+      { t: 'circle', cx: 0, cy: 0, r: Math.min(w, h) * 0.07 },
+    ]
+    case 'range': return [
+      { t: 'rect', x, y, w, h },
+      { t: 'circle', cx: -w * 0.22, cy: -h * 0.22, r: Math.min(w, h) * 0.13 },
+      { t: 'circle', cx: w * 0.22, cy: -h * 0.22, r: Math.min(w, h) * 0.13 },
+      { t: 'circle', cx: -w * 0.22, cy: h * 0.22, r: Math.min(w, h) * 0.13 },
+      { t: 'circle', cx: w * 0.22, cy: h * 0.22, r: Math.min(w, h) * 0.13 },
+    ]
+    case 'fridge': return [
+      { t: 'rect', x, y, w, h },
+      { t: 'line', x1: x, y1: y + h * 0.78, x2: x + w, y2: y + h * 0.78 },  // door line
+    ]
+  }
+}
+// Sample fixture prims into world-feet polylines (for PDF / DXF), applying rot+pos.
+function fixtureWorldPolys(f: Fixture): Pt[][] {
+  const rad = f.rot * Math.PI / 180, cos = Math.cos(rad), sin = Math.sin(rad)
+  const tf = (lx: number, ly: number): Pt => ({ x: f.at.x + lx * cos - ly * sin, y: f.at.y + lx * sin + ly * cos })
+  const ell = (cx: number, cy: number, rx: number, ry: number, n = 28) => {
+    const out: Pt[] = []
+    for (let i = 0; i <= n; i++) { const a = (i / n) * 2 * Math.PI; out.push(tf(cx + rx * Math.cos(a), cy + ry * Math.sin(a))) }
+    return out
+  }
+  const polys: Pt[][] = []
+  for (const p of fixturePrims(f.kind, f.w, f.h)) {
+    if (p.t === 'rect') polys.push([tf(p.x, p.y), tf(p.x + p.w, p.y), tf(p.x + p.w, p.y + p.h), tf(p.x, p.y + p.h), tf(p.x, p.y)])
+    else if (p.t === 'line') polys.push([tf(p.x1, p.y1), tf(p.x2, p.y2)])
+    else if (p.t === 'ellipse') polys.push(ell(p.cx, p.cy, p.rx, p.ry))
+    else polys.push(ell(p.cx, p.cy, p.r, p.r, 18))
+  }
+  return polys
+}
 type FloorPlannerProps = { value?: PlanDoc; onChange?: (doc: PlanDoc) => void }
 
 const uid = () => Math.random().toString(36).slice(2, 9)
@@ -68,6 +141,11 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
   const [openings, setOpenings] = useState<Opening[]>(value?.openings || [])
   const [rooms, setRooms] = useState<Room[]>(value?.rooms || [])
   const [labels, setLabels] = useState<Label[]>(value?.labels || [])
+  const [fixtures, setFixtures] = useState<Fixture[]>(value?.fixtures || [])
+  const [dims, setDims] = useState<Dim[]>(value?.dims || [])
+  const [fixKind, setFixKind] = useState<FixtureKind>('toilet')
+  const updFixture = (id: string, p: Partial<Fixture>) => setFixtures(prev => prev.map(f => f.id === id ? { ...f, ...p } : f))
+  const dimStart = useRef<Pt | null>(null)
   const [tool, setTool] = useState<Tool>('wall')
   const [sel, setSel] = useState<Sel>(null)
   const [copied, setCopied] = useState(false)
@@ -106,9 +184,9 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
   const firstEmit = useRef(true)
   useEffect(() => {
     if (firstEmit.current) { firstEmit.current = false; return }
-    onChange?.({ walls, openings, rooms, labels })
+    onChange?.({ walls, openings, rooms, labels, fixtures, dims })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [walls, openings, rooms, labels])
+  }, [walls, openings, rooms, labels, fixtures, dims])
 
   // view
   const [ppf, setPpf] = useState(16)            // pixels per foot at zoom 1
@@ -122,7 +200,7 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
   const [, force] = useState(0)
   const roomDrag = useRef<{ a: Pt } | null>(null)
   const [roomPreview, setRoomPreview] = useState<{ a: Pt; b: Pt } | null>(null)
-  const dragging = useRef<{ kind: 'vertex' | 'pan'; from: Pt; orig?: Pt; panFrom?: Pt } | null>(null)
+  const dragging = useRef<{ kind: 'vertex' | 'pan' | 'fixture'; from: Pt; orig?: Pt; panFrom?: Pt; id?: string; fixFrom?: Pt } | null>(null)
 
   const wrapRef = useRef<HTMLDivElement>(null)
   const svgRef = useRef<SVGSVGElement>(null)
@@ -196,10 +274,33 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
       return
     }
 
+    if (tool === 'fixture') {
+      const def = FIXTURES[fixKind]
+      const id = uid()
+      setFixtures(prev => [...prev, { id, kind: fixKind, at: sp, w: def.w, h: def.h, rot: 0 }])
+      setSel({ kind: 'fixture', id })
+      return
+    }
+
+    if (tool === 'dim') {
+      if (!dimStart.current) { dimStart.current = sp }
+      else {
+        if (dist(dimStart.current, sp) > 0.1) {
+          const id = uid()
+          setDims(prev => [...prev, { id, a: dimStart.current!, b: sp, off: 1.5 }])
+          setSel({ kind: 'dim', id })
+        }
+        dimStart.current = null
+      }
+      force(n => n + 1)
+      return
+    }
+
     if (tool === 'select') {
       const h = hitTest(w)
       setSel(h)
       if (h?.kind === 'vertex' && h.vx) dragging.current = { kind: 'vertex', from: w, orig: h.vx }
+      if (h?.kind === 'fixture') dragging.current = { kind: 'fixture', from: w, id: h.id, fixFrom: fixtures.find(f => f.id === h.id)?.at }
     }
   }
 
@@ -222,6 +323,7 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
       d.orig = np
       return
     }
+    if (d?.kind === 'fixture' && d.id) { updFixture(d.id, { at: snap(w) }); return }
     if (roomDrag.current) setRoomPreview({ a: roomDrag.current.a, b: snap(w) })
   }
 
@@ -261,14 +363,26 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
     for (const wl of walls) for (const v of [wl.a, wl.b]) {
       if (dist(toPx(p), toPx(v)) < tolPx) return { kind: 'vertex', id: wl.id, vx: v }
     }
-    // room labels
-    for (const r of rooms) if (dist(toPx(p), toPx(r.at)) < 26) return { kind: 'room', id: r.id }
     // openings
     for (const o of openings) {
       const wl = walls.find(w => w.id === o.wallId); if (!wl) continue
       const c = add(wl.a, mul(sub(wl.b, wl.a), o.t))
       if (dist(toPx(p), toPx(c)) < tolPx + 4) return { kind: 'opening', id: o.id }
     }
+    // fixtures (inside footprint, in fixture-local space)
+    for (const f of fixtures) {
+      const rad = -f.rot * Math.PI / 180, dx = p.x - f.at.x, dy = p.y - f.at.y
+      const lx = dx * Math.cos(rad) - dy * Math.sin(rad), ly = dx * Math.sin(rad) + dy * Math.cos(rad)
+      if (Math.abs(lx) <= f.w / 2 && Math.abs(ly) <= f.h / 2) return { kind: 'fixture', id: f.id }
+    }
+    // dimensions (near the dim line)
+    for (const d of dims) {
+      const u = norm(sub(d.b, d.a)), n = perp(u)
+      const a2 = add(d.a, mul(n, d.off)), b2 = add(d.b, mul(n, d.off))
+      if (nearestOnSeg(p, a2, b2).dist * scale < tolPx) return { kind: 'dim', id: d.id }
+    }
+    // room labels
+    for (const r of rooms) if (dist(toPx(p), toPx(r.at)) < 26) return { kind: 'room', id: r.id }
     // walls
     const nw = nearestWall(p)
     if (nw && nw.dist * scale < tolPx) return { kind: 'wall', id: nw.wall.id }
@@ -292,6 +406,8 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
     } else if (sel.kind === 'opening') setOpenings(prev => prev.filter(o => o.id !== sel.id))
     else if (sel.kind === 'room') setRooms(prev => prev.filter(r => r.id !== sel.id))
     else if (sel.kind === 'label') setLabels(prev => prev.filter(l => l.id !== sel.id))
+    else if (sel.kind === 'fixture') setFixtures(prev => prev.filter(f => f.id !== sel.id))
+    else if (sel.kind === 'dim') setDims(prev => prev.filter(d => d.id !== sel.id))
     setSel(null)
   }
 
@@ -359,7 +475,7 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Delete' || e.key === 'Backspace') { if (sel) { e.preventDefault(); deleteSel() } }
-      if (e.key === 'Escape') { wallChain.current = null; setSel(null); roomDrag.current = null; setRoomPreview(null); force(n => n + 1) }
+      if (e.key === 'Escape') { wallChain.current = null; dimStart.current = null; setSel(null); roomDrag.current = null; setRoomPreview(null); force(n => n + 1) }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -394,6 +510,7 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity
     const see = (p: Pt) => { if (p.x < x0) x0 = p.x; if (p.y < y0) y0 = p.y; if (p.x > x1) x1 = p.x; if (p.y > y1) y1 = p.y }
     walls.forEach(w => { see(w.a); see(w.b) }); labels.forEach(l => see(l.at)); rooms.forEach(r => see(r.at))
+    fixtures.forEach(f => see(f.at)); dims.forEach(d => { see(d.a); see(d.b) })
     const bw = Math.max(1, x1 - x0), bh = Math.max(1, y1 - y0)
     const SCALES = [
       { v: 0.25, l: '1/4" = 1\'-0"' }, { v: 0.1875, l: '3/16" = 1\'-0"' }, { v: 0.125, l: '1/8" = 1\'-0"' },
@@ -427,6 +544,18 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
         P.push(`<line x1="${X(j1)}" y1="${Y(j1)}" x2="${X(j2)}" y2="${Y(j2)}" stroke="#111827" stroke-width="1.5"/>`)
       }
     }
+    for (const f of fixtures) for (const pl of fixtureWorldPolys(f)) {
+      P.push(`<polyline points="${pl.map(p => `${X(p)},${Y(p)}`).join(' ')}" fill="none" stroke="#111827" stroke-width="1"/>`)
+    }
+    for (const dm of dims) {
+      const u = norm(sub(dm.b, dm.a)), n = perp(u)
+      const a2 = add(dm.a, mul(n, dm.off)), b2 = add(dm.b, mul(n, dm.off)), m = mul(add(a2, b2), 0.5)
+      P.push(`<line x1="${X(a2)}" y1="${Y(a2)}" x2="${X(b2)}" y2="${Y(b2)}" stroke="#111827" stroke-width="0.8"/>`)
+      P.push(`<line x1="${X(dm.a)}" y1="${Y(dm.a)}" x2="${X(a2)}" y2="${Y(a2)}" stroke="#111827" stroke-width="0.4"/>`)
+      P.push(`<line x1="${X(dm.b)}" y1="${Y(dm.b)}" x2="${X(b2)}" y2="${Y(b2)}" stroke="#111827" stroke-width="0.4"/>`)
+      const ang = Math.atan2(b2.y - a2.y, b2.x - a2.x) * 180 / Math.PI, aa = (ang > 90 || ang < -90) ? ang + 180 : ang
+      P.push(`<text x="${X(m)}" y="${(Y(m) - 2).toFixed(1)}" font-size="8" fill="#111827" text-anchor="middle" transform="rotate(${aa.toFixed(1)} ${X(m)} ${Y(m)})">${esc(fmtFt(dist(dm.a, dm.b)))}</text>`)
+    }
     for (const w of walls) {
       const L = dist(w.a, w.b); if (L < 1) continue
       const m = add(mul(add(w.a, w.b), 0.5), mul(perp(norm(sub(w.b, w.a))), 0.6))
@@ -452,6 +581,54 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
     const win = window.open('', '_blank')
     if (!win) { alert('Please allow pop-ups to export the PDF.'); return }
     win.document.open(); win.document.write(html); win.document.close()
+  }
+
+  // ── DXF export (R12 ASCII) — opens in AutoCAD/CAD. Coordinates in feet, Y flipped
+  // (DXF is Y-up). Entities split onto named layers; downloads as floorplan.dxf.
+  function exportDXF() {
+    if (!walls.length) { alert('Draw or import a plan first.'); return }
+    const L: string[] = []
+    const g = (...xs: (string | number)[]) => { for (const x of xs) L.push(String(x)) }
+    const FY = (y: number) => +(-y).toFixed(4)
+    const FX = (x: number) => +x.toFixed(4)
+    const line = (a: Pt, b: Pt, layer: string) => g(0, 'LINE', 8, layer, 10, FX(a.x), 20, FY(a.y), 30, 0, 11, FX(b.x), 21, FY(b.y), 31, 0)
+    const text = (p: Pt, s: string, h: number, layer: string) => g(0, 'TEXT', 8, layer, 10, FX(p.x), 20, FY(p.y), 30, 0, 40, h, 1, s)
+    const poly = (pts: Pt[], layer: string) => { for (let i = 0; i < pts.length - 1; i++) line(pts[i], pts[i + 1], layer) }
+    // TABLES → layers (color: ACI)
+    const layers: [string, number][] = [['WALLS', 7], ['DOORS', 30], ['WINDOWS', 5], ['FIXTURES', 8], ['DIMS', 1], ['TEXT', 3]]
+    g(0, 'SECTION', 2, 'TABLES', 0, 'TABLE', 2, 'LAYER', 70, layers.length)
+    for (const [nm, col] of layers) g(0, 'LAYER', 2, nm, 70, 0, 62, col, 6, 'CONTINUOUS')
+    g(0, 'ENDTAB', 0, 'ENDSEC')
+    // ENTITIES
+    g(0, 'SECTION', 2, 'ENTITIES')
+    for (const w of walls) line(w.a, w.b, 'WALLS')
+    for (const o of openings) {
+      const wl = walls.find(w => w.id === o.wallId); if (!wl) continue
+      const u = norm(sub(wl.b, wl.a)), c = add(wl.a, mul(sub(wl.b, wl.a), o.t)), half = o.width / 2
+      const j1 = sub(c, mul(u, half)), j2 = add(c, mul(u, half)), n = mul(perp(u), o.flip ? -1 : 1)
+      if (o.kind === 'door') {
+        const tip = add(j1, mul(n, o.width))
+        line(j1, tip, 'DOORS')
+        const a0 = Math.atan2(j2.y - j1.y, j2.x - j1.x), a1 = Math.atan2(tip.y - j1.y, tip.x - j1.x)
+        let dl = a1 - a0; while (dl > Math.PI) dl -= 2 * Math.PI; while (dl < -Math.PI) dl += 2 * Math.PI
+        const pts: Pt[] = []; for (let i = 0; i <= 16; i++) { const a = a0 + dl * (i / 16); pts.push({ x: j1.x + o.width * Math.cos(a), y: j1.y + o.width * Math.sin(a) }) }
+        poly(pts, 'DOORS')
+      } else line(j1, j2, 'WINDOWS')
+    }
+    for (const f of fixtures) for (const pl of fixtureWorldPolys(f)) poly(pl, 'FIXTURES')
+    for (const d of dims) {
+      const u = norm(sub(d.b, d.a)), n = perp(u)
+      const a2 = add(d.a, mul(n, d.off)), b2 = add(d.b, mul(n, d.off))
+      line(a2, b2, 'DIMS'); line(d.a, a2, 'DIMS'); line(d.b, b2, 'DIMS')
+      text(mul(add(a2, b2), 0.5), fmtFt(dist(d.a, d.b)), 0.4, 'DIMS')
+    }
+    for (const r of rooms) { text(r.at, r.name, 0.5, 'TEXT'); text({ x: r.at.x, y: r.at.y + 0.8 }, `${fmtFt(r.w)} x ${fmtFt(r.h)}`, 0.35, 'TEXT') }
+    for (const l of labels) text(l.at, l.text, 0.5, 'TEXT')
+    g(0, 'ENDSEC', 0, 'EOF')
+    const blob = new Blob([L.join('\r\n')], { type: 'application/dxf' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a'); a.href = url; a.download = 'floorplan.dxf'; a.click()
+    setTimeout(() => URL.revokeObjectURL(url), 1500)
   }
 
   // ── grid lines ─────────────────────────────────────────────────────────────
@@ -559,6 +736,8 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
         <ToolBtn t="room" icon={Square} label="Room" />
         <ToolBtn t="door" icon={DoorOpen} label="Door" />
         <ToolBtn t="window" icon={RectangleHorizontal} label="Window" />
+        <ToolBtn t="dim" icon={Ruler} label="Dimension" />
+        <ToolBtn t="fixture" icon={Bath} label="Fixture" />
         <ToolBtn t="pan" icon={Hand} label="Pan" />
         <div className="w-px h-6 bg-gray-200 mx-1" />
         {/* AI sketch import */}
@@ -598,6 +777,9 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
         <button onClick={exportPDF} title="Export a print-ready PDF at scale" className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-gray-200 text-xs font-semibold text-gray-600 hover:bg-gray-50">
           <FileDown size={13} /> <span className="hidden sm:inline">PDF</span>
         </button>
+        <button onClick={exportDXF} title="Export DXF for AutoCAD/CAD" className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-gray-200 text-xs font-semibold text-gray-600 hover:bg-gray-50">
+          <FileDown size={13} /> <span className="hidden sm:inline">DXF</span>
+        </button>
         <button onClick={copyJSON} title="Copy plan data (JSON)" className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-gray-200 text-xs font-semibold text-gray-600 hover:bg-gray-50">
           {copied ? <Check size={13} className="text-green-600" /> : <Copy size={13} />} {copied ? 'Copied' : 'Plan JSON'}
         </button>
@@ -623,6 +805,25 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
           <span className="font-semibold text-teal-800">New {tool} width:</span>
           <SizeStepper value={tool === 'door' ? defDoorW : defWinW} onChange={v => tool === 'door' ? setDefDoorW(v) : setDefWinW(v)} max={tool === 'door' ? 12 : 12} />
           <span className="text-gray-400">— then click a wall to place it.</span>
+        </div>
+      )}
+
+      {/* Fixture picker */}
+      {tool === 'fixture' && (
+        <div className="flex flex-wrap items-center gap-2 bg-teal-50 border border-teal-100 rounded-xl px-3 py-2 text-xs">
+          <span className="font-semibold text-teal-800">Fixture:</span>
+          {(Object.keys(FIXTURES) as FixtureKind[]).map(k => (
+            <button key={k} onClick={() => setFixKind(k)}
+              className={`px-2 py-0.5 rounded-lg border capitalize ${fixKind === k ? 'bg-teal-600 text-white border-teal-600' : 'bg-white text-gray-600 border-teal-200 hover:bg-teal-100'}`}>{FIXTURES[k].label}</button>
+          ))}
+          <span className="text-gray-400">— click to place; select to rotate/resize.</span>
+        </div>
+      )}
+
+      {tool === 'dim' && (
+        <div className="flex items-center gap-2 bg-blue-50 border border-blue-100 rounded-xl px-3 py-2 text-xs text-blue-800">
+          <Ruler size={13} /> <span className="font-semibold">Dimension:</span>
+          <span className="text-gray-500">click the start point, then the end point. It measures the distance.</span>
         </div>
       )}
 
@@ -681,6 +882,29 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
             <div className="flex flex-wrap items-center gap-2 bg-blue-50 border border-blue-100 rounded-xl px-3 py-2 text-xs">
               <span className="font-bold text-blue-800">Wall</span>
               <span className="text-gray-500">Length {fmtFt(dist(wll.a, wll.b))}</span>
+              <button onClick={deleteSel} className="ml-auto flex items-center gap-1 text-red-500 hover:text-red-700 font-semibold"><Trash2 size={12} /> Delete</button>
+            </div>
+          )
+        }
+        if (sel.kind === 'fixture') {
+          const f = fixtures.find(x => x.id === sel.id); if (!f) return null
+          return (
+            <div className="flex flex-wrap items-center gap-2 bg-blue-50 border border-blue-100 rounded-xl px-3 py-2 text-xs">
+              <span className="font-bold text-blue-800">{FIXTURES[f.kind].label}</span>
+              <span className="text-gray-500">W</span><SizeStepper value={f.w} onChange={v => updFixture(f.id, { w: v })} min={0.5} max={12} />
+              <span className="text-gray-500">H</span><SizeStepper value={f.h} onChange={v => updFixture(f.id, { h: v })} min={0.5} max={12} />
+              <button onClick={() => updFixture(f.id, { rot: (f.rot + 90) % 360 })} className="flex items-center gap-1 px-2 py-0.5 rounded border border-blue-200 bg-white text-gray-600 hover:bg-blue-100 font-semibold"><RotateCw size={12} /> Rotate</button>
+              <button onClick={deleteSel} className="ml-auto flex items-center gap-1 text-red-500 hover:text-red-700 font-semibold"><Trash2 size={12} /> Delete</button>
+            </div>
+          )
+        }
+        if (sel.kind === 'dim') {
+          const d = dims.find(x => x.id === sel.id); if (!d) return null
+          return (
+            <div className="flex flex-wrap items-center gap-2 bg-blue-50 border border-blue-100 rounded-xl px-3 py-2 text-xs">
+              <span className="font-bold text-blue-800">Dimension</span>
+              <span className="text-gray-500">{fmtFt(dist(d.a, d.b))}</span>
+              <button onClick={() => setDims(prev => prev.map(x => x.id === d.id ? { ...x, off: -x.off } : x))} className="px-2 py-0.5 rounded border border-blue-200 bg-white text-gray-600 hover:bg-blue-100 font-semibold">Flip side</button>
               <button onClick={deleteSel} className="ml-auto flex items-center gap-1 text-red-500 hover:text-red-700 font-semibold"><Trash2 size={12} /> Delete</button>
             </div>
           )
@@ -753,6 +977,49 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
 
           {/* openings */}
           {openings.map(renderOpening)}
+
+          {/* fixtures */}
+          {fixtures.map(f => {
+            const p = toPx(f.at)
+            const seld = sel?.kind === 'fixture' && sel.id === f.id
+            const col = seld ? '#f59e0b' : '#475569'
+            return (
+              <g key={f.id} transform={`translate(${p.x} ${p.y}) rotate(${f.rot}) scale(${scale} ${scale})`}
+                onClick={() => tool === 'select' && setSel({ kind: 'fixture', id: f.id })}
+                style={{ cursor: tool === 'select' ? 'move' : undefined }}>
+                {fixturePrims(f.kind, f.w, f.h).map((pr, i) => {
+                  if (pr.t === 'rect') return <rect key={i} x={pr.x} y={pr.y} width={pr.w} height={pr.h} fill="none" stroke={col} strokeWidth={1} vectorEffect="non-scaling-stroke" />
+                  if (pr.t === 'ellipse') return <ellipse key={i} cx={pr.cx} cy={pr.cy} rx={pr.rx} ry={pr.ry} fill="none" stroke={col} strokeWidth={1} vectorEffect="non-scaling-stroke" />
+                  if (pr.t === 'circle') return <circle key={i} cx={pr.cx} cy={pr.cy} r={pr.r} fill="none" stroke={col} strokeWidth={1} vectorEffect="non-scaling-stroke" />
+                  return <line key={i} x1={pr.x1} y1={pr.y1} x2={pr.x2} y2={pr.y2} stroke={col} strokeWidth={1} vectorEffect="non-scaling-stroke" />
+                })}
+              </g>
+            )
+          })}
+
+          {/* dimensions */}
+          {dims.map(d => {
+            const u = norm(sub(d.b, d.a)), n = perp(u)
+            const a2 = toPx(add(d.a, mul(n, d.off))), b2 = toPx(add(d.b, mul(n, d.off)))
+            const pa = toPx(d.a), pb = toPx(d.b), m = { x: (a2.x + b2.x) / 2, y: (a2.y + b2.y) / 2 }
+            const seld = sel?.kind === 'dim' && sel.id === d.id
+            const col = seld ? '#f59e0b' : '#2563eb'
+            const ang = Math.atan2(b2.y - a2.y, b2.x - a2.x) * 180 / Math.PI, aa = (ang > 90 || ang < -90) ? ang + 180 : ang
+            return (
+              <g key={d.id} onClick={() => tool === 'select' && setSel({ kind: 'dim', id: d.id })} style={{ cursor: tool === 'select' ? 'pointer' : undefined }}>
+                <line x1={a2.x} y1={a2.y} x2={b2.x} y2={b2.y} stroke={col} strokeWidth={1} />
+                <line x1={pa.x} y1={pa.y} x2={a2.x} y2={a2.y} stroke={col} strokeWidth={0.7} opacity={0.6} />
+                <line x1={pb.x} y1={pb.y} x2={b2.x} y2={b2.y} stroke={col} strokeWidth={0.7} opacity={0.6} />
+                <text x={m.x} y={m.y - 3} textAnchor="middle" fontSize={10} fontWeight={600} fill={col} transform={`rotate(${aa} ${m.x} ${m.y})`} style={{ pointerEvents: 'none' }}>{fmtFt(dist(d.a, d.b))}</text>
+              </g>
+            )
+          })}
+
+          {/* dim placement preview */}
+          {tool === 'dim' && dimStart.current && cursor && (() => {
+            const a = toPx(dimStart.current), b = toPx(cursor)
+            return <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="#2563eb" strokeWidth={1} strokeDasharray="4 3" opacity={0.7} />
+          })()}
 
           {/* labels (room names / dimensions imported from a sketch) */}
           {labels.map(l => {
