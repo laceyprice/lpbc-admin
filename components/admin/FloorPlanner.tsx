@@ -19,7 +19,7 @@ type Wall = { id: string; a: Pt; b: Pt }
 type Opening = { id: string; wallId: string; t: number; width: number; kind: 'door' | 'window' | 'pocket'; flip: boolean; hinge?: boolean }
 type Room = { id: string; at: Pt; w: number; h: number; name: string }
 type Label = { id: string; at: Pt; text: string }
-type FixtureKind = 'toilet' | 'sink' | 'tub' | 'shower' | 'range' | 'fridge'
+type FixtureKind = 'toilet' | 'sink' | 'tub' | 'shower' | 'range' | 'fridge' | 'base' | 'upper' | 'island' | 'counter'
 type Fixture = { id: string; kind: FixtureKind; at: Pt; w: number; h: number; rot: number }  // rot = degrees
 type Dim = { id: string; a: Pt; b: Pt; off: number }   // off = perpendicular offset of the dim line (ft)
 type Tool = 'select' | 'wall' | 'room' | 'door' | 'window' | 'dim' | 'fixture' | 'pan'
@@ -35,6 +35,10 @@ const FIXTURES: Record<FixtureKind, { w: number; h: number; label: string }> = {
   shower: { w: 3, h: 3, label: 'Shower' },
   range: { w: 2.5, h: 2.5, label: 'Range' },
   fridge: { w: 3, h: 2.7, label: 'Fridge' },
+  base: { w: 3, h: 2, label: 'Base Cab' },
+  upper: { w: 3, h: 1, label: 'Upper Cab' },
+  island: { w: 5, h: 3, label: 'Island' },
+  counter: { w: 4, h: 2, label: 'Counter' },
 }
 // Primitive shapes in LOCAL feet (centered at origin, canonical orientation).
 type Prim =
@@ -76,6 +80,20 @@ function fixturePrims(kind: FixtureKind, w: number, h: number): Prim[] {
       { t: 'rect', x, y, w, h },
       { t: 'line', x1: x, y1: y + h * 0.78, x2: x + w, y2: y + h * 0.78 },  // door line
     ]
+    case 'base': return [   // base cabinet — box + counter front line
+      { t: 'rect', x, y, w, h },
+      { t: 'line', x1: x, y1: y + h * 0.82, x2: x + w, y2: y + h * 0.82 },
+    ]
+    case 'upper': return [  // upper cabinet — box + X (shown lighter/over)
+      { t: 'rect', x, y, w, h },
+      { t: 'line', x1: x, y1: y, x2: x + w, y2: y + h },
+      { t: 'line', x1: x + w, y1: y, x2: x, y2: y + h },
+    ]
+    case 'island': return [ // island — box + inset counter overhang
+      { t: 'rect', x, y, w, h },
+      { t: 'rect', x: x + 0.3, y: y + 0.3, w: w - 0.6, h: h - 0.6 },
+    ]
+    case 'counter': return [{ t: 'rect', x, y, w, h }]
   }
 }
 // Sample fixture prims into world-feet polylines (for PDF / DXF), applying rot+pos.
