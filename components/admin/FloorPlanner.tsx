@@ -8,7 +8,7 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import {
   MousePointer2, Minus, Square, DoorOpen, RectangleHorizontal, Hand,
   ZoomIn, ZoomOut, Trash2, RotateCcw, Copy, Check, ScanLine, Loader2, AlertCircle, X,
-  Image as ImageIcon, Eye, EyeOff, Move, FileDown, Ruler, Bath, RotateCw,
+  Image as ImageIcon, Eye, EyeOff, Move, FileDown, Ruler, Bath, RotateCw, Undo2,
 } from 'lucide-react'
 
 type Underlay = { src: string; x: number; y: number; w: number; h: number; opacity: number; visible: boolean }
@@ -16,7 +16,7 @@ type Underlay = { src: string; x: number; y: number; w: number; h: number; opaci
 // ── Model ────────────────────────────────────────────────────────────────────
 type Pt = { x: number; y: number }            // world units = feet
 type Wall = { id: string; a: Pt; b: Pt }
-type Opening = { id: string; wallId: string; t: number; width: number; kind: 'door' | 'window'; flip: boolean }
+type Opening = { id: string; wallId: string; t: number; width: number; kind: 'door' | 'window' | 'pocket'; flip: boolean; hinge?: boolean }
 type Room = { id: string; at: Pt; w: number; h: number; name: string }
 type Label = { id: string; at: Pt; text: string }
 type FixtureKind = 'toilet' | 'sink' | 'tub' | 'shower' | 'range' | 'fridge'
@@ -144,7 +144,7 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
   const [fixtures, setFixtures] = useState<Fixture[]>(value?.fixtures || [])
   const [dims, setDims] = useState<Dim[]>(value?.dims || [])
   const [fixKind, setFixKind] = useState<FixtureKind>('toilet')
-  const updFixture = (id: string, p: Partial<Fixture>) => setFixtures(prev => prev.map(f => f.id === id ? { ...f, ...p } : f))
+  const updFixture = (id: string, p: Partial<Fixture>) => { checkpoint('fx' + id); setFixtures(prev => prev.map(f => f.id === id ? { ...f, ...p } : f)) }
   const dimStart = useRef<Pt | null>(null)
   const [tool, setTool] = useState<Tool>('wall')
   const [sel, setSel] = useState<Sel>(null)
@@ -157,9 +157,9 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
   const [showWallDims, setShowWallDims] = useState(true)   // auto per-wall length labels
 
   // element editors
-  const updOpening = (id: string, p: Partial<Opening>) => setOpenings(prev => prev.map(o => o.id === id ? { ...o, ...p } : o))
-  const updRoom = (id: string, p: Partial<Room>) => setRooms(prev => prev.map(r => r.id === id ? { ...r, ...p } : r))
-  const updLabel = (id: string, p: Partial<Label>) => setLabels(prev => prev.map(l => l.id === id ? { ...l, ...p } : l))
+  const updOpening = (id: string, p: Partial<Opening>) => { checkpoint('op' + id); setOpenings(prev => prev.map(o => o.id === id ? { ...o, ...p } : o)) }
+  const updRoom = (id: string, p: Partial<Room>) => { checkpoint('rm' + id); setRooms(prev => prev.map(r => r.id === id ? { ...r, ...p } : r)) }
+  const updLabel = (id: string, p: Partial<Label>) => { checkpoint('lb' + id); setLabels(prev => prev.map(l => l.id === id ? { ...l, ...p } : l)) }
   const wallLenOf = (wallId: string) => { const w = walls.find(x => x.id === wallId); return w ? dist(w.a, w.b) : 0 }
 
   // AI sketch import
@@ -203,6 +203,29 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
   const roomDrag = useRef<{ a: Pt } | null>(null)
   const [roomPreview, setRoomPreview] = useState<{ a: Pt; b: Pt } | null>(null)
   const dragging = useRef<{ kind: 'vertex' | 'pan' | 'fixture' | 'label' | 'room'; from: Pt; orig?: Pt; panFrom?: Pt; id?: string; fixFrom?: Pt } | null>(null)
+
+  // ── Undo history ─────────────────────────────────────────────────────────────
+  const past = useRef<PlanDoc[]>([])
+  const cpTime = useRef(0), cpTag = useRef('')
+  const [undoDepth, setUndoDepth] = useState(0)
+  // Snapshot the current doc BEFORE a mutation. Skipped mid-drag (the drag start
+  // already checkpointed); rapid same-tag edits (slider/stepper) collapse into one.
+  function checkpoint(tag = '') {
+    if (dragging.current) return
+    const now = Date.now()
+    if (tag && tag === cpTag.current && now - cpTime.current < 700) return
+    cpTime.current = now; cpTag.current = tag
+    past.current.push({ walls, openings, rooms, labels, fixtures, dims })
+    if (past.current.length > 60) past.current.shift()
+    setUndoDepth(past.current.length)
+  }
+  function undo() {
+    const prev = past.current.pop()
+    if (!prev) return
+    setWalls(prev.walls || []); setOpenings(prev.openings || []); setRooms(prev.rooms || [])
+    setLabels(prev.labels || []); setFixtures(prev.fixtures || []); setDims(prev.dims || [])
+    setSel(null); cpTag.current = ''; setUndoDepth(past.current.length)
+  }
 
   const wrapRef = useRef<HTMLDivElement>(null)
   const svgRef = useRef<SVGSVGElement>(null)
@@ -259,6 +282,7 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
       else {
         const end = e.shiftKey ? snap(ortho(wallChain.current, sp)) : sp   // Shift = straight
         if (dist(wallChain.current, end) > 0.01) {
+          checkpoint('wall')
           setWalls(prev => [...prev, { id: uid(), a: wallChain.current!, b: end }])
         }
         wallChain.current = end
@@ -277,6 +301,7 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
         const half = (width / 2) / wl
         const t = Math.max(half, Math.min(1 - half, hit.t))
         const id = uid()
+        checkpoint('place')
         setOpenings(prev => [...prev, { id, wallId: hit.wall.id, t, width, kind: tool, flip: false }])
         setSel({ kind: 'opening', id })   // select it so you can tweak immediately
       }
@@ -286,6 +311,7 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
     if (tool === 'fixture') {
       const def = FIXTURES[fixKind]
       const id = uid()
+      checkpoint('place')
       setFixtures(prev => [...prev, { id, kind: fixKind, at: sp, w: def.w, h: def.h, rot: 0 }])
       setSel({ kind: 'fixture', id })
       return
@@ -296,6 +322,7 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
       else {
         if (dist(dimStart.current, sp) > 0.1) {
           const id = uid()
+          checkpoint('place')
           setDims(prev => [...prev, { id, a: dimStart.current!, b: sp, off: 1.5 }])
           setSel({ kind: 'dim', id })
         }
@@ -308,6 +335,8 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
     if (tool === 'select') {
       const h = hitTest(w)
       setSel(h)
+      // checkpoint at drag start so the whole drag is one undo step
+      if (h && (h.kind === 'vertex' || h.kind === 'fixture' || h.kind === 'label' || h.kind === 'room')) checkpoint('drag' + h.id)
       if (h?.kind === 'vertex' && h.vx) dragging.current = { kind: 'vertex', from: w, orig: h.vx }
       if (h?.kind === 'fixture') dragging.current = { kind: 'fixture', from: w, id: h.id, fixFrom: fixtures.find(f => f.id === h.id)?.at }
       if (h?.kind === 'label') dragging.current = { kind: 'label', from: w, id: h.id }
@@ -347,6 +376,7 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
       const x1 = Math.max(a.x, b.x), y1 = Math.max(a.y, b.y)
       const w = x1 - x0, h = y1 - y0
       if (w >= 0.5 && h >= 0.5) {
+        checkpoint('room')
         const tl = { x: x0, y: y0 }, tr = { x: x1, y: y0 }, br = { x: x1, y: y1 }, bl = { x: x0, y: y1 }
         setWalls(prev => [...prev,
           { id: uid(), a: tl, b: tr }, { id: uid(), a: tr, b: br },
@@ -415,6 +445,7 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
 
   function deleteSel() {
     if (!sel) return
+    checkpoint('del')
     if (sel.kind === 'wall') {
       setWalls(prev => prev.filter(w => w.id !== sel.id))
       setOpenings(prev => prev.filter(o => o.wallId !== sel.id))
@@ -491,6 +522,7 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Delete' || e.key === 'Backspace') { if (sel) { e.preventDefault(); deleteSel() } }
       if (e.key === 'Escape') { wallChain.current = null; dimStart.current = null; setSel(null); roomDrag.current = null; setRoomPreview(null); force(n => n + 1) }
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')) { e.preventDefault(); undo() }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -511,7 +543,7 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
     zoomBy(e.deltaY < 0 ? 1.1 : 1 / 1.1, { x: e.clientX - rect.left, y: e.clientY - rect.top })
   }
 
-  function clearAll() { if (confirm('Clear the whole plan?')) { setWalls([]); setOpenings([]); setRooms([]); setSel(null); wallChain.current = null } }
+  function clearAll() { if (confirm('Clear the whole plan?')) { checkpoint('clear'); setWalls([]); setOpenings([]); setRooms([]); setLabels([]); setFixtures([]); setDims([]); setSel(null); wallChain.current = null } }
 
   function copyJSON() {
     const doc = { units: 'feet', walls, openings, rooms, labels }
@@ -550,14 +582,20 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
       const j1 = sub(c, mul(u, half)), j2 = add(c, mul(u, half)), n = mul(perp(u), o.flip ? -1 : 1)
       P.push(`<line x1="${X(j1)}" y1="${Y(j1)}" x2="${X(j2)}" y2="${Y(j2)}" stroke="#fff" stroke-width="${(wpx + 1).toFixed(1)}"/>`)
       if (wallStyle === 'outline') { const jd = perp(u), ht = wallThick / 2; for (const j of [j1, j2]) { const q1 = add(j, mul(jd, ht)), q2 = sub(j, mul(jd, ht)); P.push(`<line x1="${X(q1)}" y1="${Y(q1)}" x2="${X(q2)}" y2="${Y(q2)}" stroke="#111827" stroke-width="${pFace.toFixed(1)}" stroke-linecap="round"/>`) } }
+      const hp = o.hinge ? j2 : j1, lp = o.hinge ? j1 : j2
       if (o.kind === 'door') {
-        const tip = add(j1, mul(n, o.width))
-        const a0 = Math.atan2(j2.y - j1.y, j2.x - j1.x), a1 = Math.atan2(tip.y - j1.y, tip.x - j1.x)
+        const tip = add(hp, mul(n, o.width))
+        const a0 = Math.atan2(lp.y - hp.y, lp.x - hp.x), a1 = Math.atan2(tip.y - hp.y, tip.x - hp.x)
         let dl = a1 - a0; while (dl > Math.PI) dl -= 2 * Math.PI; while (dl < -Math.PI) dl += 2 * Math.PI
         const pts: string[] = []
-        for (let i = 0; i <= 16; i++) { const a = a0 + dl * (i / 16); const pp = { x: j1.x + o.width * Math.cos(a), y: j1.y + o.width * Math.sin(a) }; pts.push(`${X(pp)},${Y(pp)}`) }
-        P.push(`<line x1="${X(j1)}" y1="${Y(j1)}" x2="${X(tip)}" y2="${Y(tip)}" stroke="#111827" stroke-width="1"/>`)
+        for (let i = 0; i <= 16; i++) { const a = a0 + dl * (i / 16); const pp = { x: hp.x + o.width * Math.cos(a), y: hp.y + o.width * Math.sin(a) }; pts.push(`${X(pp)},${Y(pp)}`) }
+        P.push(`<line x1="${X(hp)}" y1="${Y(hp)}" x2="${X(tip)}" y2="${Y(tip)}" stroke="#111827" stroke-width="1"/>`)
         P.push(`<polyline points="${pts.join(' ')}" fill="none" stroke="#111827" stroke-width="1"/>`)
+      } else if (o.kind === 'pocket') {
+        const off = mul(perp(u), (o.flip ? -1 : 1) * Math.min(0.2, wallThick * 0.35))
+        const s1 = add(j1, off), s2 = add(j2, off), pk = add(lp, mul(sub(lp, hp), 0.9 / (o.width || 1)))
+        P.push(`<line x1="${X(s1)}" y1="${Y(s1)}" x2="${X(s2)}" y2="${Y(s2)}" stroke="#111827" stroke-width="2"/>`)
+        P.push(`<line x1="${X(add(lp, off))}" y1="${Y(add(lp, off))}" x2="${X(add(pk, off))}" y2="${Y(add(pk, off))}" stroke="#111827" stroke-width="1" stroke-dasharray="4 2"/>`)
       } else {
         P.push(`<line x1="${X(j1)}" y1="${Y(j1)}" x2="${X(j2)}" y2="${Y(j2)}" stroke="#111827" stroke-width="1.5"/>`)
       }
@@ -624,13 +662,19 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
       const wl = walls.find(w => w.id === o.wallId); if (!wl) continue
       const u = norm(sub(wl.b, wl.a)), c = add(wl.a, mul(sub(wl.b, wl.a), o.t)), half = o.width / 2
       const j1 = sub(c, mul(u, half)), j2 = add(c, mul(u, half)), n = mul(perp(u), o.flip ? -1 : 1)
+      const hp = o.hinge ? j2 : j1, lp = o.hinge ? j1 : j2
       if (o.kind === 'door') {
-        const tip = add(j1, mul(n, o.width))
-        line(j1, tip, 'DOORS')
-        const a0 = Math.atan2(j2.y - j1.y, j2.x - j1.x), a1 = Math.atan2(tip.y - j1.y, tip.x - j1.x)
+        const tip = add(hp, mul(n, o.width))
+        line(hp, tip, 'DOORS')
+        const a0 = Math.atan2(lp.y - hp.y, lp.x - hp.x), a1 = Math.atan2(tip.y - hp.y, tip.x - hp.x)
         let dl = a1 - a0; while (dl > Math.PI) dl -= 2 * Math.PI; while (dl < -Math.PI) dl += 2 * Math.PI
-        const pts: Pt[] = []; for (let i = 0; i <= 16; i++) { const a = a0 + dl * (i / 16); pts.push({ x: j1.x + o.width * Math.cos(a), y: j1.y + o.width * Math.sin(a) }) }
+        const pts: Pt[] = []; for (let i = 0; i <= 16; i++) { const a = a0 + dl * (i / 16); pts.push({ x: hp.x + o.width * Math.cos(a), y: hp.y + o.width * Math.sin(a) }) }
         poly(pts, 'DOORS')
+      } else if (o.kind === 'pocket') {
+        const off = mul(perp(u), (o.flip ? -1 : 1) * Math.min(0.2, wallThick * 0.35))
+        line(add(j1, off), add(j2, off), 'DOORS')
+        const pk = add(lp, mul(sub(lp, hp), 0.9 / (o.width || 1)))
+        line(add(lp, off), add(pk, off), 'DOORS')
       } else line(j1, j2, 'WINDOWS')
     }
     for (const f of fixtures) for (const pl of fixtureWorldPolys(f)) poly(pl, 'FIXTURES')
@@ -680,7 +724,7 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
     const n = mul(perp(u), o.flip ? -1 : 1)
     const pj1 = toPx(j1), pj2 = toPx(j2), pc = toPx(c)
     const selected = sel?.kind === 'opening' && sel.id === o.id
-    const stroke = o.kind === 'door' ? '#b8895a' : '#2563eb'
+    const stroke = o.kind === 'window' ? '#2563eb' : '#b8895a'
 
     // mask the wall under the opening (white gap)
     const maskW = wallPx + 2
@@ -695,17 +739,27 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
         els.push(<line key={`jamb${i}`} x1={q1.x} y1={q1.y} x2={q2.x} y2={q2.y} stroke="#1f2937" strokeWidth={faceW} strokeLinecap="round" />)
       })
     }
+    // hinge side controlled by o.hinge (which jamb pivots); swing side by o.flip
+    const hp = o.hinge ? j2 : j1   // hinge point
+    const lp = o.hinge ? j1 : j2   // latch point
     if (o.kind === 'door') {
-      const tip = add(j1, mul(n, o.width))     // open leaf tip
-      const ptip = toPx(tip)
-      // arc latch(j2) -> tip, center hinge(j1), radius = width
-      const a0 = Math.atan2(j2.y - j1.y, j2.x - j1.x)
-      const a1 = Math.atan2(tip.y - j1.y, tip.x - j1.x)
+      const tip = add(hp, mul(n, o.width))     // open leaf tip
+      const ptip = toPx(hp), pt2 = toPx(tip)
+      const a0 = Math.atan2(lp.y - hp.y, lp.x - hp.x)
+      const a1 = Math.atan2(tip.y - hp.y, tip.x - hp.x)
       let dlt = a1 - a0; while (dlt > Math.PI) dlt -= 2 * Math.PI; while (dlt < -Math.PI) dlt += 2 * Math.PI
       const pts: string[] = []
-      for (let i = 0; i <= 16; i++) { const a = a0 + dlt * (i / 16); const pp = toPx({ x: j1.x + o.width * Math.cos(a), y: j1.y + o.width * Math.sin(a) }); pts.push(`${pp.x},${pp.y}`) }
-      els.push(<line key="leaf" x1={pj1.x} y1={pj1.y} x2={ptip.x} y2={ptip.y} stroke={stroke} strokeWidth={1.6} />)
+      for (let i = 0; i <= 16; i++) { const a = a0 + dlt * (i / 16); const pp = toPx({ x: hp.x + o.width * Math.cos(a), y: hp.y + o.width * Math.sin(a) }); pts.push(`${pp.x},${pp.y}`) }
+      els.push(<line key="leaf" x1={ptip.x} y1={ptip.y} x2={pt2.x} y2={pt2.y} stroke={stroke} strokeWidth={1.6} />)
       els.push(<polyline key="arc" points={pts.join(' ')} fill="none" stroke={stroke} strokeWidth={1.4} />)
+    } else if (o.kind === 'pocket') {
+      // pocket door: slab in the opening + dashed cavity sliding into the wall
+      const off = mul(perp(u), (o.flip ? -1 : 1) * Math.min(0.2, wallThick * 0.35))
+      const s1 = toPx(add(j1, off)), s2 = toPx(add(j2, off))
+      els.push(<line key="slab" x1={s1.x} y1={s1.y} x2={s2.x} y2={s2.y} stroke={stroke} strokeWidth={2.5} />)
+      const pk = add(lp, mul(sub(lp, hp), 0.9 / (o.width || 1)))  // extend past latch into wall
+      const c1 = toPx(add(lp, off)), c2 = toPx(add(pk, off))
+      els.push(<line key="pocket" x1={c1.x} y1={c1.y} x2={c2.x} y2={c2.y} stroke={stroke} strokeWidth={1.2} strokeDasharray="4 2" />)
     } else {
       // window: glass line across + jamb ticks
       els.push(<line key="glass" x1={pj1.x} y1={pj1.y} x2={pj2.x} y2={pj2.y} stroke={stroke} strokeWidth={2} />)
@@ -744,6 +798,7 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
 
   // resize an opening, keeping it inside its wall
   function setOpeningWidth(id: string, newW: number) {
+    checkpoint('ow' + id)
     setOpenings(prev => prev.map(o => {
       if (o.id !== id) return o
       const wl = wallLenOf(o.wallId) || 1
@@ -787,6 +842,7 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
         <button onClick={() => { setZoom(1); setPan({ x: 60, y: 60 }) }} className="px-2 py-1 rounded-lg border border-gray-200 text-gray-700 text-xs font-semibold tabular-nums min-w-[46px]">{Math.round(zoom * 100)}%</button>
         <button onClick={() => zoomBy(1.2)} title="Zoom in" className="p-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50"><ZoomIn size={14} /></button>
         <div className="flex-1" />
+        <button onClick={undo} disabled={undoDepth === 0} title="Undo (Ctrl+Z)" className="p-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 disabled:opacity-30"><Undo2 size={14} /></button>
         <button onClick={deleteSel} disabled={!sel} title="Delete selection" className="p-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 disabled:opacity-30"><Trash2 size={14} /></button>
         <button onClick={clearAll} title="Clear all" className="p-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50"><RotateCcw size={14} /></button>
         {/* Wall thickness */}
@@ -873,7 +929,7 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
             <div className="flex flex-wrap items-center gap-2 bg-blue-50 border border-blue-100 rounded-xl px-3 py-2 text-xs">
               <span className="font-bold text-blue-800 capitalize">{o.kind}</span>
               <div className="flex rounded-lg overflow-hidden border border-blue-200">
-                {(['door', 'window'] as const).map(k => (
+                {(['door', 'window', 'pocket'] as const).map(k => (
                   <button key={k} onClick={() => updOpening(o.id, { kind: k })}
                     className={`px-2 py-0.5 capitalize ${o.kind === k ? 'bg-blue-600 text-white' : 'bg-white text-gray-600 hover:bg-blue-100'}`}>{k}</button>
                 ))}
@@ -884,8 +940,13 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
               <div className="w-px h-5 bg-blue-200" />
               <span className="text-gray-500">Position</span>
               <input type="range" min={half} max={1 - half} step={0.01} value={o.t} onChange={e => updOpening(o.id, { t: Number(e.target.value) })} className="w-28" />
+              {o.kind !== 'window' && (
+                <button onClick={() => updOpening(o.id, { flip: !o.flip })} className="px-2 py-0.5 rounded border border-blue-200 bg-white text-gray-600 hover:bg-blue-100 font-semibold">
+                  {o.kind === 'pocket' ? 'Flip side' : 'Swing in/out'}
+                </button>
+              )}
               {o.kind === 'door' && (
-                <button onClick={() => updOpening(o.id, { flip: !o.flip })} className="px-2 py-0.5 rounded border border-blue-200 bg-white text-gray-600 hover:bg-blue-100 font-semibold">Flip swing</button>
+                <button onClick={() => updOpening(o.id, { hinge: !o.hinge })} className="px-2 py-0.5 rounded border border-blue-200 bg-white text-gray-600 hover:bg-blue-100 font-semibold">Hinge L/R</button>
               )}
               <button onClick={deleteSel} className="ml-auto flex items-center gap-1 text-red-500 hover:text-red-700 font-semibold"><Trash2 size={12} /> Delete</button>
             </div>
