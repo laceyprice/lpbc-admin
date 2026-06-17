@@ -5,11 +5,15 @@
 // with ¼-ft snapping and live foot-inch dimensions. This is the foundation the
 // PDF and DXF/CAD export will render from in later phases.
 import { useEffect, useRef, useState, useCallback } from 'react'
+import dynamic from 'next/dynamic'
 import {
   MousePointer2, Minus, Square, DoorOpen, RectangleHorizontal, Hand,
   ZoomIn, ZoomOut, Trash2, RotateCcw, Copy, Check, ScanLine, Loader2, AlertCircle, X,
-  Image as ImageIcon, Eye, EyeOff, Move, FileDown, Ruler, Bath, RotateCw, Undo2,
+  Image as ImageIcon, Eye, EyeOff, Move, FileDown, Ruler, Bath, RotateCw, Undo2, Box,
 } from 'lucide-react'
+
+// 3D view is heavy (Three.js) — load it only when opened, client-side only.
+const FloorPlan3D = dynamic(() => import('./FloorPlan3D'), { ssr: false })
 
 type Underlay = { src: string; x: number; y: number; w: number; h: number; opacity: number; visible: boolean }
 
@@ -173,6 +177,7 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
   const [wallThick, setWallThick] = useState(0.5)   // wall thickness in feet (6")
   const [wallStyle, setWallStyle] = useState<'outline' | 'solid'>('outline')  // double-line vs poché
   const [showWallDims, setShowWallDims] = useState(true)   // auto per-wall length labels
+  const [show3D, setShow3D] = useState(false)
 
   // element editors
   const updOpening = (id: string, p: Partial<Opening>) => { checkpoint('op' + id); setOpenings(prev => prev.map(o => o.id === id ? { ...o, ...p } : o)) }
@@ -890,6 +895,9 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
         <button onClick={exportDXF} title="Export DXF for AutoCAD/CAD" className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-gray-200 text-xs font-semibold text-gray-600 hover:bg-gray-50">
           <FileDown size={13} /> <span className="hidden sm:inline">DXF</span>
         </button>
+        <button onClick={() => setShow3D(true)} disabled={!walls.length} title="View in 3D & pick finishes" className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-teal-300 bg-teal-50 text-teal-700 text-xs font-semibold hover:bg-teal-100 disabled:opacity-50">
+          <Box size={13} /> <span className="hidden sm:inline">3D</span>
+        </button>
         <button onClick={copyJSON} title="Copy plan data (JSON)" className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-gray-200 text-xs font-semibold text-gray-600 hover:bg-gray-50">
           {copied ? <Check size={13} className="text-green-600" /> : <Copy size={13} />} {copied ? 'Copied' : 'Plan JSON'}
         </button>
@@ -1211,6 +1219,8 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
         <span>{rooms.length} rooms</span>
         {cursor && <span className="ml-auto tabular-nums">x {cursor.x.toFixed(2)}′ · y {cursor.y.toFixed(2)}′</span>}
       </div>
+
+      {show3D && <FloorPlan3D plan={{ walls, openings, rooms, labels, fixtures, dims }} wallThick={wallThick} onClose={() => setShow3D(false)} />}
     </div>
   )
 }
