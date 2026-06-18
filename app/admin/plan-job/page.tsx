@@ -1849,9 +1849,6 @@ export default function PlanJobPage() {
         measurements={measurements}
         onAddAttachments={atts => setAttachments(prev => [...prev, ...atts])}
         onOpenDrivePicker={() => { setDrivePickerMoodBoard(true); setDrivePickerOpen(true) }}
-        onOpenDrivePickerForSketch={() => { setDrivePickerForSketch(true); setDrivePickerOpen(true) }}
-        sketchDriveImageUrl={sketchDriveImageUrl}
-        onSketchDriveImageConsumed={() => setSketchDriveImageUrl(null)}
       />
 
       {drivePickerOpen && (
