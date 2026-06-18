@@ -204,7 +204,7 @@ export default function PlanJobPage() {
   const [worksiteId, setWorksiteId] = useState<string | null>(null)
   const [status, setStatus] = useState<string>('draft')
   const [sharedWithAccountId, setSharedWithAccountId] = useState<string | null>(null)
-  const [worksiteOptions, setWorksiteOptions] = useState<Array<{ id: string; address: string; city: string }>>([])
+  const [worksiteOptions, setWorksiteOptions] = useState<Array<{ id: string; address: string; city: string; name?: string | null }>>([])
   const [customerOptions, setCustomerOptions] = useState<Array<{ account_id: string; account_name: string; customer_label: string }>>([])
   const [editingEstimate, setEditingEstimate] = useState(false)
 
@@ -231,7 +231,7 @@ export default function PlanJobPage() {
           fetch('/api/user-roles'),
         ])
         const ws = await wsRes.json()
-        if (Array.isArray(ws)) setWorksiteOptions(ws.map((w: any) => ({ id: w.id, address: w.address, city: w.city })))
+        if (Array.isArray(ws)) setWorksiteOptions(ws.map((w: any) => ({ id: w.id, address: w.address, city: w.city, name: w.financial_account?.name || null })))
         const ur = await urRes.json()
         if (Array.isArray(ur)) {
           const customers = ur.filter((u: any) => u.role === 'customer' && u.assigned_account_id)
@@ -990,7 +990,7 @@ export default function PlanJobPage() {
           <select value={worksiteId || ''} onChange={e => { setWorksiteId(e.target.value || null); markDirty() }}
             className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:border-blue-400 bg-white">
             <option value="">— Not linked —</option>
-            {worksiteOptions.map(w => <option key={w.id} value={w.id}>{w.address}{w.city ? `, ${w.city}` : ''}</option>)}
+            {worksiteOptions.map(w => <option key={w.id} value={w.id}>{w.name ? `${w.name} — ` : ''}{w.address}{w.city ? `, ${w.city}` : ''}</option>)}
           </select>
         </div>
         <div>
