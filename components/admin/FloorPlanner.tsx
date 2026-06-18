@@ -19,7 +19,8 @@ type Underlay = { src: string; x: number; y: number; w: number; h: number; opaci
 
 // ── Model ────────────────────────────────────────────────────────────────────
 type Pt = { x: number; y: number }            // world units = feet
-type Wall = { id: string; a: Pt; b: Pt }
+type Wall = { id: string; a: Pt; b: Pt; h?: number }   // h = wall height in ft (omitted = full)
+const FULL_WALL_H = 8
 type Opening = { id: string; wallId: string; t: number; width: number; kind: 'door' | 'window' | 'pocket'; flip: boolean; hinge?: boolean }
 type Room = { id: string; at: Pt; w: number; h: number; name: string }
 type Label = { id: string; at: Pt; text: string }
@@ -183,6 +184,7 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
   const updOpening = (id: string, p: Partial<Opening>) => { checkpoint('op' + id); setOpenings(prev => prev.map(o => o.id === id ? { ...o, ...p } : o)) }
   const updRoom = (id: string, p: Partial<Room>) => { checkpoint('rm' + id); setRooms(prev => prev.map(r => r.id === id ? { ...r, ...p } : r)) }
   const updLabel = (id: string, p: Partial<Label>) => { checkpoint('lb' + id); setLabels(prev => prev.map(l => l.id === id ? { ...l, ...p } : l)) }
+  const updWall = (id: string, p: Partial<Wall>) => { checkpoint('wl' + id); setWalls(prev => prev.map(w => w.id === id ? { ...w, ...p } : w)) }
   const wallLenOf = (wallId: string) => { const w = walls.find(x => x.id === wallId); return w ? dist(w.a, w.b) : 0 }
 
   // AI sketch import
@@ -1005,6 +1007,13 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
             <div className="flex flex-wrap items-center gap-2 bg-blue-50 border border-blue-100 rounded-xl px-3 py-2 text-xs">
               <span className="font-bold text-blue-800">Wall</span>
               <span className="text-gray-500">Length {fmtFt(dist(wll.a, wll.b))}</span>
+              <div className="w-px h-5 bg-blue-200" />
+              <span className="text-gray-500">Height</span>
+              <SizeStepper value={wll.h ?? FULL_WALL_H} onChange={v => updWall(wll.id, { h: v >= FULL_WALL_H ? undefined : v })} min={1} max={FULL_WALL_H} />
+              <button onClick={() => updWall(wll.id, { h: (wll.h ?? FULL_WALL_H) < FULL_WALL_H ? undefined : 3.5 })}
+                className="px-2 py-0.5 rounded border border-blue-200 bg-white text-gray-600 hover:bg-blue-100 font-semibold">
+                {(wll.h ?? FULL_WALL_H) < FULL_WALL_H ? 'Full height' : 'Half wall'}
+              </button>
               <button onClick={deleteSel} className="ml-auto flex items-center gap-1 text-red-500 hover:text-red-700 font-semibold"><Trash2 size={12} /> Delete</button>
             </div>
           )
@@ -1103,6 +1112,11 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
             return <line key={wl.id + '_in'} x1={a.x} y1={a.y} x2={b.x} y2={b.y}
               stroke="#ffffff" strokeWidth={wallInnerPx} strokeLinecap="round" style={{ pointerEvents: 'none' }} />
           })}
+          {/* half walls — dashed teal centerline so they're distinguishable in plan */}
+          {walls.map(wl => (wl.h ?? FULL_WALL_H) < FULL_WALL_H ? (() => {
+            const a = toPx(wl.a), b = toPx(wl.b)
+            return <line key={wl.id + '_half'} x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="#0d9488" strokeWidth={1.5} strokeDasharray="5 3" style={{ pointerEvents: 'none' }} />
+          })() : null)}
 
           {/* openings */}
           {openings.map(renderOpening)}

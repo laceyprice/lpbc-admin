@@ -49,15 +49,48 @@ export default function FloorPlan3D({ plan, wallThick = 0.5, onClose }: { plan: 
   const color = (c: Cat) => FINISHES[c][pick[c]].color
 
   // center the plan on the origin so the camera framing is stable
-  const { walls, fixtures, center, span } = useMemo(() => {
+  const { walls, openings, fixtures, center, span } = useMemo(() => {
     const ws = plan.walls || []
     let x0 = Infinity, z0 = Infinity, x1 = -Infinity, z1 = -Infinity
     const see = (x: number, z: number) => { if (x < x0) x0 = x; if (z < z0) z0 = z; if (x > x1) x1 = x; if (z > z1) z1 = z }
     ws.forEach(w => { see(w.a.x, w.a.y); see(w.b.x, w.b.y) })
     if (!isFinite(x0)) { x0 = 0; z0 = 0; x1 = 20; z1 = 20 }
     const cx = (x0 + x1) / 2, cz = (z0 + z1) / 2
-    return { walls: ws, fixtures: plan.fixtures || [], center: { x: cx, z: cz }, span: Math.max(x1 - x0, z1 - z0, 10) }
+    return { walls: ws, openings: plan.openings || [], fixtures: plan.fixtures || [], center: { x: cx, z: cz }, span: Math.max(x1 - x0, z1 - z0, 10) }
   }, [plan])
+
+  // Break each wall into boxes: full segments between openings, headers above
+  // doors, sill+header around windows. Half walls (h set) render solid at height.
+  type WBox = { key: string; pos: [number, number, number]; rot: number; size: [number, number, number] }
+  const wallBoxes = useMemo(() => {
+    const out: WBox[] = []
+    const DOOR_TOP = 6.75, WIN_SILL = 2.5, WIN_TOP = 6
+    walls.forEach((w, wi) => {
+      const ax = w.a.x - center.x, az = w.a.y - center.z, bx = w.b.x - center.x, bz = w.b.y - center.z
+      const len = Math.hypot(bx - ax, bz - az); if (len < 0.1) return
+      const ux = (bx - ax) / len, uz = (bz - az) / len, rot = -Math.atan2(bz - az, bx - ax)
+      const top = w.h ?? WALL_H
+      const push = (g0: number, g1: number, y: number, h: number) => {
+        if (g1 - g0 <= 0.02 || h <= 0.02) return
+        const s = (g0 + g1) / 2
+        out.push({ key: `${wi}-${out.length}`, pos: [ax + ux * s, y, az + uz * s], rot, size: [g1 - g0, h, wallThick] })
+      }
+      if (top < 6.9) { push(-wallThick / 2, len + wallThick / 2, top / 2, top); return }  // half wall, solid
+      const ops = openings.filter(o => o.wallId === w.id).map(o => {
+        const wd = Math.min(o.width, len - 0.1), cc = o.t * len
+        return { s0: Math.max(0, cc - wd / 2), s1: Math.min(len, cc + wd / 2), kind: o.kind }
+      }).sort((a, b) => a.s0 - b.s0)
+      let cur = 0
+      for (const op of ops) {
+        push(cur <= 0.01 ? -wallThick / 2 : cur, op.s0, top / 2, top)   // full segment before opening
+        if (op.kind === 'window') { push(op.s0, op.s1, WIN_SILL / 2, WIN_SILL); push(op.s0, op.s1, (WIN_TOP + top) / 2, top - WIN_TOP) }
+        else push(op.s0, op.s1, (DOOR_TOP + top) / 2, top - DOOR_TOP)   // door/pocket header
+        cur = Math.max(cur, op.s1)
+      }
+      push(cur <= 0.01 ? -wallThick / 2 : cur, len + wallThick / 2, top / 2, top)  // final segment
+    })
+    return out
+  }, [walls, openings, center, wallThick])
 
   const cam = span * 1.1
 
@@ -85,21 +118,13 @@ export default function FloorPlan3D({ plan, wallThick = 0.5, onClose }: { plan: 
               <meshStandardMaterial color={color('floor')} roughness={0.85} />
             </mesh>
 
-            {/* walls */}
-            {walls.map((w, i) => {
-              const ax = w.a.x - center.x, az = w.a.y - center.z
-              const bx = w.b.x - center.x, bz = w.b.y - center.z
-              const len = Math.hypot(bx - ax, bz - az)
-              if (len < 0.1) return null
-              const mx = (ax + bx) / 2, mz = (az + bz) / 2
-              const rot = -Math.atan2(bz - az, bx - ax)
-              return (
-                <mesh key={i} position={[mx, WALL_H / 2, mz]} rotation={[0, rot, 0]} castShadow receiveShadow>
-                  <boxGeometry args={[len + wallThick, WALL_H, wallThick]} />
-                  <meshStandardMaterial color={color('walls')} roughness={0.9} />
-                </mesh>
-              )
-            })}
+            {/* walls (segmented around door/window openings; half walls solid) */}
+            {wallBoxes.map(b => (
+              <mesh key={b.key} position={b.pos} rotation={[0, b.rot, 0]} castShadow receiveShadow>
+                <boxGeometry args={b.size} />
+                <meshStandardMaterial color={color('walls')} roughness={0.9} />
+              </mesh>
+            ))}
 
             {/* fixtures & cabinets */}
             {fixtures.map(f => {
