@@ -179,7 +179,7 @@ function DesignStudioInner({
           {TABS.map(t => {
             const Icon = t.icon
             const active = tab === t.key
-            const count = t.key === 'board' ? board.length : t.key === 'sketch' ? (design.floorplan?.walls?.length || 0) : t.key === 'compare' ? comparisons.length : suggestions.length
+            const count = t.key === 'board' ? board.length : t.key === 'sketch' ? 0 : t.key === 'compare' ? comparisons.length : suggestions.length
             return (
               <button key={t.key} onClick={() => setTab(t.key)}
                 className={`flex items-center gap-1.5 text-xs font-bold px-3.5 py-2 rounded-t-xl border-b-2 transition-colors whitespace-nowrap ${active ? 'border-current text-gray-900' : 'border-transparent text-gray-400 hover:text-gray-600'}`}

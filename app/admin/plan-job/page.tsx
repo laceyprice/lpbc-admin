@@ -447,6 +447,13 @@ export default function PlanJobPage() {
     await loadPlansList()
   }
 
+  // Assign/reassign a saved plan to a project (worksite) right from the list.
+  async function assignWorksite(p: JobPlanSummary, wsId: string) {
+    await fetch('/api/job-plans', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: p.id, worksite_id: wsId || null }) })
+    if (planId === p.id) setWorksiteId(wsId || null)   // keep the open editor in sync
+    await loadPlansList()
+  }
+
   async function handleFiles(files: FileList | File[]) {
     const list = Array.from(files)
     if (!list.length) return
@@ -950,6 +957,11 @@ export default function PlanJobPage() {
                     </div>
                     <div className="text-[10px] text-gray-400 mt-0.5">Updated {new Date(p.updated_at).toLocaleDateString()} {new Date(p.updated_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
                   </button>
+                  <select value={p.worksite_id || ''} onChange={e => assignWorksite(p, e.target.value)} title="Assign to project"
+                    className="text-[11px] border border-gray-200 rounded-lg px-1.5 py-1 bg-white max-w-[150px] focus:outline-none focus:ring-1 focus:ring-blue-400">
+                    <option value="">— Assign project —</option>
+                    {worksiteOptions.map(w => <option key={w.id} value={w.id}>{w.name ? `${w.name} — ` : ''}{w.address}{w.city ? `, ${w.city}` : ''}</option>)}
+                  </select>
                   <button onClick={() => toggleArchive(p)} title={p.is_archived ? 'Unarchive' : 'Archive'} className="text-gray-300 hover:text-blue-600 p-1"><Archive size={13} /></button>
                   <button onClick={() => deletePlan(p.id, p.title)} title="Delete" className="text-gray-300 hover:text-red-500 p-1"><Trash2 size={13} /></button>
                 </div>
