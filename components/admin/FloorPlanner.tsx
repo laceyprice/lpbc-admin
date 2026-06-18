@@ -30,7 +30,10 @@ type Dim = { id: string; a: Pt; b: Pt; off: number }   // off = perpendicular of
 type Tool = 'select' | 'wall' | 'room' | 'door' | 'window' | 'dim' | 'fixture' | 'pan'
 type Sel = { kind: 'wall' | 'opening' | 'room' | 'vertex' | 'label' | 'fixture' | 'dim'; id: string; vx?: Pt } | null
 
-export type PlanDoc = { walls?: Wall[]; openings?: Opening[]; rooms?: Room[]; labels?: Label[]; fixtures?: Fixture[]; dims?: Dim[] }
+export type FinishPick = { floor: number; walls: number; cabinet: number; counter: number }
+export type Finishes = { pick: FinishPick; schemes?: { name: string; pick: FinishPick }[] }
+export type PlanDoc = { walls?: Wall[]; openings?: Opening[]; rooms?: Room[]; labels?: Label[]; fixtures?: Fixture[]; dims?: Dim[]; finishes?: Finishes }
+const DEFAULT_FINISHES: Finishes = { pick: { floor: 0, walls: 0, cabinet: 0, counter: 0 }, schemes: [] }
 
 // Default footprint (ft) per fixture kind.
 const FIXTURES: Record<FixtureKind, { w: number; h: number; label: string }> = {
@@ -193,6 +196,7 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
   const [wallStyle, setWallStyle] = useState<'outline' | 'solid'>('outline')  // double-line vs poché
   const [showWallDims, setShowWallDims] = useState(true)   // auto per-wall length labels
   const [show3D, setShow3D] = useState(false)
+  const [finishes, setFinishes] = useState<Finishes>(value?.finishes || DEFAULT_FINISHES)
 
   // element editors
   const updOpening = (id: string, p: Partial<Opening>) => { checkpoint('op' + id); setOpenings(prev => prev.map(o => o.id === id ? { ...o, ...p } : o)) }
@@ -225,9 +229,9 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
   const firstEmit = useRef(true)
   useEffect(() => {
     if (firstEmit.current) { firstEmit.current = false; return }
-    onChange?.({ walls, openings, rooms, labels, fixtures, dims })
+    onChange?.({ walls, openings, rooms, labels, fixtures, dims, finishes })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [walls, openings, rooms, labels, fixtures, dims])
+  }, [walls, openings, rooms, labels, fixtures, dims, finishes])
 
   // view
   const [ppf, setPpf] = useState(16)            // pixels per foot at zoom 1
@@ -1248,7 +1252,8 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
         {cursor && <span className="ml-auto tabular-nums">x {cursor.x.toFixed(2)}′ · y {cursor.y.toFixed(2)}′</span>}
       </div>
 
-      {show3D && <FloorPlan3D plan={{ walls, openings, rooms, labels, fixtures, dims }} wallThick={wallThick} onClose={() => setShow3D(false)} />}
+      {show3D && <FloorPlan3D plan={{ walls, openings, rooms, labels, fixtures, dims }} wallThick={wallThick}
+        finishes={finishes} onFinishesChange={setFinishes} onClose={() => setShow3D(false)} />}
     </div>
   )
 }

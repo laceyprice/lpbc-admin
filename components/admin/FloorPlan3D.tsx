@@ -7,32 +7,33 @@ import { useMemo, useState } from 'react'
 import { Canvas } from '@react-three/fiber'
 import { OrbitControls } from '@react-three/drei'
 import * as THREE from 'three'
-import { X } from 'lucide-react'
-import type { PlanDoc } from './FloorPlanner'
+import { X, Save, Trash2 } from 'lucide-react'
+import type { PlanDoc, Finishes, FinishPick } from './FloorPlanner'
 
 const WALL_H = 8
 
 type Tex = 'wood' | 'tile' | 'stone' | 'solid'
-// finish presets per surface category (color + texture pattern)
+// finish presets: color + texture + installed unit price.
+// floor/walls/counter price = $/sq ft; cabinet price = $/linear ft.
 const FINISHES = {
   floor: [
-    { name: 'Oak', color: '#c8a16a', tex: 'wood' }, { name: 'Walnut', color: '#6b4a2b', tex: 'wood' },
-    { name: 'Gray Tile', color: '#9aa0a6', tex: 'tile' }, { name: 'White Tile', color: '#e6e6e3', tex: 'tile' },
-    { name: 'Slate', color: '#4a4f55', tex: 'stone' },
+    { name: 'Oak', color: '#c8a16a', tex: 'wood', price: 9 }, { name: 'Walnut', color: '#6b4a2b', tex: 'wood', price: 13 },
+    { name: 'Gray Tile', color: '#9aa0a6', tex: 'tile', price: 7 }, { name: 'White Tile', color: '#e6e6e3', tex: 'tile', price: 7 },
+    { name: 'Slate', color: '#4a4f55', tex: 'stone', price: 11 },
   ],
   walls: [
-    { name: 'White', color: '#f4f1ec', tex: 'solid' }, { name: 'Greige', color: '#cfc7b8', tex: 'solid' },
-    { name: 'Soft Blue', color: '#b9c7d6', tex: 'solid' }, { name: 'Sage', color: '#b5c2a8', tex: 'solid' },
-    { name: 'Charcoal', color: '#3c3f44', tex: 'solid' },
+    { name: 'White', color: '#f4f1ec', tex: 'solid', price: 2 }, { name: 'Greige', color: '#cfc7b8', tex: 'solid', price: 2 },
+    { name: 'Soft Blue', color: '#b9c7d6', tex: 'solid', price: 2.5 }, { name: 'Sage', color: '#b5c2a8', tex: 'solid', price: 2.5 },
+    { name: 'Charcoal', color: '#3c3f44', tex: 'solid', price: 3 },
   ],
   cabinet: [
-    { name: 'White', color: '#eceae4', tex: 'solid' }, { name: 'Light Gray', color: '#b9bbbd', tex: 'solid' },
-    { name: 'Navy', color: '#33415c', tex: 'solid' }, { name: 'Walnut', color: '#6b4a2b', tex: 'wood' },
-    { name: 'Forest', color: '#33523f', tex: 'solid' },
+    { name: 'White', color: '#eceae4', tex: 'solid', price: 220 }, { name: 'Light Gray', color: '#b9bbbd', tex: 'solid', price: 240 },
+    { name: 'Navy', color: '#33415c', tex: 'solid', price: 300 }, { name: 'Walnut', color: '#6b4a2b', tex: 'wood', price: 420 },
+    { name: 'Forest', color: '#33523f', tex: 'solid', price: 320 },
   ],
   counter: [
-    { name: 'White Quartz', color: '#ecebe6', tex: 'stone' }, { name: 'Black Granite', color: '#2b2b2e', tex: 'stone' },
-    { name: 'Butcher Block', color: '#b98b53', tex: 'wood' }, { name: 'Carrara', color: '#dcdad3', tex: 'stone' },
+    { name: 'White Quartz', color: '#ecebe6', tex: 'stone', price: 65 }, { name: 'Black Granite', color: '#2b2b2e', tex: 'stone', price: 60 },
+    { name: 'Butcher Block', color: '#b98b53', tex: 'wood', price: 45 }, { name: 'Carrara', color: '#dcdad3', tex: 'stone', price: 80 },
   ],
 } as const
 type Cat = keyof typeof FINISHES
@@ -78,20 +79,52 @@ function makeTexture(tex: Tex, color: string): THREE.Texture | null {
   return t
 }
 
-export default function FloorPlan3D({ plan, wallThick = 0.5, onClose }: { plan: PlanDoc; wallThick?: number; onClose: () => void }) {
-  const [pick, setPick] = useState<Record<Cat, number>>({ floor: 0, walls: 0, cabinet: 0, counter: 0 })
-  const [ceiling, setCeiling] = useState(false)
-  const color = (c: Cat) => FINISHES[c][pick[c]].color
+function Row({ label, val }: { label: string; val: number }) {
+  return <div className="flex justify-between"><span className="text-gray-400 truncate mr-2">{label}</span><span className="tabular-nums whitespace-nowrap">${Math.round(val).toLocaleString()}</span></div>
+}
 
-  const { walls, openings, fixtures, center, span } = useMemo(() => {
+export default function FloorPlan3D({ plan, wallThick = 0.5, finishes, onFinishesChange, onClose }: {
+  plan: PlanDoc; wallThick?: number; finishes?: Finishes; onFinishesChange?: (f: Finishes) => void; onClose: () => void
+}) {
+  const f0: Finishes = finishes && finishes.pick ? finishes : { pick: { floor: 0, walls: 0, cabinet: 0, counter: 0 }, schemes: [] }
+  const pick = f0.pick
+  const schemes = f0.schemes || []
+  const setPickCat = (c: Cat, i: number) => onFinishesChange?.({ ...f0, pick: { ...pick, [c]: i } })
+  const saveScheme = () => {
+    const name = window.prompt('Name this finish scheme:')?.trim()
+    if (name) onFinishesChange?.({ ...f0, schemes: [...schemes, { name, pick: { ...pick } }] })
+  }
+  const loadScheme = (s: { pick: FinishPick }) => onFinishesChange?.({ ...f0, pick: { ...s.pick } })
+  const deleteScheme = (idx: number) => onFinishesChange?.({ ...f0, schemes: schemes.filter((_, i) => i !== idx) })
+
+  const [ceiling, setCeiling] = useState(false)
+  const color = (c: Cat) => FINISHES[c][pick[c] ?? 0].color
+
+  const { walls, openings, fixtures, center, span, bw, bh } = useMemo(() => {
     const ws = plan.walls || []
     let x0 = Infinity, z0 = Infinity, x1 = -Infinity, z1 = -Infinity
     const see = (x: number, z: number) => { if (x < x0) x0 = x; if (z < z0) z0 = z; if (x > x1) x1 = x; if (z > z1) z1 = z }
     ws.forEach(w => { see(w.a.x, w.a.y); see(w.b.x, w.b.y) })
     if (!isFinite(x0)) { x0 = 0; z0 = 0; x1 = 20; z1 = 20 }
     const cx = (x0 + x1) / 2, cz = (z0 + z1) / 2
-    return { walls: ws, openings: plan.openings || [], fixtures: plan.fixtures || [], center: { x: cx, z: cz }, span: Math.max(x1 - x0, z1 - z0, 10) }
+    return { walls: ws, openings: plan.openings || [], fixtures: plan.fixtures || [], center: { x: cx, z: cz }, span: Math.max(x1 - x0, z1 - z0, 10), bw: x1 - x0, bh: z1 - z0 }
   }, [plan])
+
+  // Quantities → live finish cost (rough installed pricing for the estimate).
+  const cost = useMemo(() => {
+    const rooms = plan.rooms || []
+    let floorArea = rooms.reduce((s, r) => s + (r.w || 0) * (r.h || 0), 0)
+    if (floorArea < 1) floorArea = Math.max(0, bw * bh)
+    const wallArea = (plan.walls || []).reduce((s, w) => s + Math.hypot(w.b.x - w.a.x, w.b.y - w.a.y) * (w.h ?? WALL_H), 0)
+    const fx = plan.fixtures || []
+    const counterArea = fx.filter(f => f.kind === 'counter' || f.kind === 'island').reduce((s, f) => s + f.w * f.h, 0)
+    const cabLinFt = fx.filter(f => f.kind === 'base' || f.kind === 'upper' || f.kind === 'island').reduce((s, f) => s + Math.max(f.w, f.h), 0)
+    const fl = floorArea * FINISHES.floor[pick.floor ?? 0].price
+    const wl = wallArea * FINISHES.walls[pick.walls ?? 0].price
+    const ct = counterArea * FINISHES.counter[pick.counter ?? 0].price
+    const cb = cabLinFt * FINISHES.cabinet[pick.cabinet ?? 0].price
+    return { fl, wl, ct, cb, total: fl + wl + ct + cb, floorArea, wallArea, counterArea, cabLinFt }
+  }, [plan, pick, bw, bh])
 
   // textures for the active finishes
   const tex = useMemo(() => {
@@ -236,7 +269,7 @@ export default function FloorPlan3D({ plan, wallThick = 0.5, onClose }: { plan: 
               <h3 className="text-[11px] font-bold uppercase tracking-wider text-gray-300 mb-1.5 capitalize">{cat === 'counter' ? 'Countertops' : cat}</h3>
               <div className="grid grid-cols-2 gap-1.5">
                 {FINISHES[cat].map((f, i) => (
-                  <button key={f.name} onClick={() => setPick(p => ({ ...p, [cat]: i }))}
+                  <button key={f.name} onClick={() => setPickCat(cat, i)}
                     className={`flex items-center gap-2 px-2 py-1.5 rounded-lg border text-[11px] text-left transition-colors ${pick[cat] === i ? 'border-amber-400 bg-gray-700 text-white' : 'border-gray-600 text-gray-300 hover:bg-gray-700'}`}>
                     <span className="w-4 h-4 rounded border border-black/20 flex-shrink-0" style={{ background: f.color }} />
                     <span className="truncate">{f.name}</span>
@@ -245,8 +278,42 @@ export default function FloorPlan3D({ plan, wallThick = 0.5, onClose }: { plan: 
               </div>
             </div>
           ))}
+
+          {/* Live finish cost estimate */}
+          <div className="border-t border-gray-700 pt-3">
+            <h3 className="text-[11px] font-bold uppercase tracking-wider text-gray-300 mb-1.5">Finish cost (est.)</h3>
+            <div className="text-[11px] text-gray-300 space-y-0.5">
+              <Row label={`Flooring · ${Math.round(cost.floorArea)} sf`} val={cost.fl} />
+              <Row label={`Wall paint · ${Math.round(cost.wallArea)} sf`} val={cost.wl} />
+              <Row label={`Counters · ${Math.round(cost.counterArea)} sf`} val={cost.ct} />
+              <Row label={`Cabinets · ${Math.round(cost.cabLinFt)} lf`} val={cost.cb} />
+              <div className="flex justify-between font-bold text-white border-t border-gray-700 mt-1 pt-1"><span>Total</span><span>${Math.round(cost.total).toLocaleString()}</span></div>
+            </div>
+            <p className="text-[9px] text-gray-500 mt-1">Rough installed pricing from plan areas — adjust quantities in the 2D plan.</p>
+          </div>
+
+          {/* Saved finish schemes */}
+          <div className="border-t border-gray-700 pt-3">
+            <div className="flex items-center justify-between mb-1.5">
+              <h3 className="text-[11px] font-bold uppercase tracking-wider text-gray-300">Schemes</h3>
+              <button onClick={saveScheme} className="flex items-center gap-1 text-[11px] text-amber-300 hover:text-amber-200 font-semibold"><Save size={11} /> Save current</button>
+            </div>
+            {schemes.length === 0 ? (
+              <p className="text-[10px] text-gray-500">Save the current finishes as a named scheme to compare options.</p>
+            ) : (
+              <div className="space-y-1">
+                {schemes.map((s, i) => (
+                  <div key={i} className="flex items-center gap-1">
+                    <button onClick={() => loadScheme(s)} className="flex-1 text-left text-[11px] text-gray-300 hover:text-white px-2 py-1 rounded-lg border border-gray-600 hover:bg-gray-700 truncate">{s.name}</button>
+                    <button onClick={() => deleteScheme(i)} className="text-gray-500 hover:text-red-400 p-1"><Trash2 size={11} /></button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
           <p className="text-[10px] text-gray-500 leading-snug border-t border-gray-700 pt-3">
-            Add stairs &amp; railings with the Fixture tool in the 2D plan; they render here. Textures are procedural previews.
+            Finishes &amp; schemes save with the plan. Add stairs/railings/cabinets with the Fixture tool in 2D.
           </p>
         </aside>
       </div>
