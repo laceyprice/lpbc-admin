@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { Sparkles, Loader2, ClipboardList, DollarSign, Clock, AlertTriangle, ListChecks, TrendingUp, History, Hammer, Upload, X, Image as ImageIcon, Film, FileText, Ruler, Save, FolderOpen, Plus, Trash2, Archive, Cloud, Folder, ChevronLeft, Search, Download, MapPin, Users2, Pencil, Check, RotateCcw, Wand2, CalendarDays, ExternalLink, FolderPlus, Link2, RefreshCw } from 'lucide-react'
+import { Sparkles, Loader2, ClipboardList, DollarSign, Clock, AlertTriangle, ListChecks, TrendingUp, History, Hammer, Upload, X, Image as ImageIcon, Film, FileText, Ruler, Save, FolderOpen, Plus, Trash2, Archive, Cloud, Folder, ChevronLeft, Search, Download, MapPin, Users2, Pencil, Check, RotateCcw, Wand2, CalendarDays, ExternalLink, FolderPlus, Link2, RefreshCw, Copy } from 'lucide-react'
 import DesignStudio, { DesignData } from '@/components/admin/DesignStudio'
 import ProjectSchedule from '@/components/admin/ProjectSchedule'
 
@@ -452,6 +452,24 @@ export default function PlanJobPage() {
     await fetch('/api/job-plans', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: p.id, worksite_id: wsId || null }) })
     if (planId === p.id) setWorksiteId(wsId || null)   // keep the open editor in sync
     await loadPlansList()
+  }
+
+  // Pull the floor plan out of another saved plan into the one you're editing.
+  async function copyFloorplanFrom(p: JobPlanSummary) {
+    if (!planId) { alert('Open or save the destination plan first, then copy the floor plan into it.'); return }
+    if (p.id === planId) return
+    if (!confirm(`Copy the floor plan from "${p.title}" into the plan you're editing ("${title || 'this plan'}")? It replaces the current floor plan.`)) return
+    try {
+      const res = await fetch(`/api/job-plans?id=${p.id}`)
+      const d = await res.json()
+      const fp = d?.design?.floorplan
+      if (!fp || !(Array.isArray(fp.walls) && fp.walls.length)) { alert('That plan has no floor plan to copy.'); return }
+      setDesign(prev => ({ ...prev, floorplan: fp }))
+      markDirty()
+      alert('Floor plan copied in. Open Design Studio → Floor Plan to see it, then click Save Changes to keep it.')
+    } catch (e: any) {
+      alert('Could not copy floor plan: ' + (e?.message || 'error'))
+    }
   }
 
   async function handleFiles(files: FileList | File[]) {
@@ -962,6 +980,7 @@ export default function PlanJobPage() {
                     <option value="">— Assign project —</option>
                     {worksiteOptions.map(w => <option key={w.id} value={w.id}>{w.name ? `${w.name} — ` : ''}{w.address}{w.city ? `, ${w.city}` : ''}</option>)}
                   </select>
+                  <button onClick={() => copyFloorplanFrom(p)} disabled={p.id === planId} title="Copy this plan's floor plan into the plan you're editing" className="text-gray-300 hover:text-teal-600 p-1 disabled:opacity-30"><Copy size={13} /></button>
                   <button onClick={() => toggleArchive(p)} title={p.is_archived ? 'Unarchive' : 'Archive'} className="text-gray-300 hover:text-blue-600 p-1"><Archive size={13} /></button>
                   <button onClick={() => deletePlan(p.id, p.title)} title="Delete" className="text-gray-300 hover:text-red-500 p-1"><Trash2 size={13} /></button>
                 </div>
