@@ -24,7 +24,7 @@ const FULL_WALL_H = 8
 type Opening = { id: string; wallId: string; t: number; width: number; kind: 'door' | 'window' | 'pocket'; flip: boolean; hinge?: boolean }
 type Room = { id: string; at: Pt; w: number; h: number; name: string }
 type Label = { id: string; at: Pt; text: string }
-type FixtureKind = 'toilet' | 'sink' | 'tub' | 'shower' | 'range' | 'fridge' | 'base' | 'upper' | 'island' | 'counter'
+type FixtureKind = 'toilet' | 'sink' | 'tub' | 'shower' | 'range' | 'fridge' | 'base' | 'upper' | 'island' | 'counter' | 'stairs' | 'railing'
 type Fixture = { id: string; kind: FixtureKind; at: Pt; w: number; h: number; rot: number }  // rot = degrees
 type Dim = { id: string; a: Pt; b: Pt; off: number }   // off = perpendicular offset of the dim line (ft)
 type Tool = 'select' | 'wall' | 'room' | 'door' | 'window' | 'dim' | 'fixture' | 'pan'
@@ -44,6 +44,8 @@ const FIXTURES: Record<FixtureKind, { w: number; h: number; label: string }> = {
   upper: { w: 3, h: 1, label: 'Upper Cab' },
   island: { w: 5, h: 3, label: 'Island' },
   counter: { w: 4, h: 2, label: 'Counter' },
+  stairs: { w: 3, h: 10, label: 'Stairs' },
+  railing: { w: 6, h: 0.5, label: 'Railing' },
 }
 // Primitive shapes in LOCAL feet (centered at origin, canonical orientation).
 type Prim =
@@ -99,6 +101,18 @@ function fixturePrims(kind: FixtureKind, w: number, h: number): Prim[] {
       { t: 'rect', x: x + 0.3, y: y + 0.3, w: w - 0.6, h: h - 0.6 },
     ]
     case 'counter': return [{ t: 'rect', x, y, w, h }]
+    case 'stairs': {   // outline + tread lines across the run (h)
+      const prims: Prim[] = [{ t: 'rect', x, y, w, h }]
+      const n = Math.max(2, Math.round(h))
+      for (let i = 1; i < n; i++) prims.push({ t: 'line', x1: x, y1: y + (i * h) / n, x2: x + w, y2: y + (i * h) / n })
+      return prims
+    }
+    case 'railing': {  // centerline + post ticks along the length (w)
+      const prims: Prim[] = [{ t: 'line', x1: x, y1: 0, x2: x + w, y2: 0 }]
+      const n = Math.max(2, Math.round(w / 3))
+      for (let i = 0; i <= n; i++) { const px = x + (i * w) / n; prims.push({ t: 'line', x1: px, y1: -0.2, x2: px, y2: 0.2 }) }
+      return prims
+    }
   }
 }
 // Sample fixture prims into world-feet polylines (for PDF / DXF), applying rot+pos.
