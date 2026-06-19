@@ -3,13 +3,13 @@
 // Extrudes the 2D plan into a 3D model with procedural material textures (wood /
 // tile / stone), a ceiling toggle, door/window openings, and 3D stairs + railings.
 // Loaded client-only (no SSR) from the Floor Planner.
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Canvas } from '@react-three/fiber'
 import { OrbitControls } from '@react-three/drei'
 import * as THREE from 'three'
 import { X, Save, Trash2, DollarSign } from 'lucide-react'
 import type { PlanDoc, Finishes, FinishPick } from './FloorPlanner'
-import { FINISHES, priceOf, priceUnit, computeFinishCost, loadPriceOverrides, savePriceOverrides, type FinishCat, type Tex, type FinishPrices } from '@/lib/finishes'
+import { FINISHES, priceOf, priceUnit, computeFinishCost, loadPriceOverrides, fetchPrices, persistPrices, type FinishCat, type Tex, type FinishPrices } from '@/lib/finishes'
 
 const WALL_H = 8
 type Cat = FinishCat
@@ -76,7 +76,8 @@ export default function FloorPlan3D({ plan, wallThick = 0.5, finishes, onFinishe
   const [ceiling, setCeiling] = useState(false)
   const [prices, setPrices] = useState<FinishPrices>(() => loadPriceOverrides())
   const [editPrices, setEditPrices] = useState(false)
-  const setPrice = (cat: Cat, idx: number, v: number) => setPrices(p => { const n = { ...p, [`${cat}:${idx}`]: v }; savePriceOverrides(n); return n })
+  useEffect(() => { fetchPrices().then(setPrices).catch(() => {}) }, [])   // pull business-wide prices
+  const setPrice = (cat: Cat, idx: number, v: number) => setPrices(p => { const n = { ...p, [`${cat}:${idx}`]: v }; persistPrices(n); return n })
   const color = (c: Cat) => FINISHES[c][pick[c] ?? 0].color
 
   const { walls, openings, fixtures, center, span, bw, bh } = useMemo(() => {

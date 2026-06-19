@@ -68,6 +68,23 @@ export function savePriceOverrides(o: FinishPrices) {
   if (typeof window !== 'undefined') try { window.localStorage.setItem(PRICE_KEY, JSON.stringify(o)) } catch {}
 }
 
+// Business-wide prices (server) with localStorage as cache/fallback.
+export async function fetchPrices(): Promise<FinishPrices> {
+  const cached = loadPriceOverrides()
+  try {
+    const res = await fetch('/api/finish-prices', { cache: 'no-store' })
+    if (res.ok) {
+      const server = await res.json()
+      if (server && typeof server === 'object' && Object.keys(server).length) { savePriceOverrides(server); return server }
+    }
+  } catch {}
+  return cached
+}
+export async function persistPrices(o: FinishPrices): Promise<void> {
+  savePriceOverrides(o)   // cache immediately
+  try { await fetch('/api/finish-prices', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(o) }) } catch {}
+}
+
 // One-line summary of the picked finishes (for an estimate line item note).
 export function finishSummary(pick: FinishPick): string {
   return [

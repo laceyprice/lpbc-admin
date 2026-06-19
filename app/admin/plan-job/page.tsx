@@ -4,7 +4,7 @@ import { useSearchParams } from 'next/navigation'
 import { Sparkles, Loader2, ClipboardList, DollarSign, Clock, AlertTriangle, ListChecks, TrendingUp, History, Hammer, Upload, X, Image as ImageIcon, Film, FileText, Ruler, Save, FolderOpen, Plus, Trash2, Archive, Cloud, Folder, ChevronLeft, Search, Download, MapPin, Users2, Pencil, Check, RotateCcw, Wand2, CalendarDays, ExternalLink, FolderPlus, Link2, RefreshCw, Copy } from 'lucide-react'
 import DesignStudio, { DesignData } from '@/components/admin/DesignStudio'
 import ProjectSchedule from '@/components/admin/ProjectSchedule'
-import { computeFinishCost, finishSummary, loadPriceOverrides } from '@/lib/finishes'
+import { computeFinishCost, finishSummary, fetchPrices } from '@/lib/finishes'
 
 interface BudgetLine {
   category: string
@@ -846,12 +846,12 @@ export default function PlanJobPage() {
     patchEstimate(e => ({ ...e, materials_breakdown: e.materials_breakdown.filter((_, idx) => idx !== i) }))
   }
   // Roll the 3D finish selections into the budget as a single line (updates if present).
-  function addFinishesToEstimate() {
+  async function addFinishesToEstimate() {
     if (!estimate) { alert('Generate an estimate first, then add the finishes line.'); return }
     const fp = (design as any).floorplan
     if (!fp || !(Array.isArray(fp.walls) && fp.walls.length)) { alert('No floor plan yet — build one in Design Studio → Floor Plan, pick finishes in 3D, then add it here.'); return }
     const pick = fp.finishes?.pick || { floor: 0, walls: 0, cabinet: 0, counter: 0 }
-    const cost = Math.round(computeFinishCost(fp, pick, loadPriceOverrides()).total)
+    const cost = Math.round(computeFinishCost(fp, pick, await fetchPrices()).total)
     if (cost <= 0) { alert('Finish cost is $0 — pick finishes (and add rooms/cabinets) in the 3D view first.'); return }
     const CAT = 'Finishes & Selections (3D)'
     const note = finishSummary(pick)
