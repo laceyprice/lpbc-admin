@@ -4,6 +4,7 @@ import { useSearchParams } from 'next/navigation'
 import { Sparkles, Loader2, ClipboardList, DollarSign, Clock, AlertTriangle, ListChecks, TrendingUp, History, Hammer, Upload, X, Image as ImageIcon, Film, FileText, Ruler, Save, FolderOpen, Plus, Trash2, Archive, Cloud, Folder, ChevronLeft, Search, Download, MapPin, Users2, Pencil, Check, RotateCcw, Wand2, CalendarDays, ExternalLink, FolderPlus, Link2, RefreshCw, Copy } from 'lucide-react'
 import DesignStudio, { DesignData } from '@/components/admin/DesignStudio'
 import ProjectSchedule from '@/components/admin/ProjectSchedule'
+import { computeFinishCost, finishSummary, loadPriceOverrides } from '@/lib/finishes'
 
 interface BudgetLine {
   category: string
@@ -844,6 +845,26 @@ export default function PlanJobPage() {
   function removeMaterial(i: number) {
     patchEstimate(e => ({ ...e, materials_breakdown: e.materials_breakdown.filter((_, idx) => idx !== i) }))
   }
+  // Roll the 3D finish selections into the budget as a single line (updates if present).
+  function addFinishesToEstimate() {
+    if (!estimate) { alert('Generate an estimate first, then add the finishes line.'); return }
+    const fp = (design as any).floorplan
+    if (!fp || !(Array.isArray(fp.walls) && fp.walls.length)) { alert('No floor plan yet — build one in Design Studio → Floor Plan, pick finishes in 3D, then add it here.'); return }
+    const pick = fp.finishes?.pick || { floor: 0, walls: 0, cabinet: 0, counter: 0 }
+    const cost = Math.round(computeFinishCost(fp, pick, loadPriceOverrides()).total)
+    if (cost <= 0) { alert('Finish cost is $0 — pick finishes (and add rooms/cabinets) in the 3D view first.'); return }
+    const CAT = 'Finishes & Selections (3D)'
+    const note = finishSummary(pick)
+    patchEstimate(e => {
+      const exists = e.materials_breakdown.some(m => m.category === CAT)
+      return {
+        ...e,
+        materials_breakdown: exists
+          ? e.materials_breakdown.map(m => m.category === CAT ? { ...m, estimated_cost: cost, notes: note } : m)
+          : [...e.materials_breakdown, { category: CAT, estimated_cost: cost, notes: note, section: 'Design & Sourcing', quoted_cost: null, actual_cost: null }],
+      }
+    })
+  }
   function addMaterial(section?: string) {
     patchEstimate(e => ({ ...e, materials_breakdown: [...e.materials_breakdown, { category: 'New line item', estimated_cost: 0, notes: '', section: section || 'Other', quoted_cost: null, actual_cost: null }] }))
   }
@@ -1352,6 +1373,12 @@ export default function PlanJobPage() {
               <p className="text-[11px] text-gray-400 flex-1">
                 Materials, labor, and subcontractor costs all live here as one unified budget. Fill in <span className="text-blue-600 font-semibold">Quoted</span> once a real quote comes in, and <span className="text-emerald-600 font-semibold">Actual Billed</span> once the job wraps — the spread shows automatically.
               </p>
+              {(design as any).floorplan?.walls?.length > 0 && (
+                <button onClick={addFinishesToEstimate} title="Add the 3D finish-selection cost as a budget line (uses your edited prices)"
+                  className="flex-shrink-0 flex items-center gap-1 text-[11px] font-semibold px-2.5 py-1.5 rounded-lg border border-teal-300 text-teal-700 hover:bg-teal-50">
+                  + Finishes from 3D
+                </button>
+              )}
               {estimate.materials_breakdown.length > 0 && (() => {
                 // Build the full section list for the "all sections" scope button
                 const bySec = new Map<string, BudgetLine[]>()

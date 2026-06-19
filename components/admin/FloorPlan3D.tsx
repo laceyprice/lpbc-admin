@@ -7,36 +7,12 @@ import { useMemo, useState } from 'react'
 import { Canvas } from '@react-three/fiber'
 import { OrbitControls } from '@react-three/drei'
 import * as THREE from 'three'
-import { X, Save, Trash2 } from 'lucide-react'
+import { X, Save, Trash2, DollarSign } from 'lucide-react'
 import type { PlanDoc, Finishes, FinishPick } from './FloorPlanner'
+import { FINISHES, priceOf, priceUnit, computeFinishCost, loadPriceOverrides, savePriceOverrides, type FinishCat, type Tex, type FinishPrices } from '@/lib/finishes'
 
 const WALL_H = 8
-
-type Tex = 'wood' | 'tile' | 'stone' | 'solid'
-// finish presets: color + texture + installed unit price.
-// floor/walls/counter price = $/sq ft; cabinet price = $/linear ft.
-const FINISHES = {
-  floor: [
-    { name: 'Oak', color: '#c8a16a', tex: 'wood', price: 9 }, { name: 'Walnut', color: '#6b4a2b', tex: 'wood', price: 13 },
-    { name: 'Gray Tile', color: '#9aa0a6', tex: 'tile', price: 7 }, { name: 'White Tile', color: '#e6e6e3', tex: 'tile', price: 7 },
-    { name: 'Slate', color: '#4a4f55', tex: 'stone', price: 11 },
-  ],
-  walls: [
-    { name: 'White', color: '#f4f1ec', tex: 'solid', price: 2 }, { name: 'Greige', color: '#cfc7b8', tex: 'solid', price: 2 },
-    { name: 'Soft Blue', color: '#b9c7d6', tex: 'solid', price: 2.5 }, { name: 'Sage', color: '#b5c2a8', tex: 'solid', price: 2.5 },
-    { name: 'Charcoal', color: '#3c3f44', tex: 'solid', price: 3 },
-  ],
-  cabinet: [
-    { name: 'White', color: '#eceae4', tex: 'solid', price: 220 }, { name: 'Light Gray', color: '#b9bbbd', tex: 'solid', price: 240 },
-    { name: 'Navy', color: '#33415c', tex: 'solid', price: 300 }, { name: 'Walnut', color: '#6b4a2b', tex: 'wood', price: 420 },
-    { name: 'Forest', color: '#33523f', tex: 'solid', price: 320 },
-  ],
-  counter: [
-    { name: 'White Quartz', color: '#ecebe6', tex: 'stone', price: 65 }, { name: 'Black Granite', color: '#2b2b2e', tex: 'stone', price: 60 },
-    { name: 'Butcher Block', color: '#b98b53', tex: 'wood', price: 45 }, { name: 'Carrara', color: '#dcdad3', tex: 'stone', price: 80 },
-  ],
-} as const
-type Cat = keyof typeof FINISHES
+type Cat = FinishCat
 
 const FIX3D: Record<string, { h: number; y: number; cat: Cat | 'appliance' | 'porcelain' }> = {
   base: { h: 3, y: 0, cat: 'cabinet' }, island: { h: 3, y: 0, cat: 'cabinet' },
@@ -98,6 +74,9 @@ export default function FloorPlan3D({ plan, wallThick = 0.5, finishes, onFinishe
   const deleteScheme = (idx: number) => onFinishesChange?.({ ...f0, schemes: schemes.filter((_, i) => i !== idx) })
 
   const [ceiling, setCeiling] = useState(false)
+  const [prices, setPrices] = useState<FinishPrices>(() => loadPriceOverrides())
+  const [editPrices, setEditPrices] = useState(false)
+  const setPrice = (cat: Cat, idx: number, v: number) => setPrices(p => { const n = { ...p, [`${cat}:${idx}`]: v }; savePriceOverrides(n); return n })
   const color = (c: Cat) => FINISHES[c][pick[c] ?? 0].color
 
   const { walls, openings, fixtures, center, span, bw, bh } = useMemo(() => {
@@ -110,21 +89,8 @@ export default function FloorPlan3D({ plan, wallThick = 0.5, finishes, onFinishe
     return { walls: ws, openings: plan.openings || [], fixtures: plan.fixtures || [], center: { x: cx, z: cz }, span: Math.max(x1 - x0, z1 - z0, 10), bw: x1 - x0, bh: z1 - z0 }
   }, [plan])
 
-  // Quantities → live finish cost (rough installed pricing for the estimate).
-  const cost = useMemo(() => {
-    const rooms = plan.rooms || []
-    let floorArea = rooms.reduce((s, r) => s + (r.w || 0) * (r.h || 0), 0)
-    if (floorArea < 1) floorArea = Math.max(0, bw * bh)
-    const wallArea = (plan.walls || []).reduce((s, w) => s + Math.hypot(w.b.x - w.a.x, w.b.y - w.a.y) * (w.h ?? WALL_H), 0)
-    const fx = plan.fixtures || []
-    const counterArea = fx.filter(f => f.kind === 'counter' || f.kind === 'island').reduce((s, f) => s + f.w * f.h, 0)
-    const cabLinFt = fx.filter(f => f.kind === 'base' || f.kind === 'upper' || f.kind === 'island').reduce((s, f) => s + Math.max(f.w, f.h), 0)
-    const fl = floorArea * FINISHES.floor[pick.floor ?? 0].price
-    const wl = wallArea * FINISHES.walls[pick.walls ?? 0].price
-    const ct = counterArea * FINISHES.counter[pick.counter ?? 0].price
-    const cb = cabLinFt * FINISHES.cabinet[pick.cabinet ?? 0].price
-    return { fl, wl, ct, cb, total: fl + wl + ct + cb, floorArea, wallArea, counterArea, cabLinFt }
-  }, [plan, pick, bw, bh])
+  // Quantities → live finish cost (shared with the estimate page).
+  const cost = useMemo(() => computeFinishCost(plan, pick, prices), [plan, pick, prices])
 
   // textures for the active finishes
   const tex = useMemo(() => {
@@ -258,24 +224,42 @@ export default function FloorPlan3D({ plan, wallThick = 0.5, finishes, onFinishe
         </div>
 
         <aside className="w-64 flex-shrink-0 bg-gray-800 border-l border-gray-700 overflow-y-auto p-4 space-y-4">
-          <div className="flex items-center justify-between">
-            <p className="text-xs text-gray-400">Drag to orbit · scroll to zoom</p>
+          <div className="flex items-center justify-between gap-2">
             <label className="flex items-center gap-1.5 text-[11px] text-gray-300 cursor-pointer">
               <input type="checkbox" checked={ceiling} onChange={e => setCeiling(e.target.checked)} /> Ceiling
             </label>
+            <button onClick={() => setEditPrices(v => !v)} className={`flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded-lg border ${editPrices ? 'border-amber-400 text-amber-300' : 'border-gray-600 text-gray-300 hover:bg-gray-700'}`}>
+              <DollarSign size={11} /> {editPrices ? 'Done' : 'Edit prices'}
+            </button>
           </div>
+          {editPrices && <p className="text-[10px] text-amber-300/80">Set your real supplier prices ({'floor/walls/counter'} $/sf, cabinets $/lf). Saved on this device.</p>}
           {(Object.keys(FINISHES) as Cat[]).map(cat => (
             <div key={cat}>
               <h3 className="text-[11px] font-bold uppercase tracking-wider text-gray-300 mb-1.5 capitalize">{cat === 'counter' ? 'Countertops' : cat}</h3>
-              <div className="grid grid-cols-2 gap-1.5">
-                {FINISHES[cat].map((f, i) => (
-                  <button key={f.name} onClick={() => setPickCat(cat, i)}
-                    className={`flex items-center gap-2 px-2 py-1.5 rounded-lg border text-[11px] text-left transition-colors ${pick[cat] === i ? 'border-amber-400 bg-gray-700 text-white' : 'border-gray-600 text-gray-300 hover:bg-gray-700'}`}>
-                    <span className="w-4 h-4 rounded border border-black/20 flex-shrink-0" style={{ background: f.color }} />
-                    <span className="truncate">{f.name}</span>
-                  </button>
-                ))}
-              </div>
+              {editPrices ? (
+                <div className="space-y-1">
+                  {FINISHES[cat].map((f, i) => (
+                    <div key={f.name} className="flex items-center gap-2 text-[11px] text-gray-300">
+                      <span className="w-3.5 h-3.5 rounded border border-black/20 flex-shrink-0" style={{ background: f.color }} />
+                      <span className="flex-1 truncate">{f.name}</span>
+                      <span className="text-gray-500">$</span>
+                      <input type="number" min={0} step={0.5} value={priceOf(cat, i, prices)} onChange={e => setPrice(cat, i, Number(e.target.value) || 0)}
+                        className="w-16 bg-gray-900 border border-gray-600 rounded px-1.5 py-0.5 text-right text-gray-100 focus:outline-none focus:border-amber-400" />
+                      <span className="text-gray-500 w-6">{priceUnit[cat]}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-1.5">
+                  {FINISHES[cat].map((f, i) => (
+                    <button key={f.name} onClick={() => setPickCat(cat, i)}
+                      className={`flex items-center gap-2 px-2 py-1.5 rounded-lg border text-[11px] text-left transition-colors ${pick[cat] === i ? 'border-amber-400 bg-gray-700 text-white' : 'border-gray-600 text-gray-300 hover:bg-gray-700'}`}>
+                      <span className="w-4 h-4 rounded border border-black/20 flex-shrink-0" style={{ background: f.color }} />
+                      <span className="truncate">{f.name}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           ))}
 
