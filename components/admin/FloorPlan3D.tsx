@@ -3,11 +3,11 @@
 // Extrudes the 2D plan into a 3D model with procedural material textures (wood /
 // tile / stone), a ceiling toggle, door/window openings, and 3D stairs + railings.
 // Loaded client-only (no SSR) from the Floor Planner.
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Canvas } from '@react-three/fiber'
 import { OrbitControls } from '@react-three/drei'
 import * as THREE from 'three'
-import { X, Save, Trash2, DollarSign } from 'lucide-react'
+import { X, Save, Trash2, DollarSign, Upload } from 'lucide-react'
 import type { PlanDoc, Finishes, FinishPick } from './FloorPlanner'
 import { FINISHES, priceOf, priceUnit, computeFinishCost, loadPriceOverrides, fetchPrices, persistPrices, type FinishCat, type Tex, type FinishPrices } from '@/lib/finishes'
 
@@ -78,7 +78,39 @@ export default function FloorPlan3D({ plan, wallThick = 0.5, finishes, onFinishe
   const [editPrices, setEditPrices] = useState(false)
   useEffect(() => { fetchPrices().then(setPrices).catch(() => {}) }, [])   // pull business-wide prices
   const setPrice = (cat: Cat, idx: number, v: number) => setPrices(p => { const n = { ...p, [`${cat}:${idx}`]: v }; persistPrices(n); return n })
-  const color = (c: Cat) => FINISHES[c][pick[c] ?? 0].color
+
+  // Combined options per surface = preset finishes + uploaded sample photos.
+  const samples = f0.samples || {}
+  const optionsFor = (c: Cat): any[] => [...FINISHES[c], ...((samples[c] || []).map(s => ({ name: s.name, color: '#ffffff', tex: 'image', url: s.url })))]
+  const optOf = (c: Cat) => optionsFor(c)[pick[c] ?? 0] || FINISHES[c][0]
+  const color = (c: Cat) => optOf(c).color || '#cccccc'
+
+  // Upload a sample photo: downscale to a 512px data URL, store on the plan, select it.
+  const fileRef = useRef<HTMLInputElement>(null)
+  const uploadCat = useRef<Cat>('floor')
+  function uploadSample(cat: Cat, file: File) {
+    const img = new Image()
+    img.onload = () => {
+      const MAX = 512, k = Math.min(1, MAX / Math.max(img.width, img.height))
+      const w = Math.round(img.width * k), h = Math.round(img.height * k)
+      const cv = document.createElement('canvas'); cv.width = w; cv.height = h
+      cv.getContext('2d')?.drawImage(img, 0, 0, w, h)
+      const url = cv.toDataURL('image/jpeg', 0.85)
+      const id = Math.random().toString(36).slice(2, 9)
+      const name = file.name.replace(/\.[^.]+$/, '').slice(0, 18) || 'Sample'
+      const cur = f0.samples || {}
+      const next = { ...cur, [cat]: [...(cur[cat] || []), { id, name, url }] }
+      const newIdx = FINISHES[cat].length + next[cat].length - 1
+      onFinishesChange?.({ ...f0, samples: next, pick: { ...pick, [cat]: newIdx } })
+      URL.revokeObjectURL(img.src)
+    }
+    img.src = URL.createObjectURL(file)
+  }
+  function removeSample(cat: Cat, sid: string) {
+    const cur = f0.samples || {}
+    const next = { ...cur, [cat]: (cur[cat] || []).filter(s => s.id !== sid) }
+    onFinishesChange?.({ ...f0, samples: next, pick: { ...pick, [cat]: 0 } })
+  }
 
   const { walls, openings, fixtures, center, span, bw, bh } = useMemo(() => {
     const ws = plan.walls || []
@@ -93,15 +125,24 @@ export default function FloorPlan3D({ plan, wallThick = 0.5, finishes, onFinishe
   // Quantities → live finish cost (shared with the estimate page).
   const cost = useMemo(() => computeFinishCost(plan, pick, prices), [plan, pick, prices])
 
-  // textures for the active finishes
+  // textures for the active finishes (uploaded sample image, or procedural)
   const tex = useMemo(() => {
-    const f = FINISHES.floor[pick.floor], c = FINISHES.cabinet[pick.cabinet], ct = FINISHES.counter[pick.counter], w = FINISHES.walls[pick.walls]
-    const floorTex = makeTexture(f.tex, f.color); if (floorTex) floorTex.repeat.set(Math.max(2, (span + 6) / 6), Math.max(2, (span + 6) / 6))
-    const cabTex = makeTexture(c.tex, c.color); if (cabTex) cabTex.repeat.set(2, 1)
-    const counterTex = makeTexture(ct.tex, ct.color); if (counterTex) counterTex.repeat.set(2, 2)
-    const wallTex = makeTexture(w.tex, w.color)
-    return { floorTex, cabTex, counterTex, wallTex }
-  }, [pick, span])
+    const mk = (cat: Cat, rx: number, ry: number): THREE.Texture | null => {
+      const opt = optOf(cat)
+      let t: THREE.Texture | null = null
+      if (opt?.url) { t = new THREE.TextureLoader().load(opt.url) }
+      else { t = makeTexture(opt?.tex || 'solid', opt?.color || '#cccccc') }
+      if (t) { t.wrapS = t.wrapT = THREE.RepeatWrapping; t.colorSpace = THREE.SRGBColorSpace; t.repeat.set(rx, ry) }
+      return t
+    }
+    return {
+      floorTex: mk('floor', Math.max(2, (span + 6) / 6), Math.max(2, (span + 6) / 6)),
+      cabTex: mk('cabinet', 2, 1),
+      counterTex: mk('counter', 2, 2),
+      wallTex: mk('walls', Math.max(2, span / 8), 1),
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pick, samples, span])
 
   type WBox = { key: string; pos: [number, number, number]; rot: number; size: [number, number, number] }
   const wallBoxes = useMemo(() => {
@@ -233,36 +274,63 @@ export default function FloorPlan3D({ plan, wallThick = 0.5, finishes, onFinishe
               <DollarSign size={11} /> {editPrices ? 'Done' : 'Edit prices'}
             </button>
           </div>
-          {editPrices && <p className="text-[10px] text-amber-300/80">Set your real supplier prices ({'floor/walls/counter'} $/sf, cabinets $/lf). Saved on this device.</p>}
-          {(Object.keys(FINISHES) as Cat[]).map(cat => (
-            <div key={cat}>
-              <h3 className="text-[11px] font-bold uppercase tracking-wider text-gray-300 mb-1.5 capitalize">{cat === 'counter' ? 'Countertops' : cat}</h3>
-              {editPrices ? (
-                <div className="space-y-1">
-                  {FINISHES[cat].map((f, i) => (
-                    <div key={f.name} className="flex items-center gap-2 text-[11px] text-gray-300">
-                      <span className="w-3.5 h-3.5 rounded border border-black/20 flex-shrink-0" style={{ background: f.color }} />
-                      <span className="flex-1 truncate">{f.name}</span>
-                      <span className="text-gray-500">$</span>
-                      <input type="number" min={0} step={0.5} value={priceOf(cat, i, prices)} onChange={e => setPrice(cat, i, Number(e.target.value) || 0)}
-                        className="w-16 bg-gray-900 border border-gray-600 rounded px-1.5 py-0.5 text-right text-gray-100 focus:outline-none focus:border-amber-400" />
-                      <span className="text-gray-500 w-6">{priceUnit[cat]}</span>
-                    </div>
-                  ))}
+          {editPrices && <p className="text-[10px] text-amber-300/80">Set your real supplier prices ({'floor/walls/counter'} $/sf, cabinets $/lf). Saved business-wide.</p>}
+          <input ref={fileRef} type="file" accept="image/*" className="hidden"
+            onChange={e => { const f = e.target.files?.[0]; if (f) uploadSample(uploadCat.current, f); if (fileRef.current) fileRef.current.value = '' }} />
+          {(Object.keys(FINISHES) as Cat[]).map(cat => {
+            const opts = optionsFor(cat)
+            const sampleCount = (samples[cat] || []).length
+            return (
+              <div key={cat}>
+                <div className="flex items-center justify-between mb-1.5">
+                  <h3 className="text-[11px] font-bold uppercase tracking-wider text-gray-300 capitalize">{cat === 'counter' ? 'Countertops' : cat}</h3>
+                  {!editPrices && (
+                    <button onClick={() => { uploadCat.current = cat; fileRef.current?.click() }}
+                      className="flex items-center gap-0.5 text-[10px] text-teal-300 hover:text-teal-200 font-semibold"><Upload size={10} /> Sample</button>
+                  )}
                 </div>
-              ) : (
-                <div className="grid grid-cols-2 gap-1.5">
-                  {FINISHES[cat].map((f, i) => (
-                    <button key={f.name} onClick={() => setPickCat(cat, i)}
-                      className={`flex items-center gap-2 px-2 py-1.5 rounded-lg border text-[11px] text-left transition-colors ${pick[cat] === i ? 'border-amber-400 bg-gray-700 text-white' : 'border-gray-600 text-gray-300 hover:bg-gray-700'}`}>
-                      <span className="w-4 h-4 rounded border border-black/20 flex-shrink-0" style={{ background: f.color }} />
-                      <span className="truncate">{f.name}</span>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          ))}
+                {editPrices ? (
+                  <div className="space-y-1">
+                    {FINISHES[cat].map((f, i) => (
+                      <div key={f.name} className="flex items-center gap-2 text-[11px] text-gray-300">
+                        <span className="w-3.5 h-3.5 rounded border border-black/20 flex-shrink-0" style={{ background: f.color }} />
+                        <span className="flex-1 truncate">{f.name}</span>
+                        <span className="text-gray-500">$</span>
+                        <input type="number" min={0} step={0.5} value={priceOf(cat, i, prices)} onChange={e => setPrice(cat, i, Number(e.target.value) || 0)}
+                          className="w-16 bg-gray-900 border border-gray-600 rounded px-1.5 py-0.5 text-right text-gray-100 focus:outline-none focus:border-amber-400" />
+                        <span className="text-gray-500 w-6">{priceUnit[cat]}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {opts.map((f, i) => {
+                      const isSample = i >= FINISHES[cat].length
+                      const sid = isSample ? (samples[cat] || [])[i - FINISHES[cat].length]?.id : null
+                      return (
+                        <div key={i} className="relative group">
+                          <button onClick={() => setPickCat(cat, i)}
+                            className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg border text-[11px] text-left transition-colors ${pick[cat] === i ? 'border-amber-400 bg-gray-700 text-white' : 'border-gray-600 text-gray-300 hover:bg-gray-700'}`}>
+                            {f.url
+                              ? <img src={f.url} alt="" className="w-4 h-4 rounded object-cover flex-shrink-0 border border-black/20" />
+                              : <span className="w-4 h-4 rounded border border-black/20 flex-shrink-0" style={{ background: f.color }} />}
+                            <span className="truncate">{f.name}</span>
+                          </button>
+                          {isSample && sid && (
+                            <button onClick={() => removeSample(cat, sid)} title="Remove sample"
+                              className="absolute -top-1 -right-1 bg-gray-900 border border-gray-600 rounded-full p-0.5 text-gray-400 hover:text-red-400 opacity-0 group-hover:opacity-100">
+                              <X size={9} />
+                            </button>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+                {sampleCount === 0 && !editPrices && <p className="text-[9px] text-gray-500 mt-1">Upload a photo of the actual {cat === 'counter' ? 'countertop' : cat} to preview it.</p>}
+              </div>
+            )
+          })}
 
           {/* Live finish cost estimate */}
           <div className="border-t border-gray-700 pt-3">

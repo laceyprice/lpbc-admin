@@ -34,7 +34,11 @@ export const priceUnit: Record<FinishCat, string> = { floor: '/sf', walls: '/sf'
 export function priceOf(cat: FinishCat, idx: number, overrides?: FinishPrices): number {
   const o = overrides?.[`${cat}:${idx}`]
   if (typeof o === 'number' && o >= 0) return o
-  return (FINISHES[cat][idx] as { price: number }).price
+  const preset = FINISHES[cat][idx] as { price: number } | undefined
+  if (preset) return preset.price
+  // Uploaded sample (no preset price) — default to the category's median rate.
+  const ps = FINISHES[cat].map(f => (f as { price: number }).price)
+  return ps[Math.floor(ps.length / 2)] || 0
 }
 
 export type FinishCost = {
