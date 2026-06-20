@@ -1,21 +1,8 @@
 'use client'
-import { useEffect } from 'react'
-
-// Auto-applies a new deploy: when an updated service worker takes control,
-// reload once so the user gets the latest build without a manual hard-refresh.
-// Guards against the very first install (no prior controller) and reload loops.
+// Intentionally a no-op. We previously force-reloaded the page when a new service
+// worker took over, but that interrupted active editing (e.g. wiped an in-progress
+// wall chain) during frequent deploys. With skipWaiting enabled, a new version is
+// already picked up on the user's next normal refresh — no forced reload needed.
 export default function SwUpdater() {
-  useEffect(() => {
-    if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return
-    const hadController = !!navigator.serviceWorker.controller
-    let reloading = false
-    const onChange = () => {
-      if (reloading || !hadController) return
-      reloading = true
-      window.location.reload()
-    }
-    navigator.serviceWorker.addEventListener('controllerchange', onChange)
-    return () => navigator.serviceWorker.removeEventListener('controllerchange', onChange)
-  }, [])
   return null
 }

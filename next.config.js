@@ -6,11 +6,10 @@ const withPWA = require('@ducanh2912/next-pwa').default({
   reloadOnOnline: true,
   workboxOptions: {
     disableDevLogs: true,
-    // New service worker takes over immediately on deploy (no waiting), so a
-    // normal refresh — paired with the SwUpdater reload below — picks up the
-    // latest build without users having to hard-refresh / clear cache.
+    // skipWaiting lets a new build apply on the user's next normal refresh (no
+    // hard-refresh needed). We intentionally do NOT auto-reload or clientsClaim —
+    // that would hijack/reload an active editing session during a deploy.
     skipWaiting: true,
-    clientsClaim: true,
   },
 })
 
