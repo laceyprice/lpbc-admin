@@ -203,9 +203,12 @@ export default function FloorPlan3D({ plan, wallThick = 0.5, finishes, onFinishe
         <div className="flex-1 min-w-0">
           <Canvas shadows camera={{ position: [cam, cam * 0.9, cam], fov: 45 }}>
             <color attach="background" args={['#1f2937']} />
-            <ambientLight intensity={0.6} />
-            <hemisphereLight intensity={0.4} groundColor="#444" />
-            <directionalLight position={[span, span * 1.5, span * 0.6]} intensity={1.1} castShadow shadow-mapSize={[1024, 1024]} />
+            <ambientLight intensity={0.55} />
+            <hemisphereLight intensity={0.45} groundColor="#3a3a3a" />
+            <directionalLight position={[span, span * 1.6, span * 0.7]} intensity={1.2} castShadow
+              shadow-mapSize={[2048, 2048]} shadow-bias={-0.0004}
+              shadow-camera-left={-span} shadow-camera-right={span} shadow-camera-top={span} shadow-camera-bottom={-span}
+              shadow-camera-near={0.5} shadow-camera-far={span * 4} />
             <OrbitControls target={[0, 1.5, 0]} maxPolarAngle={Math.PI / 2.05} />
 
             {/* floor */}
@@ -275,6 +278,39 @@ export default function FloorPlan3D({ plan, wallThick = 0.5, finishes, onFinishe
                   <boxGeometry args={[f.w, spec.h, f.h]} />
                   <meshStandardMaterial map={mTex || undefined} color={mTex ? '#ffffff' : col} roughness={rough} metalness={spec.cat === 'appliance' ? 0.6 : 0} />
                 </mesh>
+              )
+            })}
+
+            {/* door slabs (swung open) + window glass */}
+            {openings.map(o => {
+              const w = walls.find(ww => ww.id === o.wallId); if (!w) return null
+              const ax = w.a.x - center.x, az = w.a.y - center.z, bx = w.b.x - center.x, bz = w.b.y - center.z
+              const len = Math.hypot(bx - ax, bz - az); if (len < 0.1) return null
+              const ux = (bx - ax) / len, uz = (bz - az) / len
+              const width = Math.min(o.width, len - 0.1)
+              const cx = ax + ux * (o.t * len), cz = az + uz * (o.t * len)
+              if (o.kind === 'window') {
+                const SILL = 2.5, TOP = 6
+                return (
+                  <mesh key={o.id} position={[cx, (SILL + TOP) / 2, cz]} rotation={[0, -Math.atan2(uz, ux), 0]}>
+                    <boxGeometry args={[width, TOP - SILL, 0.06]} />
+                    <meshStandardMaterial color="#bcd6e6" transparent opacity={0.32} roughness={0.05} metalness={0.1} />
+                  </mesh>
+                )
+              }
+              // door / pocket slab swung open along the swing side, pivoting at the hinge jamb
+              const DOOR_TOP = 6.75, half = width / 2
+              const hSign = o.hinge ? 1 : -1
+              const hx = cx + ux * half * hSign, hz = cz + uz * half * hSign
+              const sign = o.flip ? -1 : 1
+              const nx = -uz * sign, nz = ux * sign
+              return (
+                <group key={o.id} position={[hx, 0, hz]} rotation={[0, -Math.atan2(nz, nx), 0]}>
+                  <mesh position={[half, DOOR_TOP / 2, 0]} castShadow>
+                    <boxGeometry args={[width, DOOR_TOP, 0.15]} />
+                    <meshStandardMaterial color="#b0875a" roughness={0.6} />
+                  </mesh>
+                </group>
               )
             })}
           </Canvas>
