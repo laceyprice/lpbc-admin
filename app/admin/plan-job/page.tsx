@@ -455,19 +455,25 @@ export default function PlanJobPage() {
     await loadPlansList()
   }
 
-  // Pull the floor plan out of another saved plan into the one you're editing.
-  async function copyFloorplanFrom(p: JobPlanSummary) {
-    if (!planId) { alert('Open or save the destination plan first, then copy the floor plan into it.'); return }
-    if (p.id === planId) return
-    if (!confirm(`Copy the floor plan from "${p.title}" into the plan you're editing ("${title || 'this plan'}")? It replaces the current floor plan.`)) return
+  // Copy this plan's floor plan INTO another chosen plan (writes it directly).
+  async function copyFloorplanToPlan(source: JobPlanSummary, destId: string) {
+    if (!destId || destId === source.id) return
     try {
-      const res = await fetch(`/api/job-plans?id=${p.id}`)
-      const d = await res.json()
-      const fp = d?.design?.floorplan
-      if (!fp || !(Array.isArray(fp.walls) && fp.walls.length)) { alert('That plan has no floor plan to copy.'); return }
-      setDesign(prev => ({ ...prev, floorplan: fp }))
-      markDirty()
-      alert('Floor plan copied in. Open Design Studio → Floor Plan to see it, then click Save Changes to keep it.')
+      const sRes = await fetch(`/api/job-plans?id=${source.id}`)
+      const s = await sRes.json()
+      const fp = s?.design?.floorplan
+      if (!fp || !(Array.isArray(fp.walls) && fp.walls.length)) { alert(`"${source.title}" has no floor plan to copy.`); return }
+      const dest = savedPlans.find(p => p.id === destId)
+      if (!confirm(`Copy the floor plan from "${source.title}" into "${dest?.title || 'the selected plan'}"? It replaces that plan's floor plan.`)) return
+      const dRes = await fetch(`/api/job-plans?id=${destId}`)
+      const d = await dRes.json()
+      const destDesign = (d?.design && typeof d.design === 'object') ? d.design : {}
+      const merged = { ...destDesign, floorplan: fp }
+      const pRes = await fetch('/api/job-plans', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: destId, design: merged }) })
+      if (!pRes.ok) { alert('Could not copy — the save failed.'); return }
+      if (planId === destId) setDesign(merged)   // keep the open editor in sync
+      alert(`Floor plan copied into "${dest?.title || 'the plan'}".`)
+      await loadPlansList()
     } catch (e: any) {
       alert('Could not copy floor plan: ' + (e?.message || 'error'))
     }
@@ -1001,7 +1007,14 @@ export default function PlanJobPage() {
                     <option value="">— Assign project —</option>
                     {worksiteOptions.map(w => <option key={w.id} value={w.id}>{w.name ? `${w.name} — ` : ''}{w.address}{w.city ? `, ${w.city}` : ''}</option>)}
                   </select>
-                  <button onClick={() => copyFloorplanFrom(p)} disabled={p.id === planId} title="Copy this plan's floor plan into the plan you're editing" className="text-gray-300 hover:text-teal-600 p-1 disabled:opacity-30"><Copy size={13} /></button>
+                  {savedPlans.length > 1 && (
+                    <select value="" onChange={e => { const v = e.target.value; e.currentTarget.value = ''; if (v) copyFloorplanToPlan(p, v) }}
+                      title="Copy this plan's floor plan into another plan"
+                      className="text-[11px] border border-gray-200 rounded-lg px-1.5 py-1 bg-white max-w-[120px] text-gray-600 focus:outline-none focus:ring-1 focus:ring-teal-400">
+                      <option value="">Copy plan →</option>
+                      {savedPlans.filter(x => x.id !== p.id).map(x => <option key={x.id} value={x.id}>{x.title}</option>)}
+                    </select>
+                  )}
                   <button onClick={() => toggleArchive(p)} title={p.is_archived ? 'Unarchive' : 'Archive'} className="text-gray-300 hover:text-blue-600 p-1"><Archive size={13} /></button>
                   <button onClick={() => deletePlan(p.id, p.title)} title="Delete" className="text-gray-300 hover:text-red-500 p-1"><Trash2 size={13} /></button>
                 </div>
