@@ -455,6 +455,25 @@ export default function PlanJobPage() {
     await loadPlansList()
   }
 
+  // Copy the floor plan OPEN IN THE EDITOR into another chosen plan.
+  async function copyCurrentFloorplanTo(destId: string) {
+    const fp = (design as any).floorplan
+    if (!fp || !(Array.isArray(fp.walls) && fp.walls.length)) { alert('This plan has no floor plan yet — build one in Design Studio → Floor Plan first.'); return }
+    if (!destId) return
+    const dest = savedPlans.find(p => p.id === destId)
+    if (!confirm(`Copy this floor plan into "${dest?.title || 'the selected plan'}"? It replaces that plan's floor plan.`)) return
+    try {
+      const dRes = await fetch(`/api/job-plans?id=${destId}`)
+      const d = await dRes.json()
+      const destDesign = (d?.design && typeof d.design === 'object') ? d.design : {}
+      const merged = { ...destDesign, floorplan: fp }
+      const pRes = await fetch('/api/job-plans', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: destId, design: merged }) })
+      if (!pRes.ok) { alert('Could not copy — the save failed.'); return }
+      alert(`Floor plan copied into "${dest?.title || 'the plan'}".`)
+      await loadPlansList()
+    } catch (e: any) { alert('Could not copy floor plan: ' + (e?.message || 'error')) }
+  }
+
   // Copy this plan's floor plan INTO another chosen plan (writes it directly).
   async function copyFloorplanToPlan(source: JobPlanSummary, destId: string) {
     if (!destId || destId === source.id) return
@@ -1041,6 +1060,14 @@ export default function PlanJobPage() {
           )}
           {savedAt && !isDirty && !saving && <span>· Saved {savedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>}
         </div>
+        {(design as any).floorplan?.walls?.length > 0 && savedPlans.filter(p => p.id !== planId).length > 0 && (
+          <select value="" onChange={e => { const v = e.target.value; e.currentTarget.value = ''; if (v) copyCurrentFloorplanTo(v) }}
+            title="Copy this plan's floor plan into another project"
+            className="text-xs border border-teal-300 text-teal-700 rounded-xl px-2 py-2 bg-teal-50 max-w-[180px] focus:outline-none focus:ring-1 focus:ring-teal-400">
+            <option value="">⧉ Copy floor plan to…</option>
+            {savedPlans.filter(p => p.id !== planId).map(p => <option key={p.id} value={p.id}>{p.title}</option>)}
+          </select>
+        )}
         <button onClick={save} disabled={saving || (!description && !measurements && attachments.length === 0)}
           className="flex items-center gap-1.5 text-sm font-bold px-4 py-2 rounded-xl border border-gray-200 hover:bg-gray-50 disabled:opacity-50">
           {saving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
