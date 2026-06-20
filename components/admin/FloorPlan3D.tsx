@@ -13,6 +13,8 @@ import { FINISHES, priceOf, priceUnit, computeFinishCost, loadPriceOverrides, fe
 
 const WALL_H = 8
 type Cat = FinishCat
+// default real-world feet that one uploaded sample image represents, per surface
+const SAMPLE_SCALE: Record<string, number> = { floor: 3, walls: 4, cabinet: 2, counter: 6 }
 
 const FIX3D: Record<string, { h: number; y: number; cat: Cat | 'appliance' | 'porcelain' }> = {
   base: { h: 3, y: 0, cat: 'cabinet' }, island: { h: 3, y: 0, cat: 'cabinet' },
@@ -99,7 +101,7 @@ export default function FloorPlan3D({ plan, wallThick = 0.5, finishes, onFinishe
       const id = Math.random().toString(36).slice(2, 9)
       const name = file.name.replace(/\.[^.]+$/, '').slice(0, 18) || 'Sample'
       const cur = f0.samples || {}
-      const next = { ...cur, [cat]: [...(cur[cat] || []), { id, name, url }] }
+      const next = { ...cur, [cat]: [...(cur[cat] || []), { id, name, url, scale: SAMPLE_SCALE[cat] || 3 }] }
       const newIdx = FINISHES[cat].length + next[cat].length - 1
       onFinishesChange?.({ ...f0, samples: next, pick: { ...pick, [cat]: newIdx } })
       URL.revokeObjectURL(img.src)
@@ -111,6 +113,13 @@ export default function FloorPlan3D({ plan, wallThick = 0.5, finishes, onFinishe
     const next = { ...cur, [cat]: (cur[cat] || []).filter(s => s.id !== sid) }
     onFinishesChange?.({ ...f0, samples: next, pick: { ...pick, [cat]: 0 } })
   }
+  const setSampleScale = (cat: Cat, sid: string, scale: number) => {
+    const cur = f0.samples || {}
+    const next = { ...cur, [cat]: (cur[cat] || []).map(s => s.id === sid ? { ...s, scale } : s) }
+    onFinishesChange?.({ ...f0, samples: next })
+  }
+  // the uploaded sample object that is currently selected for a surface (or null)
+  const activeSample = (cat: Cat) => { const idx = pick[cat] ?? 0; return idx >= FINISHES[cat].length ? (samples[cat] || [])[idx - FINISHES[cat].length] : null }
 
   const { walls, openings, fixtures, center, span, bw, bh } = useMemo(() => {
     const ws = plan.walls || []
@@ -125,22 +134,28 @@ export default function FloorPlan3D({ plan, wallThick = 0.5, finishes, onFinishe
   // Quantities → live finish cost (shared with the estimate page).
   const cost = useMemo(() => computeFinishCost(plan, pick, prices), [plan, pick, prices])
 
-  // textures for the active finishes (uploaded sample image, or procedural)
+  // textures for the active finishes (uploaded sample image at its tile size, or procedural)
   const tex = useMemo(() => {
-    const mk = (cat: Cat, rx: number, ry: number): THREE.Texture | null => {
+    // reference dimension (ft) the repeat is computed against, per surface
+    const REF: Record<string, number> = { floor: span + 6, walls: span, counter: 8, cabinet: 6 }
+    const PROC: Record<string, [number, number]> = {
+      floor: [Math.max(2, (span + 6) / 6), Math.max(2, (span + 6) / 6)], cabinet: [2, 1], counter: [2, 2], walls: [Math.max(2, span / 8), 1],
+    }
+    const mk = (cat: Cat): THREE.Texture | null => {
       const opt = optOf(cat)
-      let t: THREE.Texture | null = null
-      if (opt?.url) { t = new THREE.TextureLoader().load(opt.url) }
-      else { t = makeTexture(opt?.tex || 'solid', opt?.color || '#cccccc') }
-      if (t) { t.wrapS = t.wrapT = THREE.RepeatWrapping; t.colorSpace = THREE.SRGBColorSpace; t.repeat.set(rx, ry) }
+      if (opt?.url) {
+        const t = new THREE.TextureLoader().load(opt.url)
+        t.wrapS = t.wrapT = THREE.RepeatWrapping; t.colorSpace = THREE.SRGBColorSpace
+        const s = activeSample(cat); const scale = (s?.scale && s.scale > 0) ? s.scale : (SAMPLE_SCALE[cat] || 3)
+        const r = Math.max(0.25, (REF[cat] || 6) / scale)
+        t.repeat.set(r, cat === 'walls' ? Math.max(0.25, WALL_H / scale) : r)
+        return t
+      }
+      const t = makeTexture(opt?.tex || 'solid', opt?.color || '#cccccc')
+      if (t) t.repeat.set(PROC[cat][0], PROC[cat][1])
       return t
     }
-    return {
-      floorTex: mk('floor', Math.max(2, (span + 6) / 6), Math.max(2, (span + 6) / 6)),
-      cabTex: mk('cabinet', 2, 1),
-      counterTex: mk('counter', 2, 2),
-      wallTex: mk('walls', Math.max(2, span / 8), 1),
-    }
+    return { floorTex: mk('floor'), cabTex: mk('cabinet'), counterTex: mk('counter'), wallTex: mk('walls') }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pick, samples, span])
 
@@ -327,6 +342,18 @@ export default function FloorPlan3D({ plan, wallThick = 0.5, finishes, onFinishe
                     })}
                   </div>
                 )}
+                {/* tiling-scale slider for the selected uploaded sample */}
+                {!editPrices && (() => {
+                  const s = activeSample(cat); if (!s) return null
+                  const sc = (s.scale && s.scale > 0) ? s.scale : (SAMPLE_SCALE[cat] || 3)
+                  return (
+                    <div className="mt-1.5 flex items-center gap-2 text-[10px] text-gray-400">
+                      <span className="whitespace-nowrap">Tile size</span>
+                      <input type="range" min={0.25} max={12} step={0.25} value={sc} onChange={e => setSampleScale(cat, s.id, Number(e.target.value))} className="flex-1" />
+                      <span className="w-10 text-right tabular-nums text-gray-300">{sc < 2 ? `${Math.round(sc * 12)}"` : `${sc % 1 === 0 ? sc : sc.toFixed(1)} ft`}</span>
+                    </div>
+                  )
+                })()}
                 {sampleCount === 0 && !editPrices && <p className="text-[9px] text-gray-500 mt-1">Upload a photo of the actual {cat === 'counter' ? 'countertop' : cat} to preview it.</p>}
               </div>
             )

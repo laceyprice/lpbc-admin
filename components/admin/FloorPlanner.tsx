@@ -31,7 +31,7 @@ type Tool = 'select' | 'wall' | 'room' | 'door' | 'window' | 'dim' | 'fixture' |
 type Sel = { kind: 'wall' | 'opening' | 'room' | 'vertex' | 'label' | 'fixture' | 'dim'; id: string; vx?: Pt } | null
 
 export type FinishPick = { floor: number; walls: number; cabinet: number; counter: number }
-export type FinishSample = { id: string; name: string; url: string }   // url = downscaled data URL
+export type FinishSample = { id: string; name: string; url: string; scale?: number }   // url = data URL; scale = ft per image tile
 export type Finishes = { pick: FinishPick; schemes?: { name: string; pick: FinishPick }[]; samples?: Record<string, FinishSample[]> }
 export type PlanDoc = { walls?: Wall[]; openings?: Opening[]; rooms?: Room[]; labels?: Label[]; fixtures?: Fixture[]; dims?: Dim[]; finishes?: Finishes }
 const DEFAULT_FINISHES: Finishes = { pick: { floor: 0, walls: 0, cabinet: 0, counter: 0 }, schemes: [] }
