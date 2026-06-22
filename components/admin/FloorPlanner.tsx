@@ -243,6 +243,7 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
   // transient interaction
   const [cursor, setCursor] = useState<Pt | null>(null)   // snapped world pt under pointer
   const wallChain = useRef<Pt | null>(null)               // current wall-chain anchor
+  const wallDown = useRef<Pt | null>(null)                // mousedown point (for drag-to-draw a wall)
   const [, force] = useState(0)
   const roomDrag = useRef<{ a: Pt } | null>(null)
   const [roomPreview, setRoomPreview] = useState<{ a: Pt; b: Pt } | null>(null)
@@ -326,15 +327,9 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
     if (tool === 'pan') { dragging.current = { kind: 'pan', from: w, panFrom: { ...pan } }; return }
 
     if (tool === 'wall') {
-      if (!wallChain.current) { wallChain.current = sp }
-      else {
-        const end = e.shiftKey ? snap(ortho(wallChain.current, sp)) : sp   // Shift = straight
-        if (dist(wallChain.current, end) > 0.01) {
-          checkpoint('wall')
-          setWalls(prev => [...prev, { id: uid(), a: wallChain.current!, b: end }])
-        }
-        wallChain.current = end
-      }
+      // Record the press point. On release we decide: a DRAG draws one wall;
+      // a CLICK (no movement) chains corners. Either way, walls finalize in onUp.
+      wallDown.current = sp
       force(n => n + 1)
       return
     }
@@ -395,7 +390,8 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
   function onMove(e: React.MouseEvent) {
     const w = evtWorld(e)
     let c = snapSmart(w)
-    if (tool === 'wall' && wallChain.current && e.shiftKey) c = snap(ortho(wallChain.current, c))
+    const wallAnchor = wallDown.current || wallChain.current
+    if (tool === 'wall' && wallAnchor && e.shiftKey) c = snap(ortho(wallAnchor, c))
     setCursor(c)
 
     const d = dragging.current
@@ -417,7 +413,31 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
     if (roomDrag.current) setRoomPreview({ a: roomDrag.current.a, b: snap(w) })
   }
 
-  function onUp() {
+  function onUp(e: React.MouseEvent) {
+    const leaving = e.type === 'mouseleave'
+    // Wall: finalize a drag (one wall) or a click (chain a corner). Snapping to
+    // existing endpoints connects walls automatically.
+    if (tool === 'wall' && wallDown.current) {
+      if (!leaving) {
+        let up = snapSmart(evtWorld(e))
+        if (e.shiftKey) up = snap(ortho(wallDown.current, up))
+        const dragged = dist(wallDown.current, up) > 0.4
+        if (dragged) {
+          checkpoint('wall')
+          setWalls(prev => [...prev, { id: uid(), a: wallDown.current!, b: up }])
+          wallChain.current = up
+        } else {
+          // a click: start a chain anchor, or close a segment to the chain anchor
+          if (wallChain.current && dist(wallChain.current, up) > 0.1) {
+            checkpoint('wall')
+            setWalls(prev => [...prev, { id: uid(), a: wallChain.current!, b: up }])
+          }
+          wallChain.current = up
+        }
+        force(n => n + 1)
+      }
+      wallDown.current = null
+    }
     if (roomDrag.current && roomPreview) {
       const { a, b } = roomPreview
       const x0 = Math.min(a.x, b.x), y0 = Math.min(a.y, b.y)
@@ -437,7 +457,7 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
     dragging.current = null
   }
 
-  function onDouble() { if (tool === 'wall') { wallChain.current = null; force(n => n + 1) } }
+  function onDouble() { if (tool === 'wall') { wallChain.current = null; wallDown.current = null; force(n => n + 1) } }
 
   function nearestWall(p: Pt) {
     let best: { wall: Wall; t: number; dist: number } | null = null
@@ -569,7 +589,7 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Delete' || e.key === 'Backspace') { if (sel) { e.preventDefault(); deleteSel() } }
-      if (e.key === 'Escape') { wallChain.current = null; dimStart.current = null; setSel(null); roomDrag.current = null; setRoomPreview(null); force(n => n + 1) }
+      if (e.key === 'Escape') { wallChain.current = null; wallDown.current = null; dimStart.current = null; setSel(null); roomDrag.current = null; setRoomPreview(null); force(n => n + 1) }
       if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')) { e.preventDefault(); undo() }
     }
     window.addEventListener('keydown', onKey)
@@ -823,7 +843,7 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
   }
 
   const ToolBtn = ({ t, icon: Icon, label }: { t: Tool; icon: any; label: string }) => (
-    <button title={label} onClick={() => { setTool(t); wallChain.current = null; setSel(null) }}
+    <button title={label} onClick={() => { setTool(t); wallChain.current = null; wallDown.current = null; setSel(null) }}
       className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-semibold transition-colors ${tool === t ? 'border-amber-300 bg-amber-50 text-amber-700' : 'border-gray-200 text-gray-500 hover:bg-gray-50'}`}>
       <Icon size={14} /> <span className="hidden sm:inline">{label}</span>
     </button>
@@ -930,7 +950,7 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
 
       <p className="text-xs text-gray-500">
         Grid = 1 ft, snapping to 3&quot;. <strong>Import sketch (AI)</strong> drafts an editable plan from a photo, then refine it:{' '}
-        <strong>Wall</strong> click-chains corners (double-click to finish), <strong>Room</strong> drags a rectangle,{' '}
+        <strong>Wall</strong>: drag to draw one wall, or click corner-to-corner (double-click to finish). <strong>Room</strong> drags a rectangle,{' '}
         <strong>Door/Window</strong> clicks a wall, <strong>Select</strong> drags corners, labels & fixtures (Delete removes).
       </p>
 
@@ -1216,12 +1236,13 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
             return <circle key={i} cx={p.x} cy={p.y} r={4} fill="#fff" stroke="#1f2937" strokeWidth={1.5} style={{ cursor: 'move' }} />
           })}
 
-          {/* wall-chain preview */}
-          {tool === 'wall' && wallChain.current && cursor && (() => {
-            const a = toPx(wallChain.current), b = toPx(cursor)
+          {/* wall preview — follows the press point (drag) or the chain anchor (click) */}
+          {tool === 'wall' && (wallDown.current || wallChain.current) && cursor && (() => {
+            const anchor = (wallDown.current || wallChain.current)!
+            const a = toPx(anchor), b = toPx(cursor)
             return <>
               <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="#b8895a" strokeWidth={wallPx} strokeLinecap="round" opacity={0.5} />
-              <text x={(a.x + b.x) / 2} y={(a.y + b.y) / 2 - 6} textAnchor="middle" fontSize={10} fill="#b8895a">{fmtFt(dist(wallChain.current, cursor))}</text>
+              <text x={(a.x + b.x) / 2} y={(a.y + b.y) / 2 - 6} textAnchor="middle" fontSize={10} fill="#b8895a">{fmtFt(dist(anchor, cursor))}</text>
             </>
           })()}
 
