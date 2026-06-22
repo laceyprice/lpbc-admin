@@ -302,9 +302,13 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
     const tolPx = 12
     let best: Pt | null = null
     let bestD = Infinity
-    for (const w of walls) for (const v of [w.a, w.b]) {
-      const d = dist(toPx(world), toPx(v))
-      if (d < tolPx && d < bestD) { best = v; bestD = d }
+    for (const w of walls) {
+      if (!w) continue
+      for (const v of [w.a, w.b]) {
+        if (!v || typeof v.x !== 'number' || typeof v.y !== 'number') continue
+        const d = dist(toPx(world), toPx(v))
+        if (d < tolPx && d < bestD) { best = v; bestD = d }
+      }
     }
     return best || snap(world)
   }
