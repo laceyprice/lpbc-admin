@@ -177,8 +177,16 @@ function nearestOnSeg(p: Pt, a: Pt, b: Pt) {
   return { t, point, dist: dist(p, point) }
 }
 
+// Drop walls with invalid (null/NaN) endpoints or zero length — corrupt data from an
+// earlier bug crashed the canvas and left stray "points". Cleans on load.
+const validPt = (p: any) => p && typeof p.x === 'number' && typeof p.y === 'number' && isFinite(p.x) && isFinite(p.y)
+function cleanWalls(arr: any): Wall[] {
+  if (!Array.isArray(arr)) return []
+  return arr.filter((w: any) => w && validPt(w.a) && validPt(w.b) && (Math.abs(w.a.x - w.b.x) > 0.01 || Math.abs(w.a.y - w.b.y) > 0.01))
+}
+
 export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}) {
-  const [walls, setWalls] = useState<Wall[]>(value?.walls || [])
+  const [walls, setWalls] = useState<Wall[]>(() => cleanWalls(value?.walls))
   const [openings, setOpenings] = useState<Opening[]>(value?.openings || [])
   const [rooms, setRooms] = useState<Room[]>(value?.rooms || [])
   const [labels, setLabels] = useState<Label[]>(value?.labels || [])
@@ -418,19 +426,21 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
     // Wall: finalize a drag (one wall) or a click (chain a corner). Snapping to
     // existing endpoints connects walls automatically.
     if (tool === 'wall' && wallDown.current) {
-      if (!leaving) {
+      const down = wallDown.current        // capture BEFORE any ref mutation (the
+      const chain = wallChain.current      // setWalls callback runs later, after these
+      if (!leaving) {                       // refs would otherwise be cleared/changed)
         let up = snapSmart(evtWorld(e))
-        if (e.shiftKey) up = snap(ortho(wallDown.current, up))
-        const dragged = dist(wallDown.current, up) > 0.4
+        if (e.shiftKey) up = snap(ortho(down, up))
+        const dragged = dist(down, up) > 0.4
         if (dragged) {
           checkpoint('wall')
-          setWalls(prev => [...prev, { id: uid(), a: wallDown.current!, b: up }])
+          setWalls(prev => [...prev, { id: uid(), a: down, b: up }])
           wallChain.current = up
         } else {
           // a click: start a chain anchor, or close a segment to the chain anchor
-          if (wallChain.current && dist(wallChain.current, up) > 0.1) {
+          if (chain && dist(chain, up) > 0.1) {
             checkpoint('wall')
-            setWalls(prev => [...prev, { id: uid(), a: wallChain.current!, b: up }])
+            setWalls(prev => [...prev, { id: uid(), a: chain, b: up }])
           }
           wallChain.current = up
         }
@@ -462,6 +472,7 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
   function nearestWall(p: Pt) {
     let best: { wall: Wall; t: number; dist: number } | null = null
     for (const wl of walls) {
+      if (!validPt(wl.a) || !validPt(wl.b)) continue
       const r = nearestOnSeg(p, wl.a, wl.b)
       if (!best || r.dist < best.dist) best = { wall: wl, t: r.t, dist: r.dist }
     }
@@ -1142,6 +1153,7 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
 
           {/* walls — dark faces (full thickness) */}
           {walls.map(wl => {
+            if (!validPt(wl.a) || !validPt(wl.b)) return null
             const a = toPx(wl.a), b = toPx(wl.b)
             const seld = sel?.kind === 'wall' && sel.id === wl.id
             return <line key={wl.id} x1={a.x} y1={a.y} x2={b.x} y2={b.y}
@@ -1151,6 +1163,7 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
           })}
           {/* walls — white interior (double-line look); corners mitre via overlap */}
           {wallStyle === 'outline' && walls.map(wl => {
+            if (!validPt(wl.a) || !validPt(wl.b)) return null
             const a = toPx(wl.a), b = toPx(wl.b)
             return <line key={wl.id + '_in'} x1={a.x} y1={a.y} x2={b.x} y2={b.y}
               stroke="#ffffff" strokeWidth={wallInnerPx} strokeLinecap="round" style={{ pointerEvents: 'none' }} />
