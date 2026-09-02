@@ -3,6 +3,7 @@ export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 import { createServerClient } from '@/lib/supabase'
 import { signedUrlFor } from '@/lib/signed-url'
+import { webSafeImage } from '@/lib/heic'
 
 const BUCKET = 'job-planning'
 
@@ -23,18 +24,20 @@ export async function POST(req: NextRequest) {
 
   for (const file of files) {
     if (!file || typeof file.size !== 'number' || file.size === 0) continue
-    const safeName = file.name.replace(/[^a-z0-9._-]+/gi, '_')
+    // Transcode HEIC → JPEG so the photo actually renders in the browser.
+    const raw = Buffer.from(await file.arrayBuffer())
+    const safe = await webSafeImage(raw, file.type || 'application/octet-stream', file.name)
+    const safeName = safe.name.replace(/[^a-z0-9._-]+/gi, '_')
     const filePath = `${sessionId}/${Date.now()}_${safeName}`
-    const buffer = Buffer.from(await file.arrayBuffer())
-    const { error } = await supabase.storage.from(BUCKET).upload(filePath, buffer, {
-      contentType: file.type || 'application/octet-stream',
+    const { error } = await supabase.storage.from(BUCKET).upload(filePath, safe.buffer, {
+      contentType: safe.contentType,
       upsert: false,
     })
     if (error) {
       return NextResponse.json({ error: `Upload failed for ${file.name}: ${error.message}` }, { status: 500 })
     }
     const url = await signedUrlFor(supabase, BUCKET, filePath, 60 * 60 * 24)
-    uploaded.push({ path: filePath, name: file.name, size: file.size, type: file.type, signed_url: url })
+    uploaded.push({ path: filePath, name: safe.name, size: safe.buffer.length, type: safe.contentType, signed_url: url })
   }
 
   return NextResponse.json({ session_id: sessionId, uploaded })

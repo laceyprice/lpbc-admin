@@ -61,8 +61,8 @@ function Row({ label, val }: { label: string; val: number }) {
   return <div className="flex justify-between"><span className="text-gray-400 truncate mr-2">{label}</span><span className="tabular-nums whitespace-nowrap">${Math.round(val).toLocaleString()}</span></div>
 }
 
-export default function FloorPlan3D({ plan, wallThick = 0.5, finishes, onFinishesChange, onClose }: {
-  plan: PlanDoc; wallThick?: number; finishes?: Finishes; onFinishesChange?: (f: Finishes) => void; onClose: () => void
+export default function FloorPlan3D({ plan, wallThick = 0.5, finishes, onFinishesChange, onClose, readOnly = false }: {
+  plan: PlanDoc; wallThick?: number; finishes?: Finishes; onFinishesChange?: (f: Finishes) => void; onClose: () => void; readOnly?: boolean
 }) {
   const f0: Finishes = finishes && finishes.pick ? finishes : { pick: { floor: 0, walls: 0, cabinet: 0, counter: 0 }, schemes: [] }
   const pick = f0.pick
@@ -192,6 +192,20 @@ export default function FloorPlan3D({ plan, wallThick = 0.5, finishes, onFinishe
 
   const cam = span * 1.1
 
+  // iOS Safari often refuses to create a WebGL context (memory / performance
+  // caveat), throwing "Error creating WebGL context". Pre-check support so we can
+  // show a friendly fallback instead of crashing, and tune the renderer for mobile.
+  const [webglOk, setWebglOk] = useState<boolean | null>(null)
+  const isMobile = typeof navigator !== 'undefined' && /iphone|ipad|ipod|android|mobile/i.test(navigator.userAgent)
+  useEffect(() => {
+    try {
+      const c = document.createElement('canvas')
+      const gl = (c.getContext('webgl2') || c.getContext('webgl') || c.getContext('experimental-webgl')) as WebGLRenderingContext | null
+      setWebglOk(!!gl)
+      try { (gl as any)?.getExtension?.('WEBGL_lose_context')?.loseContext?.() } catch {}
+    } catch { setWebglOk(false) }
+  }, [])
+
   return (
     <div className="fixed inset-0 z-[60] bg-gray-900 flex flex-col">
       <div className="flex items-center justify-between px-4 py-2.5 bg-gray-900 border-b border-gray-700 flex-shrink-0">
@@ -201,12 +215,26 @@ export default function FloorPlan3D({ plan, wallThick = 0.5, finishes, onFinishe
 
       <div className="flex-1 flex min-h-0">
         <div className="flex-1 min-w-0">
-          <Canvas shadows camera={{ position: [cam, cam * 0.9, cam], fov: 45 }}>
+          {webglOk === false ? (
+            <div className="h-full flex items-center justify-center text-center p-8">
+              <div className="max-w-sm">
+                <p className="text-gray-100 font-bold mb-2">3D isn't available on this device</p>
+                <p className="text-gray-400 text-sm leading-relaxed">Your browser couldn't start a 3D (WebGL) session. On iPhone/iPad, try turning off <strong>Low Power Mode</strong> and closing other tabs, or open this on a computer. The 2D floor plan, finishes and pricing still work.</p>
+              </div>
+            </div>
+          ) : webglOk === null ? (
+            <div className="h-full flex items-center justify-center text-gray-400 text-sm">Preparing 3D…</div>
+          ) : (
+          <Canvas
+            shadows={!isMobile}
+            dpr={[1, isMobile ? 1.5 : 2]}
+            gl={{ antialias: !isMobile, powerPreference: 'default', failIfMajorPerformanceCaveat: false, preserveDrawingBuffer: false }}
+            camera={{ position: [cam, cam * 0.9, cam], fov: 45 }}>
             <color attach="background" args={['#1f2937']} />
             <ambientLight intensity={0.55} />
             <hemisphereLight intensity={0.45} groundColor="#3a3a3a" />
-            <directionalLight position={[span, span * 1.6, span * 0.7]} intensity={1.2} castShadow
-              shadow-mapSize={[2048, 2048]} shadow-bias={-0.0004}
+            <directionalLight position={[span, span * 1.6, span * 0.7]} intensity={1.2} castShadow={!isMobile}
+              shadow-mapSize={isMobile ? [1024, 1024] : [2048, 2048]} shadow-bias={-0.0004}
               shadow-camera-left={-span} shadow-camera-right={span} shadow-camera-top={span} shadow-camera-bottom={-span}
               shadow-camera-near={0.5} shadow-camera-far={span * 4} />
             <OrbitControls target={[0, 1.5, 0]} maxPolarAngle={Math.PI / 2.05} />
@@ -269,7 +297,10 @@ export default function FloorPlan3D({ plan, wallThick = 0.5, finishes, onFinishe
                 )
               }
 
-              const spec = FIX3D[f.kind] || { h: 2.5, y: 0, cat: 'cabinet' as const }
+              // Electrical symbols (and any other 2D-only annotation) have no 3D
+              // form — skip anything we don't have a spec for.
+              const spec = FIX3D[f.kind]
+              if (!spec) return null
               const mTex = spec.cat === 'cabinet' ? tex.cabTex : spec.cat === 'counter' ? tex.counterTex : null
               const col = spec.cat === 'appliance' ? '#b8c0c4' : spec.cat === 'porcelain' ? '#f2f2f0' : color(spec.cat as Cat)
               const rough = spec.cat === 'appliance' ? 0.35 : spec.cat === 'porcelain' ? 0.25 : 0.6
@@ -314,8 +345,10 @@ export default function FloorPlan3D({ plan, wallThick = 0.5, finishes, onFinishe
               )
             })}
           </Canvas>
+          )}
         </div>
 
+        {!readOnly && (
         <aside className="w-64 flex-shrink-0 bg-gray-800 border-l border-gray-700 overflow-y-auto p-4 space-y-4">
           <div className="flex items-center justify-between gap-2">
             <label className="flex items-center gap-1.5 text-[11px] text-gray-300 cursor-pointer">
@@ -432,6 +465,7 @@ export default function FloorPlan3D({ plan, wallThick = 0.5, finishes, onFinishe
             Finishes &amp; schemes save with the plan. Add stairs/railings/cabinets with the Fixture tool in 2D.
           </p>
         </aside>
+        )}
       </div>
     </div>
   )

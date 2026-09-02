@@ -9,7 +9,7 @@ import { useAuth } from '@/components/admin/AdminAuthGuard'
 
 const nav = [
   { href: '/admin', label: 'Dashboard', icon: LayoutDashboard, exact: true, roles: ['admin', 'bookkeeper', 'invoicing'] },
-  { href: '/admin/crm', label: 'CRM / Email', icon: Users, roles: ['admin', 'bookkeeper', 'invoicing'] },
+  { href: '/admin/crm', label: 'CRM & Email', icon: Users, roles: ['admin', 'bookkeeper', 'invoicing'] },
   { href: '/admin/invoices', label: 'Invoices & Quotes', icon: FileText, roles: ['admin', 'bookkeeper', 'invoicing'] },
   { href: '/admin/plan-job', label: 'Plan & Design Studio', icon: Hammer, roles: ['admin', 'bookkeeper'] },
   { href: '/admin/calendar', label: 'Calendar', icon: Calendar, roles: ['admin', 'bookkeeper'] },
@@ -17,11 +17,11 @@ const nav = [
   { href: '/admin/schedule-requests', label: 'Schedule Requests', icon: ClipboardList, roles: ['admin', 'bookkeeper'] },
   { href: '/admin/worksites', label: 'Worksites', icon: MapPin, roles: ['admin', 'bookkeeper'] },
   { href: '/admin/inventory', label: 'Materials & Inventory', icon: Package, roles: ['admin', 'bookkeeper'] },
-  { href: '/admin/permits', label: 'Permits / Licensing', icon: FileCheck, roles: ['admin', 'bookkeeper'], matches: ['/admin/permits', '/admin/licensing'] },
+  { href: '/admin/permits', label: 'Permits & Licensing', icon: FileCheck, roles: ['admin', 'bookkeeper'], matches: ['/admin/permits', '/admin/licensing'] },
   { href: '/admin/bookkeeping', label: 'Bookkeeping', icon: BookOpen, roles: ['admin', 'bookkeeper'] },
   { href: '/admin/reports', label: 'Reports', icon: BarChart3, roles: ['admin', 'bookkeeper'] },
-  { href: '/admin/documents', label: 'Documents / COIs', icon: ShieldCheck, roles: ['admin', 'bookkeeper'] },
-  { href: '/admin/taxes', label: 'W9 / 1099', icon: Receipt, roles: ['admin', 'bookkeeper'] },
+  { href: '/admin/documents', label: 'Insurance & Other Docs', icon: ShieldCheck, roles: ['admin', 'bookkeeper'] },
+  { href: '/admin/taxes', label: 'Business Tax Center', icon: Receipt, roles: ['admin', 'bookkeeper'] },
   { href: '/admin/vault', label: 'Account Vault', icon: KeyRound, roles: ['admin'] },
   { href: '/admin/users', label: 'User Management', icon: UserCog, roles: ['admin'] },
 ]

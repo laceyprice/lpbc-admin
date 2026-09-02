@@ -9,12 +9,24 @@ export function formatCurrency(amount: number): string {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount)
 }
 
+// A bare "YYYY-MM-DD" (a Postgres `date` column) parses as UTC midnight via
+// `new Date()`, which then renders as the PREVIOUS day in any timezone behind
+// UTC (e.g. US). Treat date-only strings as LOCAL midnight so the day is exact;
+// full timestamps (with a time/zone) are left to normal parsing.
+function parseDateSafe(date: string | Date): Date {
+  if (typeof date === 'string') {
+    const m = date.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+    if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]))
+  }
+  return new Date(date)
+}
+
 export function formatDate(date: string | Date): string {
-  return new Intl.DateTimeFormat('en-US', { year: 'numeric', month: 'long', day: 'numeric' }).format(new Date(date))
+  return new Intl.DateTimeFormat('en-US', { year: 'numeric', month: 'long', day: 'numeric' }).format(parseDateSafe(date))
 }
 
 export function formatDateShort(date: string | Date): string {
-  return new Intl.DateTimeFormat('en-US', { year: 'numeric', month: 'short', day: 'numeric' }).format(new Date(date))
+  return new Intl.DateTimeFormat('en-US', { year: 'numeric', month: 'short', day: 'numeric' }).format(parseDateSafe(date))
 }
 
 export function formatPhone(phone: string): string {

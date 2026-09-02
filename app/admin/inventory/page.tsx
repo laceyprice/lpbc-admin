@@ -7,6 +7,7 @@ import {
   Home, Flame, Droplets, Filter, Download, Upload, ClipboardList,
   AlertCircle, Clock,
 } from 'lucide-react'
+import { SERVICES } from '@/lib/constants'
 
 // ── Types ──────────────────────────────────────────────────────
 type InventoryItem = {
@@ -146,12 +147,16 @@ export default function InventoryPage() {
     }
   }
 
-  async function createList() {
+  // Creates a new list (POST) or, when editing an existing one (newListForm.id
+  // is set), updates its metadata in place (PATCH) — same modal, same form,
+  // just a different verb depending on whether we're creating or editing.
+  async function saveList() {
     if (!newListForm.name) return
     setSavingList(true)
     try {
+      const editingId = newListForm.id
       const res = await fetch('/api/materials-lists', {
-        method: 'POST',
+        method: editingId ? 'PATCH' : 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newListForm),
       })
@@ -161,6 +166,14 @@ export default function InventoryPage() {
         setNewListForm({ status: 'draft' })
       }
     } finally { setSavingList(false) }
+  }
+
+  // Opens the same New Materials List modal, pre-filled, so name/address/
+  // worksite/customer/service type/date/status/notes can all be edited after
+  // creation — not just items.
+  function openEditList(l: MaterialsList) {
+    setNewListForm({ ...l })
+    setShowNewList(true)
   }
 
   async function deleteList(id: string) {
@@ -443,7 +456,7 @@ export default function InventoryPage() {
   return (
     <div className="flex flex-col h-full bg-gray-50">
       {/* Header */}
-      <div className="bg-white border-b px-6 py-4 flex items-center justify-between gap-4">
+      <div className="bg-white border-b px-6 py-4 pt-16 md:pt-4 flex items-center justify-between gap-4">
         <div>
           <h1 className="text-xl font-bold text-gray-900 flex items-center gap-2">
             <Package size={22} className="text-blue-600" /> Materials &amp; Inventory
@@ -597,6 +610,7 @@ export default function InventoryPage() {
                     {catMeta.label} <span className="font-normal normal-case">({group.length})</span>
                   </h3>
                   <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+                    <div className="overflow-x-auto">
                     <table className="w-full text-sm">
                       <thead>
                         <tr className="border-b border-gray-100 bg-gray-50/60">
@@ -667,6 +681,7 @@ export default function InventoryPage() {
                         ))}
                       </tbody>
                     </table>
+                    </div>
                   </div>
                 </div>
               )
@@ -745,6 +760,12 @@ export default function InventoryPage() {
                                     <span className="text-xs text-gray-500">{fulfilledCount}/{expandedItems.length} ready</span>
                                   )}
                                 </div>
+                                {l.property_address && (
+                                  <div className="flex items-center gap-1 text-xs text-gray-500 mb-0.5">
+                                    <MapPin size={11} className="flex-shrink-0" />
+                                    <span className="truncate">{l.property_address}</span>
+                                  </div>
+                                )}
                                 <div className="flex items-center gap-3 text-xs text-gray-500 flex-wrap">
                                   {l.customer_name && <span>{l.customer_name}</span>}
                                   {l.service_type && <span>{l.service_type}</span>}
@@ -752,12 +773,16 @@ export default function InventoryPage() {
                                 </div>
                               </div>
                               <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
+                                <button onClick={() => openEditList(l)} title="Edit list details" className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg"><Edit3 size={13} /></button>
                                 <button onClick={() => deleteList(l.id)} className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg"><Trash2 size={13} /></button>
                                 {isExpanded ? <ChevronUp size={15} className="text-gray-400" /> : <ChevronDown size={15} className="text-gray-400" />}
                               </div>
                             </div>
                             {isExpanded && (
                               <div className="border-t border-gray-100 bg-gray-50 px-4 py-3">
+                                {l.notes && (
+                                  <div className="text-xs text-gray-600 italic bg-white border border-gray-100 rounded-lg px-3 py-2 mb-3">{l.notes}</div>
+                                )}
                                 {expandedItems.length === 0 ? (
                                   <p className="text-xs text-gray-500 mb-3">No items on this list yet. Add inventory items below.</p>
                                 ) : (
@@ -816,7 +841,7 @@ export default function InventoryPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg">
             <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
-              <h3 className="text-lg font-extrabold text-gray-900">New Materials List</h3>
+              <h3 className="text-lg font-extrabold text-gray-900">{newListForm.id ? 'Edit Materials List' : 'New Materials List'}</h3>
               <button onClick={() => { setShowNewList(false); setNewListForm({ status: 'draft' }) }}><X size={18} className="text-gray-400" /></button>
             </div>
             <div className="p-6 grid grid-cols-2 gap-3">
@@ -826,40 +851,36 @@ export default function InventoryPage() {
                   className="w-full px-3 py-2.5 rounded-xl border border-gray-200 text-sm" placeholder='e.g. "Smith retrofit – kitchen"' />
               </div>
               <div className="col-span-2">
-                <label className="text-xs font-semibold text-gray-600 mb-1 block">Worksite</label>
-                <select value={newListForm.worksite_id || ''}
+                <label className="text-xs font-semibold text-gray-600 mb-1 block">
+                  Property Address {newListForm.worksite_id ? <span className="text-green-600 font-normal">(linked to existing worksite)</span> : null}
+                </label>
+                <input
+                  list="worksite-address-options"
+                  value={newListForm.property_address || ''}
                   onChange={e => {
-                    const w = worksiteOptions.find((x: any) => x.id === e.target.value)
-                    const addr = w?.address || ''
+                    const val = e.target.value
                     setNewListForm(p => ({
                       ...p,
-                      worksite_id: e.target.value || null,
-                      property_address: addr || p.property_address || '',
-                      // Auto-fill list name with the address if name is empty or
-                      // matched a previous worksite's address.
-                      name: !p.name || worksiteOptions.some((x: any) => x.address === p.name)
-                        ? addr || p.name
-                        : p.name,
+                      property_address: val,
+                      // Mirror address into the list name if the name is empty or
+                      // still matches the previous address (so it stays in sync).
+                      name: !p.name || p.name === p.property_address ? val : p.name,
                     }))
                   }}
-                  className="w-full px-3 py-2.5 rounded-xl border border-gray-200 text-sm">
-                  <option value="">— optional, link to a worksite —</option>
+                  onBlur={e => {
+                    // Case-insensitive exact match against known worksite addresses
+                    // auto-links worksite_id; otherwise this is just a free-typed
+                    // address with no worksite link.
+                    const typed = e.target.value.trim().toLowerCase()
+                    const match = worksiteOptions.find((w: any) => (w.address || '').trim().toLowerCase() === typed)
+                    setNewListForm(p => ({ ...p, worksite_id: match ? match.id : null }))
+                  }}
+                  className="w-full px-3 py-2.5 rounded-xl border border-gray-200 text-sm" placeholder="Type an address, or pick a suggestion" />
+                <datalist id="worksite-address-options">
                   {worksiteOptions.map((w: any) => (
-                    <option key={w.id} value={w.id}>{w.address}{w.city ? `, ${w.city}` : ''}</option>
+                    <option key={w.id} value={w.address} />
                   ))}
-                </select>
-              </div>
-              <div className="col-span-2">
-                <label className="text-xs font-semibold text-gray-600 mb-1 block">Property Address {newListForm.worksite_id ? '(auto-filled)' : ''}</label>
-                <input value={newListForm.property_address || ''}
-                  onChange={e => setNewListForm(p => ({
-                    ...p,
-                    property_address: e.target.value,
-                    // Mirror address into the list name if the name is empty or
-                    // still matches the previous address (so it stays in sync).
-                    name: !p.name || p.name === p.property_address ? e.target.value : p.name,
-                  }))}
-                  className="w-full px-3 py-2.5 rounded-xl border border-gray-200 text-sm" placeholder="If no worksite selected, type the address" />
+                </datalist>
               </div>
               <div>
                 <label className="text-xs font-semibold text-gray-600 mb-1 block">Customer Name</label>
@@ -868,8 +889,11 @@ export default function InventoryPage() {
               </div>
               <div>
                 <label className="text-xs font-semibold text-gray-600 mb-1 block">Service Type</label>
-                <input value={newListForm.service_type || ''} onChange={e => setNewListForm(p => ({ ...p, service_type: e.target.value }))}
-                  className="w-full px-3 py-2.5 rounded-xl border border-gray-200 text-sm" placeholder="e.g. Gas line install" />
+                <select value={newListForm.service_type || ''} onChange={e => setNewListForm(p => ({ ...p, service_type: e.target.value }))}
+                  className="w-full px-3 py-2.5 rounded-xl border border-gray-200 text-sm">
+                  <option value="">Select...</option>
+                  {SERVICES.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
               </div>
               <div>
                 <label className="text-xs font-semibold text-gray-600 mb-1 block">Scheduled Date</label>
@@ -895,9 +919,9 @@ export default function InventoryPage() {
             <div className="flex justify-end gap-2 px-6 py-4 border-t border-gray-100">
               <button onClick={() => { setShowNewList(false); setNewListForm({ status: 'draft' }) }}
                 className="px-4 py-2 rounded-xl text-sm font-semibold text-gray-600 hover:bg-gray-100">Cancel</button>
-              <button onClick={createList} disabled={savingList || !newListForm.name}
+              <button onClick={saveList} disabled={savingList || !newListForm.name}
                 className="px-5 py-2 rounded-xl text-white text-sm font-bold disabled:opacity-50" style={{ background: '#b8895a' }}>
-                {savingList ? 'Creating…' : 'Create List'}
+                {newListForm.id ? (savingList ? 'Saving…' : 'Save Changes') : (savingList ? 'Creating…' : 'Create List')}
               </button>
             </div>
           </div>
@@ -1130,6 +1154,7 @@ export default function InventoryPage() {
                   {Array.isArray(priceSearchResults.results) && priceSearchResults.results.length > 0 ? (
                     <>
                       <div className="overflow-hidden rounded-xl border border-gray-100">
+                        <div className="overflow-x-auto">
                         <table className="w-full text-sm">
                           <thead className="bg-gray-50">
                             <tr>
@@ -1173,6 +1198,7 @@ export default function InventoryPage() {
                             })}
                           </tbody>
                         </table>
+                        </div>
                       </div>
                       {priceSearchResults.cheapest_price && (
                         <div className="flex items-center justify-between p-4 bg-green-50 rounded-xl border border-green-200">
@@ -1225,6 +1251,7 @@ function PropertyMaterialsGrouped({
             <span className="font-semibold text-gray-800 text-sm">{address}</span>
             <span className="ml-auto text-xs text-gray-400">{mats.length} items</span>
           </div>
+          <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-100">
@@ -1273,6 +1300,7 @@ function PropertyMaterialsGrouped({
               ))}
             </tbody>
           </table>
+          </div>
         </div>
       ))}
     </div>

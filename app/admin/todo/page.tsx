@@ -1,7 +1,10 @@
 'use client'
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Sparkles, Loader2, RefreshCw, CheckCircle2, Circle, ArrowRight, AlertCircle, Calendar, CalendarPlus, FileText, BookOpen, Users, Plus, X, Trash2, Check } from 'lucide-react'
+import { Sparkles, Loader2, RefreshCw, CheckCircle2, Circle, ArrowRight, AlertCircle, Calendar, CalendarPlus, FileText, BookOpen, Users, Plus, X, Trash2, Check, Pencil, Paperclip, Image as ImageIcon } from 'lucide-react'
+
+interface Attachment { path: string; name: string; type: string; size: number; url?: string | null }
+const isImageAtt = (a: Attachment) => /^image\//i.test(a.type) || /\.(jpe?g|png|webp|gif|heic)$/i.test(a.name)
 
 interface Todo {
   id: string
@@ -45,6 +48,7 @@ interface MyTodo {
   due_date: string | null
   assigned_to_user_id: string | null
   assigned_to_name: string | null
+  attachments?: Attachment[]
 }
 
 interface TeamMember {
@@ -66,8 +70,12 @@ export default function TodoPage() {
   // Persistent todos from DB
   const [myTodos, setMyTodos] = useState<MyTodo[]>([])
   const [showAdd, setShowAdd] = useState(false)
+  const [editingId, setEditingId] = useState<string | null>(null)
   const [addForm, setAddForm] = useState({ title: '', description: '', priority: 'medium', category: 'general', due_date: '', assigned_to_user_id: '' })
+  const [formAttachments, setFormAttachments] = useState<Attachment[]>([])
+  const [uploadingAtt, setUploadingAtt] = useState(false)
   const [savingTodo, setSavingTodo] = useState(false)
+  const EMPTY_FORM = { title: '', description: '', priority: 'medium', category: 'general', due_date: '', assigned_to_user_id: '' }
   const [addedRefs, setAddedRefs] = useState<Set<string>>(new Set())
   const [team, setTeam] = useState<TeamMember[]>([])
 
@@ -124,25 +132,49 @@ export default function TodoPage() {
     }
   }
 
-  async function createManualTodo() {
+  function openAdd() { setEditingId(null); setAddForm(EMPTY_FORM); setFormAttachments([]); setShowAdd(true) }
+  function openEdit(t: MyTodo) {
+    setEditingId(t.id)
+    setAddForm({ title: t.title, description: t.description || '', priority: t.priority, category: t.category, due_date: t.due_date || '', assigned_to_user_id: t.assigned_to_user_id || '' })
+    setFormAttachments(t.attachments || [])
+    setShowAdd(true)
+  }
+  function closeModal() { setShowAdd(false); setEditingId(null); setFormAttachments([]); setAddForm(EMPTY_FORM) }
+
+  async function uploadAttachment(files: FileList | null) {
+    if (!files || !files.length) return
+    setUploadingAtt(true)
+    try {
+      for (const file of Array.from(files)) {
+        const fd = new FormData(); fd.append('file', file)
+        const res = await fetch('/api/todos?action=upload', { method: 'POST', body: fd })
+        const d = await res.json()
+        if (res.ok && d.path) setFormAttachments(prev => [...prev, d])
+        else alert(d.error || 'Upload failed')
+      }
+    } finally { setUploadingAtt(false) }
+  }
+  function removeFormAttachment(path: string) { setFormAttachments(prev => prev.filter(a => a.path !== path)) }
+
+  async function saveTodo() {
     if (!addForm.title) return
     setSavingTodo(true)
     try {
       const member = team.find(m => m.user_id === addForm.assigned_to_user_id)
-      await fetch('/api/todos', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...addForm,
-          due_date: addForm.due_date || null,
-          source: 'manual',
-          assigned_to_user_id: addForm.assigned_to_user_id || null,
-          assigned_to_name: member?.display_name || member?.email || null,
-        }),
-      })
+      const payload = {
+        ...addForm,
+        due_date: addForm.due_date || null,
+        assigned_to_user_id: addForm.assigned_to_user_id || null,
+        assigned_to_name: member?.display_name || member?.email || null,
+        attachments: formAttachments,
+      }
+      if (editingId) {
+        await fetch('/api/todos', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: editingId, ...payload }) })
+      } else {
+        await fetch('/api/todos', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...payload, source: 'manual' }) })
+      }
       await loadMyTodos()
-      setShowAdd(false)
-      setAddForm({ title: '', description: '', priority: 'medium', category: 'general', due_date: '', assigned_to_user_id: '' })
+      closeModal()
     } finally { setSavingTodo(false) }
   }
 
@@ -289,7 +321,7 @@ export default function TodoPage() {
         </div>
         <div className="flex gap-2">
           <button
-            onClick={() => { setAddForm({ title: '', description: '', priority: 'medium', category: 'general', due_date: '', assigned_to_user_id: '' }); setShowAdd(true) }}
+            onClick={openAdd}
             className="flex items-center gap-2 border border-gray-200 text-gray-700 font-semibold px-3 py-2.5 rounded-xl hover:bg-gray-50">
             <Plus size={15} /> Add Todo
           </button>
@@ -426,6 +458,19 @@ export default function TodoPage() {
                       </div>
                       <h3 className={`text-sm font-bold text-gray-900 ${isDone ? 'line-through' : ''}`}>{t.title}</h3>
                       {t.description && <p className="text-xs text-gray-600 mt-0.5">{t.description}</p>}
+                      {(t.attachments?.length || 0) > 0 && (
+                        <div className="flex flex-wrap gap-2 mt-2">
+                          {t.attachments!.map(a => (
+                            <a key={a.path} href={a.url || '#'} target="_blank" rel="noopener noreferrer"
+                              className="flex items-center gap-1.5 border border-gray-200 rounded-lg overflow-hidden hover:bg-gray-50 max-w-[160px]" title={a.name}>
+                              {isImageAtt(a) && a.url
+                                ? <img src={a.url} alt={a.name} className="w-9 h-9 object-cover flex-shrink-0" />
+                                : <span className="w-9 h-9 bg-gray-100 flex items-center justify-center text-gray-400 flex-shrink-0"><FileText size={14} /></span>}
+                              <span className="text-[11px] text-gray-600 truncate pr-2">{a.name}</span>
+                            </a>
+                          ))}
+                        </div>
+                      )}
                     </div>
                     <div className="flex items-center gap-1 flex-shrink-0">
                       {t.action_url && !isDone && (
@@ -433,6 +478,9 @@ export default function TodoPage() {
                           Go <ArrowRight size={11} />
                         </button>
                       )}
+                      <button onClick={() => openEdit(t)} className="p-1.5 text-gray-400 hover:text-blue-600 rounded-lg hover:bg-blue-50" title="Edit">
+                        <Pencil size={13} />
+                      </button>
                       {!isDone && (
                         <button
                           onClick={() => openCalendarPicker(t)}
@@ -530,7 +578,7 @@ export default function TodoPage() {
           <p className="text-xs mt-1 mb-5">Add a task manually or let AI analyze your business data</p>
           <div className="flex gap-2 justify-center">
             <button
-              onClick={() => { setAddForm({ title: '', description: '', priority: 'medium', category: 'general', due_date: '', assigned_to_user_id: '' }); setShowAdd(true) }}
+              onClick={openAdd}
               className="border border-gray-200 text-gray-700 font-semibold px-5 py-2.5 rounded-xl hover:bg-gray-50 flex items-center gap-2">
               <Plus size={15} />Add Todo
             </button>
@@ -637,13 +685,13 @@ export default function TodoPage() {
         </div>
       )}
 
-      {/* Add Todo modal */}
+      {/* Add / Edit Todo modal */}
       {showAdd && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
-            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
-              <h3 className="text-base font-extrabold text-gray-900">Add Todo</h3>
-              <button onClick={() => setShowAdd(false)}><X size={18} className="text-gray-400" /></button>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[92vh] overflow-y-auto">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 sticky top-0 bg-white">
+              <h3 className="text-base font-extrabold text-gray-900">{editingId ? 'Edit Todo' : 'Add Todo'}</h3>
+              <button onClick={closeModal}><X size={18} className="text-gray-400" /></button>
             </div>
             <div className="p-5 space-y-3">
               <div>
@@ -696,12 +744,35 @@ export default function TodoPage() {
                   <p className="text-xs text-gray-400 mt-1">No team members loaded — add users in User Management first.</p>
                 )}
               </div>
+              {/* Attachments */}
+              <div>
+                <label className="text-xs font-semibold text-gray-600 mb-1 flex items-center gap-1"><Paperclip size={12} /> Attachments</label>
+                {formAttachments.length > 0 && (
+                  <div className="space-y-1.5 mb-2">
+                    {formAttachments.map(a => (
+                      <div key={a.path} className="flex items-center gap-2 border border-gray-200 rounded-lg px-2 py-1.5">
+                        {isImageAtt(a) && a.url
+                          ? <img src={a.url} alt={a.name} className="w-8 h-8 rounded object-cover flex-shrink-0" />
+                          : <span className="w-8 h-8 rounded bg-gray-100 flex items-center justify-center text-gray-400 flex-shrink-0"><FileText size={14} /></span>}
+                        <a href={a.url || '#'} target="_blank" rel="noopener noreferrer" className="flex-1 min-w-0 truncate text-xs text-gray-700 hover:underline">{a.name}</a>
+                        <button onClick={() => removeFormAttachment(a.path)} className="text-gray-300 hover:text-red-500 p-0.5 flex-shrink-0"><Trash2 size={13} /></button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <label className="flex items-center gap-2 border-2 border-dashed border-gray-200 rounded-xl px-3 py-2.5 cursor-pointer hover:bg-gray-50 hover:border-blue-300 text-sm text-gray-600">
+                  {uploadingAtt ? <Loader2 size={14} className="animate-spin" /> : <ImageIcon size={14} className="text-gray-400" />}
+                  {uploadingAtt ? 'Uploading…' : 'Add images or documents'}
+                  <input type="file" multiple accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.txt,.heic" className="hidden"
+                    onChange={e => { uploadAttachment(e.target.files); e.target.value = '' }} />
+                </label>
+              </div>
             </div>
-            <div className="flex justify-end gap-2 px-5 py-3 border-t border-gray-100">
-              <button onClick={() => setShowAdd(false)} className="px-4 py-2 rounded-xl text-sm font-semibold text-gray-600 hover:bg-gray-100">Cancel</button>
-              <button onClick={createManualTodo} disabled={savingTodo || !addForm.title}
+            <div className="flex justify-end gap-2 px-5 py-3 border-t border-gray-100 sticky bottom-0 bg-white">
+              <button onClick={closeModal} className="px-4 py-2 rounded-xl text-sm font-semibold text-gray-600 hover:bg-gray-100">Cancel</button>
+              <button onClick={saveTodo} disabled={savingTodo || uploadingAtt || !addForm.title}
                 className="px-5 py-2 rounded-xl text-white text-sm font-bold disabled:opacity-50" style={{ background:'#b8895a' }}>
-                {savingTodo ? 'Adding…' : 'Add Todo'}
+                {savingTodo ? 'Saving…' : editingId ? 'Save Changes' : 'Add Todo'}
               </button>
             </div>
           </div>

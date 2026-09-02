@@ -1,12 +1,94 @@
 'use client'
 import { useEffect, useState, useRef } from 'react'
-import { FileText, Upload, Trash2, ExternalLink, Plus, Loader2, X, AlertCircle, CheckCircle2, Clock, ShieldCheck, File, Mail, ScanLine, FolderOpen, PenLine, Send, RefreshCw, Ban, Copy, CheckCheck } from 'lucide-react'
+import { FileText, Upload, Trash2, ExternalLink, Plus, Loader2, X, AlertCircle, CheckCircle2, Clock, ShieldCheck, File, Mail, ScanLine, FolderOpen, PenLine, Send, RefreshCw, Ban, Copy, CheckCheck, UserPlus, Download } from 'lucide-react'
 import { formatDateShort } from '@/lib/utils'
 import DrivePicker from '@/components/admin/DrivePicker'
+import SignatureFieldPlacer from '@/components/admin/SignatureFieldPlacer'
+import DocPages, { PageBox } from '@/components/admin/DocPages'
+import { PlacedField, signerColor } from '@/components/admin/signatureTypes'
+import { PDFDocument, StandardFonts, rgb } from 'pdf-lib'
+
+// Combine several PDFs into one signing package so field placement + signing work
+// across all pages continuously. A single file is returned as-is.
+async function mergePdfs(files: File[]): Promise<File> {
+  if (files.length === 1) return files[0]
+  const out = await PDFDocument.create()
+  for (const f of files) {
+    const src = await PDFDocument.load(await f.arrayBuffer(), { ignoreEncryption: true })
+    const pages = await out.copyPages(src, src.getPageIndices())
+    pages.forEach(p => out.addPage(p))
+  }
+  const bytes = await out.save()
+  // globalThis.File — the lucide `File` icon shadows the DOM File in this module.
+  return new globalThis.File([bytes as BlobPart], 'combined.pdf', { type: 'application/pdf' })
+}
+
+const signersOf = (req: any): any[] => (Array.isArray(req.signers) && req.signers.length)
+  ? req.signers
+  : [{ id: 'legacy', name: req.signer_name, email: req.signer_email, signature_data: req.signature_data, signed_at: req.signed_at }]
+const fmtSignedDate = (d: string | null | undefined) => d ? new Date(d).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) : ''
+
+// The document rendered with every signer's placed fields filled in (signatures,
+// printed names, dates) — a read-only "signed copy" preview.
+function SignedDocView({ req }: { req: any }) {
+  const signers = signersOf(req)
+  const fields: PlacedField[] = Array.isArray(req.fields) ? req.fields : []
+  const hasDoc = !!(req.document_path || req.document_url)
+  const docUrl = hasDoc ? `/api/signature-requests?action=doc&token=${req.token}` : null
+  if (!hasDoc && !req.document_text) return null
+
+  const overlay = (pb: PageBox) => (
+    <div className="absolute inset-0">
+      {fields.filter(f => f.page === pb.index).map(f => {
+        const s = signers.find(x => x.id === f.signer_id) || signers[0]
+        const base: React.CSSProperties = { position: 'absolute', left: f.x * pb.width, top: f.y * pb.height, width: f.w * pb.width, height: f.h * pb.height }
+        if (f.type === 'date') return <div key={f.id} style={base} className="flex items-center justify-center text-[11px] font-semibold text-gray-800 truncate">{fmtSignedDate(s?.signed_at)}</div>
+        if (f.type === 'name') return <div key={f.id} style={base} className="flex items-center justify-center text-[11px] font-semibold text-gray-800 truncate px-1">{s?.name}</div>
+        return s?.signature_data
+          ? <div key={f.id} style={base} className="flex items-center justify-center"><img src={s.signature_data} alt="signature" className="max-h-full max-w-full object-contain" /></div>
+          : <div key={f.id} style={base} className="flex items-center justify-center text-[9px] text-gray-400 border border-dashed border-gray-300 rounded">Awaiting {(s?.name || '').split(' ')[0]}</div>
+      })}
+    </div>
+  )
+  return (
+    <div className="rounded-xl border border-gray-100 bg-gray-100 p-3 max-h-[58vh] overflow-auto">
+      <DocPages url={docUrl} text={docUrl ? null : req.document_text} overlay={overlay} />
+    </div>
+  )
+}
+
+// Stamp signatures/names/dates into the original PDF and download a flattened copy.
+async function downloadSignedPdf(req: any) {
+  try {
+    const bytes = await (await fetch(`/api/signature-requests?action=doc&token=${req.token}`)).arrayBuffer()
+    const pdf = await PDFDocument.load(bytes, { ignoreEncryption: true })
+    const font = await pdf.embedFont(StandardFonts.Helvetica)
+    const pages = pdf.getPages()
+    const signers = signersOf(req)
+    const fields: PlacedField[] = Array.isArray(req.fields) ? req.fields : []
+    for (const f of fields) {
+      const page = pages[f.page]; if (!page) continue
+      const { width: pw, height: ph } = page.getSize()
+      const w = f.w * pw, h = f.h * ph, x = f.x * pw, y = ph - f.y * ph - h
+      const s = signers.find(z => z.id === f.signer_id) || signers[0]
+      if (f.type === 'signature' || f.type === 'initials') {
+        if (s?.signature_data) { try { const png = await pdf.embedPng(s.signature_data); page.drawImage(png, { x, y, width: w, height: h }) } catch {} }
+      } else {
+        const text = f.type === 'name' ? String(s?.name || '') : fmtSignedDate(s?.signed_at)
+        if (text) page.drawText(text, { x: x + 2, y: y + h * 0.3, size: Math.min(11, h * 0.55), font, color: rgb(0.1, 0.1, 0.1) })
+      }
+    }
+    const outBytes = await pdf.save()
+    const url = URL.createObjectURL(new Blob([outBytes as BlobPart], { type: 'application/pdf' }))
+    const a = document.createElement('a'); a.href = url; a.download = `${req.document_name || 'document'} - signed.pdf`; a.click()
+    URL.revokeObjectURL(url)
+  } catch { alert('Could not build the signed PDF.') }
+}
 
 const DOC_TYPES = [
   { value: 'all', label: 'All Documents' },
   { value: 'coi', label: 'Certificates of Insurance' },
+  { value: 'business_insurance', label: 'Business Insurance' },
   { value: 'w9', label: 'W-9 Forms' },
   { value: 'contract', label: 'Contracts' },
   { value: 'license', label: 'Licenses' },
@@ -15,6 +97,7 @@ const DOC_TYPES = [
 
 const TYPE_STYLES: Record<string, { bg: string; text: string; label: string }> = {
   coi:      { bg: 'bg-blue-100',   text: 'text-blue-700',   label: 'COI' },
+  business_insurance: { bg: 'bg-indigo-100', text: 'text-indigo-700', label: 'Business Insurance' },
   w9:       { bg: 'bg-purple-100', text: 'text-purple-700', label: 'W-9' },
   contract: { bg: 'bg-amber-100',  text: 'text-amber-700',  label: 'Contract' },
   license:  { bg: 'bg-teal-100',   text: 'text-teal-700',   label: 'License' },
@@ -66,12 +149,28 @@ export default function DocumentsPage() {
   const [sigRequests, setSigRequests] = useState<any[]>([])
   const [sigLoading, setSigLoading] = useState(false)
   const [showSendModal, setShowSendModal] = useState(false)
-  const [sigForm, setSigForm] = useState({ document_name: '', signer_name: '', signer_email: '', sender_message: '', document_text: '', expiry_days: '30', content_type: 'text' as 'text'|'file'|'url', document_url_input: '' })
-  const [sigFile, setSigFile] = useState<File | null>(null)
+  const [sigForm, setSigForm] = useState({ document_name: '', sender_message: '', document_text: '', expiry_days: '30', content_type: 'text' as 'text'|'file'|'url', document_url_input: '' })
+  const [recipients, setRecipients] = useState<Array<{ id: string; name: string; email: string }>>([{ id: `r_${Math.random().toString(36).slice(2, 7)}`, name: '', email: '' }])
+  const [sigFields, setSigFields] = useState<PlacedField[]>([])
+  const [sigFiles, setSigFiles] = useState<File[]>([])
+  const [mergedFile, setMergedFile] = useState<File | null>(null)
+  const [merging, setMerging] = useState(false)
   const sigFileRef = useRef<HTMLInputElement>(null)
+
+  // Merge selected PDFs into one combined file for placement + sending.
+  useEffect(() => {
+    if (sigForm.content_type !== 'file' || sigFiles.length === 0) { setMergedFile(null); return }
+    let cancelled = false
+    setMerging(true)
+    mergePdfs(sigFiles)
+      .then(f => { if (!cancelled) { setMergedFile(f); setMerging(false) } })
+      .catch(() => { if (!cancelled) { setMergedFile(null); setMerging(false); alert('Could not combine those PDFs. Make sure each is a valid PDF.') } })
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sigFiles, sigForm.content_type])
   const [sigSending, setSigSending] = useState(false)
   const [sigSendError, setSigSendError] = useState<string | null>(null)
-  const [sigSendSuccess, setSigSendSuccess] = useState<{ signingUrl: string } | null>(null)
+  const [sigSendSuccess, setSigSendSuccess] = useState<{ recipients: Array<{ name: string; email: string; signingUrl: string }> } | null>(null)
   const [copiedLink, setCopiedLink] = useState<string | null>(null)
   const [viewingSig, setViewingSig] = useState<any | null>(null)
   const [resendingId, setResendingId] = useState<string | null>(null)
@@ -89,24 +188,36 @@ export default function DocumentsPage() {
     setSigLoading(false)
   }
 
+  // ── Recipient helpers ──
+  function addRecipient() { setRecipients(r => [...r, { id: `r_${Math.random().toString(36).slice(2, 7)}`, name: '', email: '' }]) }
+  function updateRecipient(id: string, patch: Partial<{ name: string; email: string }>) { setRecipients(r => r.map(x => x.id === id ? { ...x, ...patch } : x)) }
+  function removeRecipient(id: string) {
+    setRecipients(r => r.length > 1 ? r.filter(x => x.id !== id) : r)
+    setSigFields(f => f.filter(x => x.signer_id !== id))   // drop that person's placed fields
+  }
+  // Recipients decorated with a color, for the field placer.
+  const signerChips = recipients.map((r, i) => ({ id: r.id, name: r.name.trim() || `Recipient ${i + 1}`, color: signerColor(i) }))
+
   async function sendSignatureRequest() {
     setSigSending(true)
     setSigSendError(null)
     setSigSendSuccess(null)
     try {
+      const valid = recipients.filter(r => r.name.trim() && r.email.trim())
+      if (!valid.length) { setSigSendError('Add at least one recipient with a name and email.'); return }
       const fd = new FormData()
       fd.append('document_name', sigForm.document_name)
-      fd.append('signer_name', sigForm.signer_name)
-      fd.append('signer_email', sigForm.signer_email)
+      fd.append('signers', JSON.stringify(valid.map(r => ({ id: r.id, name: r.name.trim(), email: r.email.trim() }))))
+      fd.append('fields', JSON.stringify(sigFields.filter(f => valid.some(r => r.id === f.signer_id))))
       if (sigForm.sender_message) fd.append('sender_message', sigForm.sender_message)
       if (sigForm.expiry_days) fd.append('expiry_days', sigForm.expiry_days)
       if (sigForm.content_type === 'text' && sigForm.document_text) fd.append('document_text', sigForm.document_text)
       if (sigForm.content_type === 'url' && sigForm.document_url_input) fd.append('document_text', `Document available at: ${sigForm.document_url_input}`)
-      if (sigForm.content_type === 'file' && sigFile) fd.append('file', sigFile)
+      if (sigForm.content_type === 'file' && mergedFile) fd.append('file', mergedFile)
       const res = await fetch('/api/signature-requests?action=send', { method: 'POST', body: fd })
       const d = await res.json()
       if (!res.ok) { setSigSendError(d.error || 'Failed to send'); return }
-      setSigSendSuccess({ signingUrl: d.signingUrl })
+      setSigSendSuccess({ recipients: d.recipients || [] })
       await loadSigRequests()
     } catch (e: any) {
       setSigSendError(e.message || 'Failed to send')
@@ -116,8 +227,11 @@ export default function DocumentsPage() {
   }
 
   function resetSigModal() {
-    setSigForm({ document_name: '', signer_name: '', signer_email: '', sender_message: '', document_text: '', expiry_days: '30', content_type: 'text', document_url_input: '' })
-    setSigFile(null)
+    setSigForm({ document_name: '', sender_message: '', document_text: '', expiry_days: '30', content_type: 'text', document_url_input: '' })
+    setRecipients([{ id: `r_${Math.random().toString(36).slice(2, 7)}`, name: '', email: '' }])
+    setSigFields([])
+    setSigFiles([])
+    setMergedFile(null)
     setSigSendError(null)
     setSigSendSuccess(null)
     setShowSendModal(false)
@@ -480,6 +594,7 @@ export default function DocumentsPage() {
         </div>
       ) : (
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+          <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-gray-50 border-b border-gray-100">
@@ -503,6 +618,7 @@ export default function DocumentsPage() {
                         <select value={editForm.doc_type || doc.doc_type} onChange={e => setEditForm((f: any) => ({ ...f, doc_type: e.target.value }))}
                           className="px-2 py-1 rounded-lg border border-gray-200 text-xs focus:outline-none focus:ring-2 focus:border-blue-400">
                           <option value="coi">COI</option>
+                          <option value="business_insurance">Business Insurance</option>
                           <option value="w9">W-9</option>
                           <option value="contract">Contract</option>
                           <option value="license">License</option>
@@ -588,6 +704,7 @@ export default function DocumentsPage() {
               })}
             </tbody>
           </table>
+          </div>
         </div>
       )}
 
@@ -604,6 +721,7 @@ export default function DocumentsPage() {
                 <label className="block text-xs font-semibold text-gray-700 mb-1">Document Type</label>
                 <select value={form.doc_type} onChange={e => setForm(f => ({ ...f, doc_type: e.target.value }))} className={inputCls}>
                   <option value="coi">Certificate of Insurance (COI)</option>
+                  <option value="business_insurance">Business Insurance (General Liability, etc.)</option>
                   <option value="w9">W-9 Form</option>
                   <option value="contract">Contract</option>
                   <option value="license">License</option>
@@ -615,10 +733,10 @@ export default function DocumentsPage() {
                 <input value={form.vendor_name} onChange={e => setForm(f => ({ ...f, vendor_name: e.target.value }))}
                   placeholder="ACME Plumbing LLC" className={inputCls} />
               </div>
-              {(form.doc_type === 'coi' || form.doc_type === 'contract' || form.doc_type === 'license') && (
+              {(form.doc_type === 'coi' || form.doc_type === 'business_insurance' || form.doc_type === 'contract' || form.doc_type === 'license') && (
                 <div>
                   <label className="block text-xs font-semibold text-gray-700 mb-1">
-                    Expiry Date {form.doc_type === 'coi' ? '(important for insurance tracking)' : ''}
+                    Expiry Date {(form.doc_type === 'coi' || form.doc_type === 'business_insurance') ? '(important for insurance tracking)' : ''}
                   </label>
                   <input type="date" value={form.expiry_date} onChange={e => setForm(f => ({ ...f, expiry_date: e.target.value }))} className={inputCls} />
                 </div>
@@ -685,6 +803,7 @@ export default function DocumentsPage() {
             </div>
           ) : (
             <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+              <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="bg-gray-50 border-b border-gray-100">
@@ -704,8 +823,16 @@ export default function DocumentsPage() {
                           {req.sender_message && <p className="text-xs text-gray-400 truncate max-w-40 mt-0.5">{req.sender_message}</p>}
                         </td>
                         <td className="px-4 py-3">
-                          <p className="text-xs font-medium text-gray-800">{req.signer_name}</p>
-                          <p className="text-xs text-gray-400">{req.signer_email}</p>
+                          {(() => {
+                            const signers = Array.isArray(req.signers) && req.signers.length ? req.signers : [{ name: req.signer_name, email: req.signer_email, status: req.status }]
+                            const signedCount = signers.filter((s: any) => s.status === 'signed').length
+                            return (
+                              <div>
+                                <p className="text-xs font-medium text-gray-800">{signers[0]?.name}{signers.length > 1 ? ` +${signers.length - 1} more` : ''}</p>
+                                <p className="text-xs text-gray-400">{signers.length > 1 ? `${signedCount} of ${signers.length} signed` : signers[0]?.email}</p>
+                              </div>
+                            )
+                          })()}
                         </td>
                         <td className="px-4 py-3">
                           <span className={`inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full font-semibold ${ss.bg} ${ss.text}`}>
@@ -717,14 +844,12 @@ export default function DocumentsPage() {
                         <td className="px-4 py-3 text-xs text-gray-500">{req.signed_at ? formatDateShort(req.signed_at) : '—'}</td>
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-1">
-                            {/* View signature if signed */}
-                            {req.status === 'signed' && req.signature_data && (
-                              <button onClick={() => setViewingSig(req)}
-                                title="View signature"
-                                className="text-xs px-2 py-1 rounded-lg bg-green-50 text-green-700 font-semibold hover:bg-green-100 transition-colors">
-                                View
-                              </button>
-                            )}
+                            {/* View the document with signatures / progress */}
+                            <button onClick={() => setViewingSig(req)}
+                              title="View document & signatures"
+                              className="text-xs px-2 py-1 rounded-lg bg-green-50 text-green-700 font-semibold hover:bg-green-100 transition-colors">
+                              View
+                            </button>
                             {/* Copy signing link */}
                             {(req.status === 'pending') && (
                               <button onClick={() => copyLink(signingUrl)}
@@ -762,6 +887,7 @@ export default function DocumentsPage() {
                   })}
                 </tbody>
               </table>
+              </div>
             </div>
           )}
         </div>
@@ -770,21 +896,45 @@ export default function DocumentsPage() {
       {/* ── View Signature Modal ─────────────────────────────────────────────── */}
       {viewingSig && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
-            <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
-              <h2 className="font-bold text-gray-900">Signature — {viewingSig.document_name}</h2>
-              <button onClick={() => setViewingSig(null)}><X size={18} className="text-gray-400" /></button>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[92vh] overflow-y-auto">
+            <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between gap-2 sticky top-0 bg-white z-10">
+              <h2 className="font-bold text-gray-900 truncate">Signed Document — {viewingSig.document_name}</h2>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                {(viewingSig.document_path || viewingSig.document_url) && (
+                  <button onClick={() => downloadSignedPdf(viewingSig)}
+                    className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg text-white" style={{ background: '#2f5a5e' }}>
+                    <Download size={13} /> Download signed PDF
+                  </button>
+                )}
+                <button onClick={() => setViewingSig(null)}><X size={18} className="text-gray-400" /></button>
+              </div>
             </div>
             <div className="p-6 space-y-4">
-              <div className="grid grid-cols-2 gap-3 text-sm">
-                <div><p className="text-xs text-gray-500">Signer</p><p className="font-semibold">{viewingSig.signer_name}</p></div>
-                <div><p className="text-xs text-gray-500">Email</p><p className="font-semibold">{viewingSig.signer_email}</p></div>
-                <div><p className="text-xs text-gray-500">Signed On</p><p className="font-semibold">{new Date(viewingSig.signed_at).toLocaleString('en-US', { month:'short', day:'numeric', year:'numeric', hour:'numeric', minute:'2-digit' })}</p></div>
-                {viewingSig.ip_address && <div><p className="text-xs text-gray-500">IP Address</p><p className="font-semibold font-mono text-xs">{viewingSig.ip_address}</p></div>}
-              </div>
-              <div className="bg-gray-50 rounded-xl p-4 flex items-center justify-center" style={{ minHeight: 100 }}>
-                <img src={viewingSig.signature_data} alt="Signature" className="max-h-24 max-w-full" />
-              </div>
+              {/* The document with signatures placed in position */}
+              <SignedDocView req={viewingSig} />
+
+              {(() => {
+                const signers = Array.isArray(viewingSig.signers) && viewingSig.signers.length
+                  ? viewingSig.signers
+                  : [{ name: viewingSig.signer_name, email: viewingSig.signer_email, status: viewingSig.status, signed_at: viewingSig.signed_at, signature_data: viewingSig.signature_data, ip_address: viewingSig.ip_address }]
+                return signers.map((s: any, i: number) => (
+                  <div key={i} className="border border-gray-100 rounded-xl p-4">
+                    <div className="grid grid-cols-2 gap-3 text-sm mb-3">
+                      <div><p className="text-xs text-gray-500">Signer</p><p className="font-semibold">{s.name}</p></div>
+                      <div><p className="text-xs text-gray-500">Email</p><p className="font-semibold text-xs">{s.email}</p></div>
+                      <div><p className="text-xs text-gray-500">Status</p><p className="font-semibold capitalize">{s.status}{s.signed_at ? ` · ${new Date(s.signed_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })}` : ''}</p></div>
+                      {s.ip_address && <div><p className="text-xs text-gray-500">IP Address</p><p className="font-semibold font-mono text-xs">{s.ip_address}</p></div>}
+                    </div>
+                    {s.signature_data ? (
+                      <div className="bg-gray-50 rounded-xl p-4 flex items-center justify-center" style={{ minHeight: 80 }}>
+                        <img src={s.signature_data} alt={`${s.name} signature`} className="max-h-24 max-w-full" />
+                      </div>
+                    ) : (
+                      <div className="bg-gray-50 rounded-xl p-4 text-center text-xs text-gray-400">Not signed yet</div>
+                    )}
+                  </div>
+                ))
+              })()}
             </div>
             <div className="px-6 pb-5">
               <button onClick={() => setViewingSig(null)} className="w-full py-2.5 rounded-xl border border-gray-200 text-sm font-semibold">Close</button>
@@ -796,7 +946,7 @@ export default function DocumentsPage() {
       {/* ── Send for Signature Modal ──────────────────────────────────────────── */}
       {showSendModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[92vh] overflow-y-auto">
             <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between sticky top-0 bg-white z-10">
               <div className="flex items-center gap-2">
                 <PenLine size={18} style={{ color: '#2f5a5e' }} />
@@ -810,25 +960,23 @@ export default function DocumentsPage() {
                 <div className="text-center py-4">
                   <CheckCircle2 size={40} className="mx-auto text-green-500 mb-3" />
                   <h3 className="font-bold text-gray-900 text-lg mb-1">Sent!</h3>
-                  <p className="text-sm text-gray-500">A signing email has been sent to <strong>{sigForm.signer_email}</strong>.</p>
+                  <p className="text-sm text-gray-500">A signing email went out to {sigSendSuccess.recipients.length} recipient{sigSendSuccess.recipients.length !== 1 ? 's' : ''}. Each has their own link.</p>
                 </div>
-                <div className="bg-gray-50 rounded-xl p-4">
-                  <p className="text-xs font-semibold text-gray-600 mb-2">Signing link (share directly if needed):</p>
-                  <div className="flex items-center gap-2">
-                    <input readOnly value={sigSendSuccess.signingUrl} className="flex-1 text-xs px-3 py-2 rounded-lg border border-gray-200 bg-white font-mono truncate" />
-                    <button onClick={() => copyLink(sigSendSuccess.signingUrl)}
-                      className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-gray-200 text-xs font-semibold hover:bg-gray-50 transition-colors">
-                      {copiedLink === sigSendSuccess.signingUrl ? <><CheckCheck size={12} className="text-green-500" /> Copied!</> : <><Copy size={12} /> Copy</>}
-                    </button>
-                  </div>
+                <div className="space-y-2">
+                  {sigSendSuccess.recipients.map(r => (
+                    <div key={r.email} className="bg-gray-50 rounded-xl p-3">
+                      <p className="text-xs font-semibold text-gray-700 mb-1.5">{r.name} · <span className="text-gray-400 font-normal">{r.email}</span></p>
+                      <div className="flex items-center gap-2">
+                        <input readOnly value={r.signingUrl} className="flex-1 text-xs px-3 py-2 rounded-lg border border-gray-200 bg-white font-mono truncate" />
+                        <button onClick={() => copyLink(r.signingUrl)}
+                          className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-gray-200 text-xs font-semibold hover:bg-gray-50 whitespace-nowrap">
+                          {copiedLink === r.signingUrl ? <><CheckCheck size={12} className="text-green-500" /> Copied!</> : <><Copy size={12} /> Copy</>}
+                        </button>
+                      </div>
+                    </div>
+                  ))}
                 </div>
-                <div className="flex gap-3">
-                  <button onClick={resetSigModal} className="flex-1 py-2.5 rounded-xl border border-gray-200 text-sm font-semibold">Close</button>
-                  <button onClick={() => { setSigSendSuccess(null); setSigForm({ document_name: '', signer_name: '', signer_email: '', sender_message: '', document_text: '', expiry_days: '30', content_type: 'text', document_url_input: '' }) }}
-                    className="flex-1 py-2.5 rounded-xl text-white text-sm font-semibold" style={{ background: '#2f5a5e' }}>
-                    Send Another
-                  </button>
-                </div>
+                <button onClick={resetSigModal} className="w-full py-2.5 rounded-xl text-white text-sm font-semibold" style={{ background: '#2f5a5e' }}>Done</button>
               </div>
             ) : (
               <div className="p-6 space-y-4">
@@ -838,17 +986,23 @@ export default function DocumentsPage() {
                     placeholder="e.g. Service Agreement — 123 Main St" className={inputCls} />
                 </div>
 
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-semibold text-gray-700 mb-1">Signer's Name <span className="text-red-500">*</span></label>
-                    <input value={sigForm.signer_name} onChange={e => setSigForm(f => ({ ...f, signer_name: e.target.value }))}
-                      placeholder="John Smith" className={inputCls} />
+                <div>
+                  <label className="block text-xs font-semibold text-gray-700 mb-1">Recipients <span className="text-red-500">*</span></label>
+                  <div className="space-y-2">
+                    {recipients.map((r, i) => (
+                      <div key={r.id} className="flex items-center gap-2">
+                        <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: signerColor(i) }} title={`Recipient ${i + 1}`} />
+                        <input value={r.name} onChange={e => updateRecipient(r.id, { name: e.target.value })} placeholder={`Recipient ${i + 1} name`} className="flex-1 px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:border-blue-400" />
+                        <input type="email" value={r.email} onChange={e => updateRecipient(r.id, { email: e.target.value })} placeholder="email@example.com" className="flex-1 px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:border-blue-400" />
+                        <button type="button" onClick={() => removeRecipient(r.id)} disabled={recipients.length === 1}
+                          className="text-gray-300 hover:text-red-500 p-1 disabled:opacity-30 flex-shrink-0"><Trash2 size={15} /></button>
+                      </div>
+                    ))}
                   </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-gray-700 mb-1">Signer's Email <span className="text-red-500">*</span></label>
-                    <input type="email" value={sigForm.signer_email} onChange={e => setSigForm(f => ({ ...f, signer_email: e.target.value }))}
-                      placeholder="john@example.com" className={inputCls} />
-                  </div>
+                  <button type="button" onClick={addRecipient} className="mt-2 flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg border border-gray-200 hover:bg-gray-50" style={{ color: '#2f5a5e' }}>
+                    <UserPlus size={13} /> Add recipient
+                  </button>
+                  <p className="text-[11px] text-gray-400 mt-1.5">Everyone gets their own signing link and can sign in any order.</p>
                 </div>
 
                 <div>
@@ -866,21 +1020,54 @@ export default function DocumentsPage() {
                       rows={6} placeholder="Paste or type the agreement text here…" className={inputCls} />
                   )}
                   {sigForm.content_type === 'file' && (
-                    <label className="flex items-center gap-3 border-2 border-dashed border-gray-200 rounded-xl px-4 py-5 cursor-pointer hover:bg-gray-50 hover:border-blue-300 transition-all">
-                      <File size={20} className="text-gray-400 flex-shrink-0" />
-                      <div>
-                        <p className="text-sm font-semibold text-gray-700">{sigFile ? sigFile.name : 'Choose PDF'}</p>
-                        <p className="text-xs text-gray-400">PDF file</p>
-                      </div>
-                      <input ref={sigFileRef} type="file" accept=".pdf" className="hidden"
-                        onChange={e => setSigFile(e.target.files?.[0] || null)} />
-                    </label>
+                    <div className="space-y-2">
+                      {sigFiles.length > 0 && (
+                        <div className="space-y-1.5">
+                          {sigFiles.map((f, i) => (
+                            <div key={i} className="flex items-center gap-2 border border-gray-200 rounded-xl px-3 py-2">
+                              <File size={15} className="text-gray-400 flex-shrink-0" />
+                              <span className="flex-1 min-w-0 truncate text-sm text-gray-700">{f.name}</span>
+                              <span className="text-[11px] text-gray-400 whitespace-nowrap">{(f.size / 1024 / 1024).toFixed(1)} MB</span>
+                              <button type="button" onClick={() => { setSigFiles(prev => prev.filter((_, idx) => idx !== i)); setSigFields([]) }}
+                                className="text-gray-300 hover:text-red-500 p-0.5 flex-shrink-0"><Trash2 size={14} /></button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      <label className="flex items-center gap-3 border-2 border-dashed border-gray-200 rounded-xl px-4 py-4 cursor-pointer hover:bg-gray-50 hover:border-blue-300 transition-all">
+                        <Plus size={18} className="text-gray-400 flex-shrink-0" />
+                        <div>
+                          <p className="text-sm font-semibold text-gray-700">{sigFiles.length ? 'Add another PDF' : 'Choose PDF(s)'}</p>
+                          <p className="text-xs text-gray-400">Select one or more — they'll be combined in order into one document</p>
+                        </div>
+                        <input ref={sigFileRef} type="file" accept=".pdf" multiple className="hidden"
+                          onChange={e => { const fs = Array.from(e.target.files || []); if (fs.length) { setSigFiles(prev => [...prev, ...fs]); setSigFields([]) } if (sigFileRef.current) sigFileRef.current.value = '' }} />
+                      </label>
+                      {merging && <p className="text-[11px] text-gray-500 flex items-center gap-1.5"><Loader2 size={11} className="animate-spin" /> Combining {sigFiles.length} PDFs…</p>}
+                      {sigFiles.length > 1 && !merging && <p className="text-[11px] text-gray-400">{sigFiles.length} PDFs combined into one signing document.</p>}
+                    </div>
                   )}
                   {sigForm.content_type === 'url' && (
                     <input value={sigForm.document_url_input} onChange={e => setSigForm(f => ({ ...f, document_url_input: e.target.value }))}
                       placeholder="https://docs.google.com/..." className={inputCls} />
                   )}
                 </div>
+
+                {((sigForm.content_type === 'text' && sigForm.document_text.trim()) || (sigForm.content_type === 'file' && mergedFile)) && (
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-700 mb-1">Signature Fields <span className="text-gray-400 font-normal">(optional — pick a recipient & field, then click the document)</span></label>
+                    <SignatureFieldPlacer
+                      file={sigForm.content_type === 'file' ? mergedFile : null}
+                      text={sigForm.content_type === 'text' ? sigForm.document_text : null}
+                      signers={signerChips}
+                      fields={sigFields}
+                      onChange={setSigFields}
+                    />
+                  </div>
+                )}
+                {sigForm.content_type === 'url' && (
+                  <p className="text-[11px] text-gray-400 -mt-1">Field placement isn't available for external URLs — the recipient signs at the bottom.</p>
+                )}
 
                 <div>
                   <label className="block text-xs font-semibold text-gray-700 mb-1">Message to Signer (optional)</label>
@@ -908,11 +1095,11 @@ export default function DocumentsPage() {
 
                 <div className="flex gap-3 pt-1">
                   <button onClick={sendSignatureRequest}
-                    disabled={sigSending || !sigForm.document_name || !sigForm.signer_name || !sigForm.signer_email}
+                    disabled={sigSending || !sigForm.document_name || !recipients.some(r => r.name.trim() && r.email.trim())}
                     className="flex-1 flex items-center justify-center gap-2 text-white font-bold py-3 rounded-xl disabled:opacity-50 shadow-sm"
                     style={{ background: '#2f5a5e' }}>
                     {sigSending ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
-                    {sigSending ? 'Sending…' : 'Send for Signature'}
+                    {sigSending ? 'Sending…' : `Send for Signature${recipients.filter(r => r.name.trim() && r.email.trim()).length > 1 ? ` (${recipients.filter(r => r.name.trim() && r.email.trim()).length})` : ''}`}
                   </button>
                   <button onClick={resetSigModal} className="px-4 py-3 rounded-xl border border-gray-200 text-sm font-semibold">Cancel</button>
                 </div>

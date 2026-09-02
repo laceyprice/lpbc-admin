@@ -781,7 +781,7 @@ export default function PermitsPage() {
   const allStatuses = ['all', ...STATUSES]
 
   return (
-    <div className="p-6 max-w-7xl mx-auto">
+    <div className="p-6 pt-16 md:pt-6 max-w-7xl mx-auto">
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
         <div>

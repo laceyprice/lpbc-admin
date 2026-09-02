@@ -724,6 +724,7 @@ function CashFlowReport({ data }: { data: any }) {
         <div className="px-5 py-4 border-b border-gray-100">
           <h3 className="text-xs font-bold text-gray-600 uppercase tracking-wider">Monthly Cash Flow</h3>
         </div>
+        <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead><tr className="bg-gray-50 border-b border-gray-100">
             {['Month', 'Inflows', 'Outflows', 'Net'].map(h => (
@@ -753,6 +754,7 @@ function CashFlowReport({ data }: { data: any }) {
             </tfoot>
           )}
         </table>
+        </div>
       </div>
 
       {/* By Account */}
@@ -761,6 +763,7 @@ function CashFlowReport({ data }: { data: any }) {
           <div className="px-5 py-4 border-b border-gray-100">
             <h3 className="text-xs font-bold text-gray-600 uppercase tracking-wider">Cash Flow by Account</h3>
           </div>
+          <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead><tr className="bg-gray-50 border-b border-gray-100">
               {['Account', 'Type', 'Net Amount'].map(h => (
@@ -777,6 +780,7 @@ function CashFlowReport({ data }: { data: any }) {
               ))}
             </tbody>
           </table>
+          </div>
         </div>
       )}
     </div>
@@ -884,6 +888,7 @@ function ReportSection({ title, lines: rawLines, totalLabel, total, color }: { t
       <div className="px-5 py-4 border-b border-gray-100">
         <h3 className="text-xs font-bold text-gray-600 uppercase tracking-wider">{title}</h3>
       </div>
+      <div className="overflow-x-auto">
       <table className="w-full text-sm">
         <tbody className="divide-y divide-gray-50">
           {lines.length === 0 ? (
@@ -902,6 +907,7 @@ function ReportSection({ title, lines: rawLines, totalLabel, total, color }: { t
           </tr>
         </tfoot>
       </table>
+      </div>
     </div>
   )
 }
@@ -913,6 +919,7 @@ function BalanceSection({ title, lines: rawLines, total, extraLine }: { title: s
       <div className="px-5 py-4 border-b border-gray-100">
         <h3 className="text-xs font-bold text-gray-600 uppercase tracking-wider">{title}</h3>
       </div>
+      <div className="overflow-x-auto">
       <table className="w-full text-sm">
         <thead><tr className="bg-gray-50 border-b border-gray-100">
           {['Account', 'Opening', 'Activity', 'Balance'].map(h => (
@@ -961,6 +968,7 @@ function BalanceSection({ title, lines: rawLines, total, extraLine }: { title: s
           </tr>
         </tfoot>
       </table>
+      </div>
     </div>
   )
 }

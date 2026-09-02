@@ -1,8 +1,8 @@
 'use client'
 import { useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { Sparkles, Loader2, ClipboardList, DollarSign, Clock, AlertTriangle, ListChecks, TrendingUp, History, Hammer, Upload, X, Image as ImageIcon, Film, FileText, Ruler, Save, FolderOpen, Plus, Trash2, Archive, Cloud, Folder, ChevronLeft, Search, Download, MapPin, Users2, Pencil, Check, RotateCcw, Wand2, CalendarDays, ExternalLink, FolderPlus, Link2, RefreshCw, Copy } from 'lucide-react'
-import DesignStudio, { DesignData } from '@/components/admin/DesignStudio'
+import { Sparkles, Loader2, ClipboardList, DollarSign, Clock, AlertTriangle, ListChecks, TrendingUp, History, Hammer, Upload, X, Image as ImageIcon, Film, FileText, Ruler, Save, FolderOpen, Plus, Trash2, Archive, Cloud, Folder, ChevronLeft, Search, Download, MapPin, Users2, Pencil, Check, RotateCcw, Wand2, CalendarDays, ExternalLink, FolderPlus, Link2, RefreshCw, Copy, ChevronDown, CheckCircle2, MessageSquare, ShoppingBag } from 'lucide-react'
+import DesignStudio, { DesignData, FinishesTab } from '@/components/admin/DesignStudio'
 import ProjectSchedule from '@/components/admin/ProjectSchedule'
 import { computeFinishCost, finishSummary, fetchPrices } from '@/lib/finishes'
 
@@ -172,6 +172,10 @@ export default function PlanJobPage() {
   const [savedPlans, setSavedPlans] = useState<JobPlanSummary[]>([])
   const [showLoadPanel, setShowLoadPanel] = useState(false)
   const [showArchived, setShowArchived] = useState(false)
+  // Landing shows the projects list; the editor only opens when a project is
+  // opened or "+ New Project" is clicked.
+  const [view, setView] = useState<'list' | 'editor'>('list')
+  const [showCompleted, setShowCompleted] = useState(false)
 
   const [uploading, setUploading] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -206,12 +210,28 @@ export default function PlanJobPage() {
   const [status, setStatus] = useState<string>('draft')
   const [sharedWithAccountId, setSharedWithAccountId] = useState<string | null>(null)
   const [worksiteOptions, setWorksiteOptions] = useState<Array<{ id: string; address: string; city: string; name?: string | null }>>([])
-  const [customerOptions, setCustomerOptions] = useState<Array<{ account_id: string; account_name: string; customer_label: string }>>([])
+  const [customerOptions, setCustomerOptions] = useState<Array<{ roleId: string; email: string; label: string; assignedProjectIds: string[] }>>([])
   const [editingEstimate, setEditingEstimate] = useState(false)
 
   // Design Studio — mood boards, sketches, before/after, AI design directions
   const [design, setDesign] = useState<DesignData>({})
   const [designStudioOpen, setDesignStudioOpen] = useState(false)
+
+  // Customer messages thread
+  const [msgInput, setMsgInput] = useState('')
+  const [sendingMsg, setSendingMsg] = useState(false)
+  async function postMessage() {
+    const text = msgInput.trim()
+    if (!text || !planId) return
+    setSendingMsg(true); setError('')
+    try {
+      const res = await fetch('/api/project-messages', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ projectId: planId, body: text }) })
+      const d = await res.json()
+      if (res.ok) { setDesign(prev => ({ ...prev, messages: d.messages } as any)); setMsgInput('') }
+      else setError(d.error || 'Could not send message')
+    } catch (e: any) { setError(e?.message || 'Could not send message') }
+    setSendingMsg(false)
+  }
 
   // Drive folder — connected Drive folder for sharing SOW / collecting COIs
   const [driveFolderId,   setDriveFolderId]   = useState<string | null>(null)
@@ -224,27 +244,61 @@ export default function PlanJobPage() {
   const [connectUrlInput, setConnectUrlInput] = useState('')
   const driveFileRef = useRef<HTMLInputElement>(null)
 
+  // Load ALL customers. Each can be assigned MANY projects (assigned_project_ids),
+  // and a project can be shared with MANY customers.
+  async function loadCustomers() {
+    try {
+      const res = await fetch('/api/user-roles')
+      const ur = await res.json()
+      if (Array.isArray(ur)) {
+        setCustomerOptions(ur.filter((u: any) => u.role === 'customer').map((u: any) => ({
+          roleId: u.id, email: u.email, label: u.display_name || u.email,
+          assignedProjectIds: Array.isArray(u.assigned_project_ids) && u.assigned_project_ids.length
+            ? u.assigned_project_ids.filter((x: any) => typeof x === 'string' && x)
+            : (u.assigned_project_id ? [u.assigned_project_id] : []),
+        })))
+      }
+    } catch {}
+  }
+
   useEffect(() => {
     (async () => {
       try {
-        const [wsRes, urRes] = await Promise.all([
-          fetch('/api/worksites'),
-          fetch('/api/user-roles'),
-        ])
-        const ws = await wsRes.json()
+        const ws = await (await fetch('/api/worksites')).json()
         if (Array.isArray(ws)) setWorksiteOptions(ws.map((w: any) => ({ id: w.id, address: w.address, city: w.city, name: w.financial_account?.name || null })))
-        const ur = await urRes.json()
-        if (Array.isArray(ur)) {
-          const customers = ur.filter((u: any) => u.role === 'customer' && u.assigned_account_id)
-          setCustomerOptions(customers.map((u: any) => ({
-            account_id: u.assigned_account_id,
-            account_name: u.assigned_account_id,
-            customer_label: u.display_name || u.email,
-          })))
-        }
       } catch {}
+      loadCustomers()
     })()
   }, [])
+
+  // Share/unshare THIS project with a customer. A project can be shared with any
+  // number of customers; each sees it read-only in their portal. We add/remove
+  // this planId from that customer's assigned_project_ids array.
+  const [sharingRole, setSharingRole] = useState<string | null>(null)
+  const [shareOpen, setShareOpen] = useState(false)
+  const shareRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!shareOpen) return
+    const h = (e: MouseEvent) => { if (shareRef.current && !shareRef.current.contains(e.target as Node)) setShareOpen(false) }
+    document.addEventListener('mousedown', h)
+    return () => document.removeEventListener('mousedown', h)
+  }, [shareOpen])
+  async function toggleShareCustomer(roleId: string, share: boolean) {
+    if (!planId) { alert('Save the project first, then share it with a customer.'); return }
+    const c = customerOptions.find(c => c.roleId === roleId)
+    if (!c) return
+    const next = share
+      ? Array.from(new Set([...c.assignedProjectIds, planId]))
+      : c.assignedProjectIds.filter(pid => pid !== planId)
+    // Optimistic update so the checkbox flips instantly
+    setCustomerOptions(prev => prev.map(x => x.roleId === roleId ? { ...x, assignedProjectIds: next } : x))
+    setSharingRole(roleId)
+    try {
+      await fetch('/api/user-roles', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: roleId, assigned_project_ids: next }) })
+      await loadCustomers()
+    } catch { await loadCustomers() }
+    finally { setSharingRole(null) }
+  }
 
   async function importFromDrive(files: Array<{ fileId: string; fileName: string; mimeType: string }>) {
     if (!files.length) return
@@ -266,6 +320,9 @@ export default function PlanJobPage() {
       if (!res.ok) { setError(d.error || 'Drive import failed'); setUploading(false); return }
       const uploaded = d.uploaded || []
       setAttachments(prev => [...prev, ...uploaded])
+      // Drive imports update attachments + the mood board directly (not through a
+      // field that already marks the plan dirty) — flag it so autosave persists them.
+      if (uploaded.length) markDirty()
       // If Drive was opened from Design Studio Mood Board, auto-add images to the board
       if (drivePickerMoodBoard) {
         const images = uploaded.filter((a: any) => typeof a.type === 'string' && a.type.startsWith('image/'))
@@ -403,20 +460,21 @@ export default function PlanJobPage() {
       setDriveFiles([])
       if (fid) loadDriveFiles(fid)
       clearDirty()
+      setView('editor')
     } catch (e: any) {
       setError(e?.message || 'Failed to load plan')
     }
     isLoadingPlanRef.current = false
   }
 
-  async function save() {
+  async function save(overrideDesign?: DesignData) {
     setSaving(true)
     setError('')
     try {
       const body: any = {
         title: title || deriveTitle(description) || 'Untitled Plan',
         description, measurements, session_id: sessionId,
-        attachments, estimate, design,
+        attachments, estimate, design: overrideDesign ?? design,
         worksite_id: worksiteId, status, shared_with_account_id: sharedWithAccountId,
         drive_folder_id: driveFolderId, drive_folder_name: driveFolderName,
       }
@@ -472,6 +530,46 @@ export default function PlanJobPage() {
       alert(`Floor plan copied into "${dest?.title || 'the plan'}".`)
       await loadPlansList()
     } catch (e: any) { alert('Could not copy floor plan: ' + (e?.message || 'error')) }
+  }
+
+  // Duplicate the plan currently open in the editor into a brand-new draft,
+  // carrying a deep copy of the floor plan (and the rest of the design) so the
+  // user can spin off electrical / renovation / "as-built vs proposed" sheets
+  // from the same geometry without touching the original.
+  async function duplicateAsNewDraft() {
+    const baseTitle = title || deriveTitle(description) || 'Untitled Plan'
+    const suggested = `${baseTitle} — Electrical`
+    const newTitle = window.prompt(
+      'Name the new draft (it gets a copy of this floor plan, linked to the same project):',
+      suggested
+    )
+    if (newTitle == null) return // cancelled
+    // Deep-clone the design so edits to the new draft never mutate the original's
+    // floor plan (walls/openings/fixtures are nested objects).
+    let clonedDesign: any = {}
+    try { clonedDesign = JSON.parse(JSON.stringify(design || {})) } catch { clonedDesign = { ...(design as any) } }
+    setSaving(true); setError('')
+    try {
+      const body: any = {
+        title: newTitle.trim() || `${baseTitle} (copy)`,
+        description, measurements,
+        session_id: newSessionId(),   // its own storage namespace — never shares files with the original
+        attachments: [],              // start clean; photos belong to the source draft
+        estimate: null,               // a renovation/electrical sheet gets its own numbers
+        design: clonedDesign,
+        worksite_id: worksiteId,       // stays under the same project
+        status: 'draft',
+        shared_with_account_id: null,
+      }
+      const res = await fetch('/api/job-plans', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      const d = await res.json()
+      if (!res.ok) { setError(d.error || 'Could not duplicate plan'); setSaving(false); return }
+      await loadPlansList()
+      setSaving(false)
+      await loadPlan(d.id)   // open the new draft so the user starts editing the copy
+    } catch (e: any) {
+      setError(e?.message || 'Could not duplicate plan'); setSaving(false)
+    }
   }
 
   // Copy this plan's floor plan INTO another chosen plan (writes it directly).
@@ -943,33 +1041,118 @@ export default function PlanJobPage() {
   const isImage = (t: string) => t.startsWith('image/')
   const isVideo = (t: string) => t.startsWith('video/')
 
+  // Active vs completed projects for the landing lists.
+  const activePlans = savedPlans.filter(p => (p.status || 'draft') !== 'completed')
+  const completedPlans = savedPlans.filter(p => (p.status || 'draft') === 'completed')
+
+  function renderPlanRow(p: JobPlanSummary) {
+    return (
+      <div key={p.id} className={`py-2.5 flex items-center gap-3 ${p.is_archived ? 'opacity-50' : ''}`}>
+        <button onClick={() => loadPlan(p.id)} className="flex-1 min-w-0 text-left hover:bg-gray-50 rounded-lg px-2 py-1 -mx-2">
+          <div className="font-semibold text-gray-900 text-sm truncate flex items-center gap-2">
+            {p.title}
+            {(() => { const st = PLAN_STATUS_LABEL[p.status || 'draft'] || PLAN_STATUS_LABEL.draft
+              return <span className={`text-[10px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded ${st.color}`}>{st.label}</span> })()}
+            {(() => {
+              const sharedTo = customerOptions.filter(c => c.assignedProjectIds.includes(p.id))
+              if (!sharedTo.length && !p.shared_with_account_id) return null
+              const label = sharedTo.length === 0 ? 'Shared' : sharedTo.length === 1 ? sharedTo[0].label : `${sharedTo.length} customers`
+              return <span title={sharedTo.length ? `Shared with ${sharedTo.map(c => c.label).join(', ')}` : 'Shared with customer'} className="text-[10px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 flex items-center gap-0.5"><Users2 size={9} /> {label}</span>
+            })()}
+          </div>
+          <div className="text-[11px] text-gray-500 truncate">
+            {p.worksite ? <span className="inline-flex items-center gap-0.5 text-gray-400 mr-1.5"><MapPin size={10} />{p.worksite.address}{p.worksite.city ? `, ${p.worksite.city}` : ''} ·</span> : null}
+            {p.description}
+          </div>
+          <div className="text-[10px] text-gray-400 mt-0.5">Updated {new Date(p.updated_at).toLocaleDateString()} {new Date(p.updated_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
+        </button>
+        <select value={p.worksite_id || ''} onChange={e => assignWorksite(p, e.target.value)} title="Assign to project"
+          className="text-[11px] border border-gray-200 rounded-lg px-1.5 py-1 bg-white max-w-[150px] focus:outline-none focus:ring-1 focus:ring-blue-400">
+          <option value="">— Assign project —</option>
+          {worksiteOptions.map(w => <option key={w.id} value={w.id}>{w.name ? `${w.name} — ` : ''}{w.address}{w.city ? `, ${w.city}` : ''}</option>)}
+        </select>
+        {savedPlans.length > 1 && (
+          <select value="" onChange={e => { const v = e.target.value; e.currentTarget.value = ''; if (v) copyFloorplanToPlan(p, v) }}
+            title="Copy this plan's floor plan into another plan"
+            className="text-[11px] border border-gray-200 rounded-lg px-1.5 py-1 bg-white max-w-[120px] text-gray-600 focus:outline-none focus:ring-1 focus:ring-teal-400">
+            <option value="">Copy plan →</option>
+            {savedPlans.filter(x => x.id !== p.id).map(x => <option key={x.id} value={x.id}>{x.title}</option>)}
+          </select>
+        )}
+        <button onClick={() => toggleArchive(p)} title={p.is_archived ? 'Unarchive' : 'Archive'} className="text-gray-300 hover:text-blue-600 p-1"><Archive size={13} /></button>
+        <button onClick={() => deletePlan(p.id, p.title)} title="Delete" className="text-gray-300 hover:text-red-500 p-1"><Trash2 size={13} /></button>
+      </div>
+    )
+  }
+
   return (
     <div className="p-6 md:p-8 pt-16 md:pt-8 max-w-5xl mx-auto">
       {/* Header */}
       <div className="mb-6 flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-2xl font-extrabold text-gray-900 flex items-center gap-2"><Sparkles size={22} style={{ color: '#b8895a' }} /> Plan a New Job</h1>
-          <p className="text-gray-500 text-sm mt-0.5">Save drafts, come back later, generate estimates with AI vision + your bookkeeping history</p>
+          <h1 className="text-2xl font-extrabold text-gray-900 flex items-center gap-2">
+            <Sparkles size={22} style={{ color: '#b8895a' }} /> {view === 'list' ? 'Plan & Design Studio' : 'Plan a New Job'}
+          </h1>
+          <p className="text-gray-500 text-sm mt-0.5">
+            {view === 'list' ? 'Your active and completed projects — open one to edit, or start a new project.' : 'Save drafts, come back later, generate estimates with AI vision + your bookkeeping history'}
+          </p>
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={() => setShowLoadPanel(!showLoadPanel)}
-            className="flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-xl border border-gray-200 hover:bg-gray-50">
-            <FolderOpen size={13} /> My Plans ({savedPlans.length})
-          </button>
-          <button onClick={reset}
-            className="flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-xl border border-gray-200 hover:bg-gray-50">
-            <Plus size={13} /> New
+          {view === 'editor' && (
+            <button onClick={() => { setView('list'); loadPlansList() }}
+              className="flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-xl border border-gray-200 hover:bg-gray-50">
+              <ChevronLeft size={13} /> Projects
+            </button>
+          )}
+          <button onClick={() => { reset(); setView('editor') }}
+            className="flex items-center gap-1.5 text-xs font-bold px-3 py-2 rounded-xl text-white shadow-sm" style={{ background: '#b8895a' }}>
+            <Plus size={13} /> New Project
           </button>
         </div>
       </div>
 
-      {/* ── Section quick-links ──────────────────────────────────────── */}
-      <div className="flex items-center gap-2 mb-5 flex-wrap">
+      {/* ── Landing: active + completed projects ─────────────────────── */}
+      {view === 'list' && (
+        <>
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 mb-5">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="font-bold text-gray-900 text-sm flex items-center gap-2"><FolderOpen size={14} /> Active Projects ({activePlans.length})</h2>
+              <label className="flex items-center gap-1 text-[11px] text-gray-500 cursor-pointer">
+                <input type="checkbox" checked={showArchived} onChange={e => setShowArchived(e.target.checked)} /> Show archived
+              </label>
+            </div>
+            {activePlans.length === 0 ? (
+              <div className="text-center py-6 text-gray-400 text-sm">No active projects yet — click <strong>+ New Project</strong> to start one.</div>
+            ) : (
+              <div className="divide-y divide-gray-100">{activePlans.map(renderPlanRow)}</div>
+            )}
+          </div>
+
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 mb-5">
+            <button onClick={() => setShowCompleted(v => !v)} className="w-full flex items-center justify-between">
+              <h2 className="font-bold text-gray-900 text-sm flex items-center gap-2"><CheckCircle2 size={14} className="text-emerald-600" /> Completed Projects ({completedPlans.length})</h2>
+              <ChevronDown size={16} className={`text-gray-400 transition-transform ${showCompleted ? 'rotate-180' : ''}`} />
+            </button>
+            {showCompleted && (
+              completedPlans.length === 0
+                ? <div className="text-center py-6 text-gray-400 text-sm mt-2">No completed projects yet.</div>
+                : <div className="divide-y divide-gray-100 mt-2">{completedPlans.map(renderPlanRow)}</div>
+            )}
+          </div>
+        </>
+      )}
+
+      {view === 'editor' && (<>
+
+      {/* ── Section quick-links (sticky to the top as you scroll) ──────── */}
+      <div className="sticky top-0 z-30 -mx-6 md:-mx-8 px-6 md:px-8 py-2.5 mb-5 bg-gray-50/95 backdrop-blur-sm flex items-center gap-2 flex-wrap border-b border-gray-100">
         {([
-          { id: 'sec-overview', label: 'Overview',  Icon: ClipboardList },
-          { id: 'sec-schedule', label: 'Schedule',  Icon: CalendarDays },
-          { id: 'sec-drive',    label: 'Drive',     Icon: Folder },
-          { id: 'sec-estimate', label: 'Estimate',  Icon: DollarSign },
+          { id: 'sec-overview',  label: 'Overview',  Icon: ClipboardList },
+          { id: 'sec-schedule',  label: 'Schedule',  Icon: CalendarDays },
+          { id: 'sec-drive',     label: 'Drive',     Icon: Folder },
+          { id: 'sec-finishes',  label: 'Finishes',  Icon: ShoppingBag },
+          { id: 'sec-estimate',  label: 'Estimate',  Icon: DollarSign },
+          { id: 'sec-messages',  label: 'Messages',  Icon: MessageSquare },
         ] as const).map(t => (
           <button key={t.id}
             onClick={() => document.getElementById(t.id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
@@ -982,66 +1165,11 @@ export default function PlanJobPage() {
           style={{ borderColor: '#e8d9c8', background: '#fbf3ec', color: '#9a6a3c' }}>
           <Wand2 size={12} /> Design Studio
           {(() => {
-            const c = (design.board?.length || 0) + (design.sketches?.length || 0) + (design.comparisons?.length || 0) + (design.ai_suggestions?.length || 0)
+            const c = (design.board?.length || 0) + (design.sketches?.length || 0) + (design.comparisons?.length || 0) + (design.ai_suggestions?.length || 0) + (design.finish_links?.length || 0)
             return c > 0 ? <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 ml-0.5">{c}</span> : null
           })()}
         </button>
       </div>
-
-      {/* Saved plans panel */}
-      {showLoadPanel && (
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 mb-5">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="font-bold text-gray-900 text-sm flex items-center gap-2"><FolderOpen size={14} /> Saved plans</h2>
-            <div className="flex items-center gap-3">
-              <label className="flex items-center gap-1 text-[11px] text-gray-500 cursor-pointer">
-                <input type="checkbox" checked={showArchived} onChange={e => setShowArchived(e.target.checked)} /> Show archived
-              </label>
-              <button onClick={() => setShowLoadPanel(false)}><X size={14} className="text-gray-400" /></button>
-            </div>
-          </div>
-          {savedPlans.length === 0 ? (
-            <div className="text-center py-6 text-gray-400 text-sm">No saved plans yet.</div>
-          ) : (
-            <div className="divide-y divide-gray-100">
-              {savedPlans.map(p => (
-                <div key={p.id} className={`py-2.5 flex items-center gap-3 ${p.is_archived ? 'opacity-50' : ''}`}>
-                  <button onClick={() => loadPlan(p.id)} className="flex-1 min-w-0 text-left hover:bg-gray-50 rounded-lg px-2 py-1 -mx-2">
-                    <div className="font-semibold text-gray-900 text-sm truncate flex items-center gap-2">
-                      {p.title}
-                      {(() => { const st = PLAN_STATUS_LABEL[p.status || 'draft'] || PLAN_STATUS_LABEL.draft
-                        return <span className={`text-[10px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded ${st.color}`}>{st.label}</span> })()}
-                      {p.shared_with_account_id && (
-                        <span title="Shared with customer" className="text-[10px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 flex items-center gap-0.5"><Users2 size={9} /> Shared</span>
-                      )}
-                    </div>
-                    <div className="text-[11px] text-gray-500 truncate">
-                      {p.worksite ? <span className="inline-flex items-center gap-0.5 text-gray-400 mr-1.5"><MapPin size={10} />{p.worksite.address}{p.worksite.city ? `, ${p.worksite.city}` : ''} ·</span> : null}
-                      {p.description}
-                    </div>
-                    <div className="text-[10px] text-gray-400 mt-0.5">Updated {new Date(p.updated_at).toLocaleDateString()} {new Date(p.updated_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
-                  </button>
-                  <select value={p.worksite_id || ''} onChange={e => assignWorksite(p, e.target.value)} title="Assign to project"
-                    className="text-[11px] border border-gray-200 rounded-lg px-1.5 py-1 bg-white max-w-[150px] focus:outline-none focus:ring-1 focus:ring-blue-400">
-                    <option value="">— Assign project —</option>
-                    {worksiteOptions.map(w => <option key={w.id} value={w.id}>{w.name ? `${w.name} — ` : ''}{w.address}{w.city ? `, ${w.city}` : ''}</option>)}
-                  </select>
-                  {savedPlans.length > 1 && (
-                    <select value="" onChange={e => { const v = e.target.value; e.currentTarget.value = ''; if (v) copyFloorplanToPlan(p, v) }}
-                      title="Copy this plan's floor plan into another plan"
-                      className="text-[11px] border border-gray-200 rounded-lg px-1.5 py-1 bg-white max-w-[120px] text-gray-600 focus:outline-none focus:ring-1 focus:ring-teal-400">
-                      <option value="">Copy plan →</option>
-                      {savedPlans.filter(x => x.id !== p.id).map(x => <option key={x.id} value={x.id}>{x.title}</option>)}
-                    </select>
-                  )}
-                  <button onClick={() => toggleArchive(p)} title={p.is_archived ? 'Unarchive' : 'Archive'} className="text-gray-300 hover:text-blue-600 p-1"><Archive size={13} /></button>
-                  <button onClick={() => deletePlan(p.id, p.title)} title="Delete" className="text-gray-300 hover:text-red-500 p-1"><Trash2 size={13} /></button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
 
       {/* Title + status bar */}
       <div className="bg-white rounded-2xl shadow-sm border border-gray-100 px-4 py-3 mb-5 flex items-center gap-3 flex-wrap">
@@ -1062,13 +1190,13 @@ export default function PlanJobPage() {
         </div>
         {(design as any).floorplan?.walls?.length > 0 && savedPlans.filter(p => p.id !== planId).length > 0 && (
           <select value="" onChange={e => { const v = e.target.value; e.currentTarget.value = ''; if (v) copyCurrentFloorplanTo(v) }}
-            title="Copy this plan's floor plan into another project"
+            title="Copy this plan's floor plan into another existing plan"
             className="text-xs border border-teal-300 text-teal-700 rounded-xl px-2 py-2 bg-teal-50 max-w-[180px] focus:outline-none focus:ring-1 focus:ring-teal-400">
             <option value="">⧉ Copy floor plan to…</option>
             {savedPlans.filter(p => p.id !== planId).map(p => <option key={p.id} value={p.id}>{p.title}</option>)}
           </select>
         )}
-        <button onClick={save} disabled={saving || (!description && !measurements && attachments.length === 0)}
+        <button onClick={() => save()} disabled={saving || (!description && !measurements && attachments.length === 0)}
           className="flex items-center gap-1.5 text-sm font-bold px-4 py-2 rounded-xl border border-gray-200 hover:bg-gray-50 disabled:opacity-50">
           {saving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
           {planId ? 'Save Changes' : 'Save Draft'}
@@ -1099,20 +1227,62 @@ export default function PlanJobPage() {
           </select>
         </div>
         <div>
-          <label className="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1 flex items-center gap-1"><Users2 size={11} /> Share with Customer</label>
-          <select value={sharedWithAccountId || ''} onChange={e => setSharedWithAccountId(e.target.value || null)}
-            className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:border-blue-400 bg-white">
-            <option value="">— Not shared —</option>
-            {customerOptions.map(c => <option key={c.account_id} value={c.account_id}>{c.customer_label}</option>)}
-          </select>
-          {sharedWithAccountId && status === 'draft' && (
-            <p className="text-[10px] text-amber-600 mt-1">Customer won't see this until status moves past Draft.</p>
+          <label className="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1 flex items-center gap-1"><Users2 size={11} /> Share with Customers</label>
+          {!planId ? (
+            <>
+              <div className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm bg-gray-50 text-gray-400">— Not shared —</div>
+              <p className="text-[10px] text-amber-600 mt-1">Save the project first, then share it with customers.</p>
+            </>
+          ) : customerOptions.length === 0 ? (
+            <>
+              <div className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm bg-gray-50 text-gray-400">No customers yet</div>
+              <p className="text-[10px] text-gray-400 mt-1">Add a customer in User Management first.</p>
+            </>
+          ) : (
+            <>
+              <div className="relative" ref={shareRef}>
+                <button type="button" onClick={() => setShareOpen(o => !o)}
+                  className="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-xl border border-gray-200 text-sm bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:border-blue-400">
+                  <span className="truncate">
+                    {(() => {
+                      const sel = customerOptions.filter(c => c.assignedProjectIds.includes(planId))
+                      return sel.length === 0 ? <span className="text-gray-400">— Not shared —</span>
+                        : sel.length === 1 ? <span className="text-gray-700">{sel[0].label}</span>
+                        : <span className="text-gray-700">{sel.length} customers</span>
+                    })()}
+                  </span>
+                  <ChevronDown size={14} className={`text-gray-400 flex-shrink-0 transition-transform ${shareOpen ? 'rotate-180' : ''}`} />
+                </button>
+                {shareOpen && (
+                  <div className="absolute z-20 mt-1 w-full rounded-xl border border-gray-200 bg-white shadow-lg max-h-56 overflow-auto divide-y divide-gray-50">
+                    {customerOptions.map(c => {
+                      const shared = c.assignedProjectIds.includes(planId)
+                      const otherCount = c.assignedProjectIds.filter(pid => pid !== planId).length
+                      return (
+                        <label key={c.roleId} className="flex items-center gap-2 px-3 py-2 text-sm cursor-pointer hover:bg-gray-50">
+                          <input type="checkbox" checked={shared} disabled={sharingRole === c.roleId}
+                            onChange={e => toggleShareCustomer(c.roleId, e.target.checked)}
+                            className="w-4 h-4 rounded border-gray-300" style={{ accentColor: '#b8895a' }} />
+                          <span className="flex-1 truncate text-gray-700">{c.label}</span>
+                          {otherCount > 0 && <span className="text-[9px] text-gray-400 whitespace-nowrap">+{otherCount} other{otherCount > 1 ? 's' : ''}</span>}
+                        </label>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+              {(() => {
+                const n = customerOptions.filter(c => c.assignedProjectIds.includes(planId)).length
+                return <p className="text-[10px] text-gray-400 mt-1">{n === 0 ? 'Not shared yet. ' : `Shared with ${n} customer${n > 1 ? 's' : ''}. `}They see this project read-only in their portal.</p>
+              })()}
+            </>
           )}
         </div>
       </div>
 
+
       {/* Input panel */}
-      <div id="sec-overview" className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5 mb-6 space-y-4">
+      <div id="sec-overview" className="scroll-mt-24 bg-white rounded-2xl shadow-sm border border-gray-100 p-5 mb-6 space-y-4">
         <div>
           <label className="block text-sm font-semibold text-gray-700 mb-2">Job description</label>
           <textarea
@@ -1203,7 +1373,7 @@ export default function PlanJobPage() {
       </div>
 
       {/* ── Project Schedule ─────────────────────────────────────────────── */}
-      <div id="sec-schedule" className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden mb-5">
+      <div id="sec-schedule" className="scroll-mt-24 bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden mb-5">
         <div className="px-5 py-3 border-b border-gray-100 flex items-center gap-2">
           <CalendarDays size={14} style={{ color: '#b8895a' }} />
           <h2 className="font-bold text-gray-900 text-sm">Project Schedule</h2>
@@ -1221,7 +1391,7 @@ export default function PlanJobPage() {
       </div>
 
       {/* ── Project Drive Folder ─────────────────────────────────────────── */}
-      <div id="sec-drive" className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden mb-6">
+      <div id="sec-drive" className="scroll-mt-24 bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden mb-6">
         <div className="px-5 py-3 border-b border-gray-100 flex items-center gap-2">
           <Folder size={14} style={{ color: '#b8895a' }} />
           <h2 className="font-bold text-gray-900 text-sm">Project Drive Folder</h2>
@@ -1349,7 +1519,15 @@ export default function PlanJobPage() {
         </div>
       </div>
 
-      <div id="sec-estimate" />
+      {/* Finishes & Links — product sourcing list (pulls the item image from the link) */}
+      <div id="sec-finishes" className="scroll-mt-24 bg-white rounded-2xl shadow-sm border border-gray-100 p-5 mb-6">
+        <h2 className="text-sm font-bold text-gray-900 flex items-center gap-2 mb-3"><ShoppingBag size={15} /> Finishes &amp; Links</h2>
+        <FinishesTab items={(design as any).finish_links || []} sessionId={sessionId} saving={saving}
+          onSet={list => { setDesign(prev => ({ ...prev, finish_links: list } as any)); markDirty() }}
+          onSave={async list => { const nd = { ...design, finish_links: list } as any; setDesign(nd); await save(nd) }} />
+      </div>
+
+      <div id="sec-estimate" className="scroll-mt-24" />
 
       {loading && (
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-8 text-center text-gray-400">
@@ -1898,6 +2076,50 @@ export default function PlanJobPage() {
         </div>
       )}
 
+      {/* Customer messages thread — pinned to the bottom of the page */}
+      <div id="sec-messages" className="scroll-mt-24 bg-white rounded-2xl shadow-sm border border-gray-100 p-5 mb-6">
+        <h2 className="text-sm font-bold text-gray-900 flex items-center gap-2 mb-3"><MessageSquare size={15} /> Customer Messages
+          <span className="text-[11px] font-normal text-gray-400">— each message emails the customer (and they email you back)</span>
+        </h2>
+        {!planId ? (
+          <p className="text-xs text-gray-400">Save the project first, then you can message your customer here.</p>
+        ) : (
+          <>
+            {(() => {
+              const messages = ((design as any).messages || []) as Array<{ id: string; role: string; name: string; body: string; created_at: string }>
+              if (!messages.length) return <p className="text-xs text-gray-400 mb-3">No messages yet — start the conversation below.</p>
+              return (
+                <div className="space-y-2.5 mb-3 max-h-96 overflow-y-auto pr-1">
+                  {messages.map(m => {
+                    const mine = m.role === 'admin'
+                    return (
+                      <div key={m.id} className={`flex ${mine ? 'justify-end' : 'justify-start'}`}>
+                        <div className={`max-w-[75%] rounded-2xl px-3.5 py-2 ${mine ? 'text-white' : 'bg-gray-100 text-gray-800'}`} style={mine ? { background: '#b8895a' } : {}}>
+                          <div className={`text-[10px] font-semibold mb-0.5 ${mine ? 'text-white/80' : 'text-gray-500'}`}>{mine ? 'You' : m.name} · {new Date(m.created_at).toLocaleDateString()} {new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
+                          <div className="text-sm whitespace-pre-wrap break-words">{m.body}</div>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )
+            })()}
+            <div className="flex items-end gap-2">
+              <textarea value={msgInput} onChange={e => setMsgInput(e.target.value)} rows={2}
+                onKeyDown={e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); postMessage() } }}
+                placeholder="Write a message to your customer…  (Ctrl+Enter to send)"
+                className="flex-1 px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:border-blue-400 resize-none" />
+              <button onClick={postMessage} disabled={sendingMsg || !msgInput.trim()}
+                className="flex items-center gap-1.5 text-sm font-bold text-white px-4 py-2.5 rounded-xl shadow-sm disabled:opacity-50" style={{ background: '#b8895a' }}>
+                {sendingMsg ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />} Send
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+
+      </>)}
+
       {previewing && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4" onClick={() => setPreviewing(null)}>
           <button className="absolute top-4 right-4 text-white bg-white/10 hover:bg-white/20 rounded-full p-2"><X size={20} /></button>
@@ -1914,7 +2136,7 @@ export default function PlanJobPage() {
         sessionId={sessionId}
         description={description}
         measurements={measurements}
-        onAddAttachments={atts => setAttachments(prev => [...prev, ...atts])}
+        onAddAttachments={atts => { setAttachments(prev => [...prev, ...atts]); if (atts.length) markDirty() }}
         onOpenDrivePicker={() => { setDrivePickerMoodBoard(true); setDrivePickerOpen(true) }}
       />
 

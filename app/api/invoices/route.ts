@@ -3,6 +3,37 @@ export const dynamic = 'force-dynamic'
 import { createServerClient } from '@/lib/supabase'
 import { basicGrammarFix, generateInvoiceNumber } from '@/lib/utils'
 
+// Create or update a contact from an invoice's customer fields, so every
+// invoiced customer becomes a reusable contact (auto-fill). Works for
+// phone-only customers (email is NOT required). De-dupes by contact_id, then
+// email, then exact phone. `src` accepts either request body or saved row.
+async function upsertContactFromInvoice(supabase: any, src: any, knownContactId?: string | null) {
+  const nameParts = (src.customer_name || '').trim().split(/\s+/)
+  const firstName = nameParts[0] || ''
+  const lastName = nameParts.slice(1).join(' ') || ''
+  const email = (src.customer_email || '').trim() || null
+  const phone = (src.customer_phone || '').trim() || null
+  if (!firstName || (!email && !phone)) return   // need a name + some way to reach them
+
+  let contactId = knownContactId || null
+  if (!contactId && email) {
+    const { data } = await supabase.from('contacts').select('id').eq('email', email).limit(1)
+    if (data && data.length) contactId = data[0].id
+  }
+  if (!contactId && phone) {
+    const { data } = await supabase.from('contacts').select('id').eq('phone', phone).limit(1)
+    if (data && data.length) contactId = data[0].id
+  }
+  const contactData: Record<string, any> = { first_name: firstName, last_name: lastName }
+  if (email) contactData.email = email
+  if (phone) contactData.phone = phone
+  if (src.job_address) contactData.address = src.job_address
+  if (src.company_name) contactData.company_name = src.company_name
+
+  if (contactId) await supabase.from('contacts').update(contactData).eq('id', contactId)
+  else await supabase.from('contacts').insert({ ...contactData, source: 'invoice' })
+}
+
 // Auto-upsert a worksite when an invoice has a job_address.
 // No-op if no address provided or if a worksite with the same address already exists.
 async function ensureWorksite(supabase: any, opts: { job_address?: string | null; jobsite_city?: string | null; customer_name?: string | null; customer_phone?: string | null }) {
@@ -82,36 +113,10 @@ export async function POST(req: NextRequest) {
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-  // Auto-upsert contact: update existing or create new
+  // Auto-upsert contact so every invoiced customer becomes a reusable contact —
+  // works for phone-only customers too (email no longer required).
   try {
-    const nameParts = (body.customer_name || '').trim().split(/\s+/)
-    const firstName = nameParts[0] || ''
-    const lastName = nameParts.slice(1).join(' ') || ''
-    if (firstName && body.customer_email) {
-      // Check by contact_id first, then by email
-      let contactId = body.contact_id
-      if (!contactId) {
-        const { data: byEmail } = await supabase
-          .from('contacts')
-          .select('id')
-          .eq('email', body.customer_email)
-          .limit(1)
-        if (byEmail && byEmail.length > 0) contactId = byEmail[0].id
-      }
-      const contactData: Record<string, any> = {
-        first_name: firstName,
-        last_name: lastName,
-        email: body.customer_email,
-      }
-      if (body.customer_phone) contactData.phone = body.customer_phone
-      if (body.job_address) contactData.address = body.job_address
-
-      if (contactId) {
-        await supabase.from('contacts').update(contactData).eq('id', contactId)
-      } else {
-        await supabase.from('contacts').insert(contactData)
-      }
-    }
+    await upsertContactFromInvoice(supabase, body, body.contact_id)
   } catch (e) { console.error('Auto-upsert contact failed:', e) }
 
   // Auto-create worksite if address provided
@@ -144,37 +149,9 @@ export async function PATCH(req: NextRequest) {
     .single()
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-  // Auto-update contact if customer info changed
+  // Auto-update/create contact from the saved invoice (phone-only customers too).
   try {
-    if (data.customer_email) {
-      const nameParts = (data.customer_name || '').trim().split(/\s+/)
-      const firstName = nameParts[0] || ''
-      const lastName = nameParts.slice(1).join(' ') || ''
-      if (firstName) {
-        let contactId = data.contact_id
-        if (!contactId) {
-          const { data: byEmail } = await supabase
-            .from('contacts')
-            .select('id')
-            .eq('email', data.customer_email)
-            .limit(1)
-          if (byEmail && byEmail.length > 0) contactId = byEmail[0].id
-        }
-        const contactData: Record<string, any> = {
-          first_name: firstName,
-          last_name: lastName,
-          email: data.customer_email,
-        }
-        if (data.customer_phone) contactData.phone = data.customer_phone
-        if (data.job_address) contactData.address = data.job_address
-
-        if (contactId) {
-          await supabase.from('contacts').update(contactData).eq('id', contactId)
-        } else {
-          await supabase.from('contacts').insert(contactData)
-        }
-      }
-    }
+    await upsertContactFromInvoice(supabase, data, data.contact_id)
   } catch (e) { console.error('Auto-update contact failed:', e) }
 
   // Auto-create worksite if address present

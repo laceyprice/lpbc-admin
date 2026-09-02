@@ -1344,6 +1344,14 @@ function BookkeepingPage() {
       case 'amount': av = Number(a.amount) || 0; bv = Number(b.amount) || 0; break
       case 'account': av = accountName(a.account_id) || ''; bv = accountName(b.account_id) || ''; break
       case 'check': av = a.check_number || ''; bv = b.check_number || ''; break
+      case 'status': {
+        // Group by status: Uncategorized → Categorized (ready to post) → Posted.
+        const rank = (t: any) => postedIds.has(t.id) ? 2 : (t.account_id ? 1 : 0)
+        const ra = rank(a), rb = rank(b)
+        if (ra !== rb) return (ra - rb) * dir
+        // within a status group, keep newest first
+        return (b.transaction_date || '').localeCompare(a.transaction_date || '')
+      }
       default: av = a.transaction_date || ''; bv = b.transaction_date || ''
     }
     if (av < bv) return -1 * dir

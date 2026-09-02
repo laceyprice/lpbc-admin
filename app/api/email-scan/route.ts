@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 export const dynamic = 'force-dynamic'
 import { createServerClient } from '@/lib/supabase'
+import { webSafeImage } from '@/lib/heic'
 
 const BUCKET = 'bookkeeping-images'
 
@@ -35,6 +36,7 @@ export async function GET(req: NextRequest) {
         'https://www.googleapis.com/auth/gmail.compose',
         'https://www.googleapis.com/auth/drive',          // full Drive — needed for folder create/upload
         'https://www.googleapis.com/auth/documents',
+        'https://www.googleapis.com/auth/photospicker.mediaitems.readonly', // Google Photos picker → mood board
       ],
     })
     return NextResponse.json({ authUrl })
@@ -254,13 +256,14 @@ export async function POST(req: NextRequest) {
               }
             } else {
               // ── Route to bookkeeping receipts ─────────────────
-              // Skip PDFs in receipt flow (Claude can't parse them for receipts)
-              // but still store them so user can review
-              const filePath = `receipt/${stamp}_${rand}.${ext}`
+              // HEIC → JPEG + downscale/compress so receipts don't eat storage.
+              const safe = await webSafeImage(buf, mimeType, fileName)
+              const rext = (safe.name.split('.').pop() || ext).toLowerCase()
+              const filePath = `receipt/${stamp}_${rand}.${rext}`
 
               const { error: upErr } = await supabase.storage
                 .from(BUCKET)
-                .upload(filePath, buf, { contentType: mimeType, upsert: false })
+                .upload(filePath, safe.buffer, { contentType: safe.contentType, upsert: false })
               if (upErr) {
                 console.error('Storage upload error:', upErr.message)
                 continue
@@ -273,8 +276,8 @@ export async function POST(req: NextRequest) {
                   file_url: '',
                   file_path: filePath,
                   file_name: fileName,
-                  mime_type: mimeType,
-                  size_bytes: buf.length,
+                  mime_type: safe.contentType,
+                  size_bytes: safe.buffer.length,
                   receipt_date: emailDate,
                   notes: notesStr,
                 })

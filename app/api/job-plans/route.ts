@@ -129,6 +129,19 @@ export async function PATCH(req: NextRequest) {
   if (updates.estimate && !updates.estimate_generated_at) {
     updates.estimate_generated_at = new Date().toISOString()
   }
+  // The message thread (design.messages) is owned by /api/project-messages and can
+  // be written by either party. A wholesale design save (e.g. admin autosave) must
+  // NOT drop messages it didn't know about — union them by id with what's in the DB.
+  if (updates.design && typeof updates.design === 'object') {
+    const { data: cur } = await supabase.from('job_plans').select('design').eq('id', id).single()
+    const dbMsgs = Array.isArray((cur?.design as any)?.messages) ? (cur!.design as any).messages : []
+    const incoming = Array.isArray(updates.design.messages) ? updates.design.messages : []
+    if (dbMsgs.length || incoming.length) {
+      const byId = new Map<string, any>()
+      for (const m of [...dbMsgs, ...incoming]) if (m && m.id) byId.set(m.id, m)
+      updates.design = { ...updates.design, messages: Array.from(byId.values()).sort((a, b) => (a.created_at || '').localeCompare(b.created_at || '')) }
+    }
+  }
   let updatePayload: Record<string, any> = { ...updates }
   let { data, error } = await supabase.from('job_plans').update(updatePayload).eq('id', id).select().single()
   // Retry stripping any unknown columns

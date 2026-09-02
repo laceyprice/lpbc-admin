@@ -104,10 +104,12 @@ async function getBalanceSheet(supabase: any, year: number, asOf: string | null,
       if (accountId) q = q.eq('financial_account_id', accountId)
       return q
     })(),
-    // Unpaid invoices drive the Accounts Receivable balance
+    // Unpaid invoices drive the Accounts Receivable balance. Only ISSUED invoices
+    // count — exclude quotes (not billed) and drafts (not issued), plus paid/cancelled/void.
     supabase.from('invoices')
-      .select('id, amount_due, amount_paid, invoice_status, customer_name, invoice_number')
-      .not('invoice_status', 'in', '(paid,cancelled,void)')
+      .select('id, amount_due, amount_paid, invoice_status, invoice_type, customer_name, invoice_number')
+      .neq('invoice_type', 'quote')
+      .not('invoice_status', 'in', '(paid,cancelled,void,draft)')
       .gt('amount_due', 0),
   ])
 

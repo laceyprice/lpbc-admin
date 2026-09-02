@@ -28,7 +28,7 @@ export default function GoogleConnectPage() {
   }, [])
 
   return (
-    <div className="max-w-2xl mx-auto p-8">
+    <div className="max-w-2xl mx-auto p-8 pt-16 md:pt-8">
       <h1 className="text-2xl font-bold mb-2" style={{ color: '#2f5a5e' }}>Reconnect Google</h1>
       <p className="text-gray-600 mb-6">
         This will re-authorize Google with all required scopes: Calendar, Gmail (read/send/modify/compose), Drive (read-only), and Google Docs (for Scope of Work generation).

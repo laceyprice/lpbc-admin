@@ -1,8 +1,9 @@
 'use client'
 import { useEffect, useState, useRef } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { Plus, Search, Send, CheckCircle, FileText, Loader2, X, Save, Edit3, Trash2, Upload, Camera, Receipt, FileImage, BarChart2, TrendingUp, DollarSign, Clock, AlertCircle, ExternalLink } from 'lucide-react'
+import { Plus, Search, Send, CheckCircle, FileText, Loader2, X, Save, Edit3, Trash2, Upload, Camera, Receipt, FileImage, BarChart2, TrendingUp, DollarSign, Clock, AlertCircle, ExternalLink, RotateCcw } from 'lucide-react'
 import { formatCurrency, formatDateShort, formatPhone, generateDocNumber } from '@/lib/utils'
+import { SERVICES } from '@/lib/constants'
 
 interface InvoiceAttachment {
   name: string
@@ -17,7 +18,6 @@ interface Contact { id: string; first_name: string; last_name: string; email: st
 interface Invoice { id: string; invoice_number: string; invoice_type: string; customer_name: string; customer_email: string; customer_phone: string; job_address: string; service_date: string; service_type: string; service_description: string; amount_due: number; amount_paid: number; invoice_status: string; payment_type: string; stripe_payment_link: string; contact_id: string; created_at: string; paid_at: string; sent_at?: string; last_sent_at?: string }
 
 const SC: Record<string, string> = { draft:'bg-gray-100 text-gray-600', sent:'bg-blue-100 text-blue-700', paid:'bg-green-100 text-green-700', overdue:'bg-red-100 text-red-700', approved:'bg-emerald-100 text-emerald-700' }
-const SERVICES = ['Service', 'Draw']
 
 export default function InvoicesPage() {
   const [invoices, setInvoices] = useState<Invoice[]>([])
@@ -33,7 +33,6 @@ export default function InvoicesPage() {
   const [form, setForm] = useState<Partial<Invoice>>({ invoice_type:'invoice' })
   const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState('')
-  const [contactSearch, setContactSearch] = useState('')
   const [showContactDropdown, setShowContactDropdown] = useState(false)
   const [attachments, setAttachments] = useState<InvoiceAttachment[]>([])
   const [attachLoading, setAttachLoading] = useState(false)
@@ -74,6 +73,22 @@ export default function InvoicesPage() {
       }, 500)
     }
   }, [searchParams])
+
+  // Deep-link: /admin/invoices?edit=<id> (e.g. from the Dashboard's Recent
+  // Invoices) opens that invoice straight into the edit form.
+  const editHandled = useRef(false)
+  useEffect(() => {
+    const editId = searchParams.get('edit')
+    if (!editId || editHandled.current) return
+    const inv = allInvoices.find(x => x.id === editId) || invoices.find(x => x.id === editId)
+    if (!inv) return
+    editHandled.current = true
+    setForm({ ...inv })
+    loadAttachments(inv.id)
+    setShowForm(true)
+    window.history.replaceState({}, '', '/admin/invoices')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams, allInvoices, invoices])
 
   async function loadInvoices() {
     setLoading(true)
@@ -144,6 +159,7 @@ export default function InvoicesPage() {
       const res = await fetch('/api/invoices', { method, headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) })
       if (res.ok) {
         await loadInvoices()
+        loadContacts()   // pick up any contact auto-created from this customer
         setShowForm(false)
         setForm({ invoice_type: typeFilter })
         setFormError('')
@@ -173,6 +189,19 @@ export default function InvoicesPage() {
       invoice_status: 'paid',
       amount_paid: inv.amount_due,
       paid_at: new Date().toISOString(),
+    })})
+    await loadInvoices(); setSelected(null)
+  }
+
+  async function unmarkPaid(inv: Invoice) {
+    const revertTo = (inv.last_sent_at || inv.sent_at) ? 'sent' : 'draft'
+    if (!confirm(`Unmark invoice #${inv.invoice_number} as paid? This clears the recorded payment and reverts it to "${revertTo}".`)) return
+    await fetch('/api/invoices', { method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({
+      id: inv.id,
+      invoice_status: revertTo,
+      amount_paid: 0,
+      paid_at: null,
+      payment_type: null,
     })})
     await loadInvoices(); setSelected(null)
   }
@@ -314,7 +343,7 @@ export default function InvoicesPage() {
   // Quotes are excluded since they aren't "billed" until converted to invoices.
   const headerSet = allInvoices.filter(i => i.invoice_type !== 'quote')
   const totalBilled = headerSet.reduce((s, i) => s + (i.amount_due||0), 0)
-  const totalDue = headerSet.filter(i => i.invoice_status !== 'paid' && i.invoice_status !== 'cancelled').reduce((s, i) => s + Math.max(0, (i.amount_due||0) - (i.amount_paid||0)), 0)
+  const totalDue = headerSet.filter(i => !['paid', 'cancelled', 'draft'].includes(i.invoice_status)).reduce((s, i) => s + Math.max(0, (i.amount_due||0) - (i.amount_paid||0)), 0)
   const totalPaid = headerSet.reduce((s, i) => s + (i.amount_paid||0), 0)
 
   const inputCls = 'w-full px-3 py-2.5 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:border-blue-400'
@@ -337,7 +366,6 @@ export default function InvoicesPage() {
                 invoice_type: typeFilter,
                 invoice_number: generateDocNumber(typeFilter as 'invoice' | 'quote', invoices),
               })
-              setContactSearch('')
               setShowContactDropdown(false)
               setShowForm(true)
             }}
@@ -433,6 +461,12 @@ export default function InvoicesPage() {
                             <CheckCircle size={13} />
                           </button>
                         )}
+                        {inv.invoice_status === 'paid' && (
+                          <button onClick={() => unmarkPaid(inv)} title="Unmark paid"
+                            className="p-1.5 rounded-lg bg-amber-50 text-amber-600 hover:bg-amber-100 transition-colors">
+                            <RotateCcw size={13} />
+                          </button>
+                        )}
                         <button onClick={() => { setForm({...inv}); loadAttachments(inv.id); setShowForm(true) }} className="p-1.5 rounded-lg bg-gray-50 text-gray-600 hover:bg-gray-100 transition-colors"><FileText size={13} /></button>
                         <a href={`/api/invoice-pdf?id=${inv.invoice_number}`} target="_blank" rel="noreferrer" title="View PDF"
                           className="p-1.5 rounded-lg bg-orange-50 text-orange-600 hover:bg-orange-100 transition-colors">
@@ -485,6 +519,9 @@ export default function InvoicesPage() {
                 )}
                 {!selected.sent_at && !selected.last_sent_at && selected.invoice_status !== 'sent' && selected.invoice_type !== 'quote' && (
                   <button onClick={() => markSent(selected)} className="flex-1 flex items-center justify-center gap-2 text-white py-2.5 rounded-xl font-semibold" style={{ background:'#2563eb' }}><Send size={14} />Mark as Sent</button>
+                )}
+                {selected.invoice_status === 'paid' && (
+                  <button onClick={() => unmarkPaid(selected)} className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl font-semibold border border-amber-200 text-amber-700 hover:bg-amber-50"><RotateCcw size={14} />Unmark Paid</button>
                 )}
               </div>
               {selected.invoice_type === 'quote' && (
@@ -561,7 +598,7 @@ export default function InvoicesPage() {
         // --- Invoice stats ---
         const totalBilled = all.reduce((s, i) => s + (i.amount_due || 0), 0)
         const totalCollected = all.reduce((s, i) => s + (i.amount_paid || 0), 0)
-        const totalOutstanding = all.filter(i => i.invoice_status !== 'paid' && i.invoice_status !== 'cancelled').reduce((s, i) => s + Math.max(0, (i.amount_due || 0) - (i.amount_paid || 0)), 0)
+        const totalOutstanding = all.filter(i => !['paid', 'cancelled', 'draft'].includes(i.invoice_status)).reduce((s, i) => s + Math.max(0, (i.amount_due || 0) - (i.amount_paid || 0)), 0)
         const paidCount = all.filter(i => i.invoice_status === 'paid').length
         const overdueCount = all.filter(i => i.invoice_status === 'overdue').length
         const sentCount = all.filter(i => i.invoice_status === 'sent').length
@@ -759,46 +796,6 @@ export default function InvoicesPage() {
               <button onClick={() => setShowForm(false)}><X size={18} className="text-gray-400" /></button>
             </div>
             <div className="p-6 space-y-4">
-              <div className="relative">
-                <label className="block text-sm font-semibold text-gray-700 mb-1">Autofill from existing customer</label>
-                <input
-                  type="text"
-                  value={contactSearch}
-                  onChange={e => { setContactSearch(e.target.value); setShowContactDropdown(true) }}
-                  onFocus={() => setShowContactDropdown(true)}
-                  placeholder="Type a name to search contacts..."
-                  className={inputCls}
-                />
-                {showContactDropdown && contactSearch.length > 0 && (() => {
-                  const q = contactSearch.toLowerCase()
-                  const matches = contacts
-                    .filter(c => `${c.first_name} ${c.last_name} ${c.email} ${c.phone}`.toLowerCase().includes(q))
-                    .sort((a, b) => {
-                      const aName = `${a.first_name} ${a.last_name}`.toLowerCase()
-                      const bName = `${b.first_name} ${b.last_name}`.toLowerCase()
-                      const aStarts = aName.startsWith(q) || a.first_name?.toLowerCase().startsWith(q) ? 0 : 1
-                      const bStarts = bName.startsWith(q) || b.first_name?.toLowerCase().startsWith(q) ? 0 : 1
-                      if (aStarts !== bStarts) return aStarts - bStarts
-                      return aName.localeCompare(bName)
-                    })
-                    .slice(0, 8)
-                  if (matches.length === 0) return (
-                    <div className="absolute z-20 w-full mt-1 bg-white border border-gray-200 rounded-xl shadow-lg p-3 text-sm text-gray-400">No contacts found</div>
-                  )
-                  return (
-                    <div className="absolute z-20 w-full mt-1 bg-white border border-gray-200 rounded-xl shadow-lg max-h-48 overflow-y-auto">
-                      {matches.map(c => (
-                        <button key={c.id} type="button"
-                          onClick={() => { autofill(c.id); setContactSearch(`${c.first_name} ${c.last_name}`); setShowContactDropdown(false) }}
-                          className="w-full text-left px-4 py-2.5 hover:bg-blue-50 text-sm flex items-center justify-between border-b border-gray-50 last:border-0">
-                          <span className="font-medium text-gray-900">{c.first_name} {c.last_name}</span>
-                          <span className="text-xs text-gray-400 truncate ml-2">{c.email || formatPhone(c.phone || '')}</span>
-                        </button>
-                      ))}
-                    </div>
-                  )
-                })()}
-              </div>
               <div className="grid grid-cols-2 gap-4">
                 <div><label className="block text-sm font-semibold text-gray-700 mb-1">Type *</label>
                   <select value={form.invoice_type||'invoice'} onChange={e => {
@@ -816,8 +813,51 @@ export default function InvoicesPage() {
                 <div><label className="block text-sm font-semibold text-gray-700 mb-1">{form.invoice_type === 'quote' ? 'Quote' : 'Invoice'} # *</label>
                   <input value={form.invoice_number||''} onChange={e => setForm(p => ({...p,invoice_number:e.target.value}))} className={inputCls} required />
                 </div>
+                {/* Customer Name doubles as the existing-customer autocomplete:
+                    type a name and pick a match to autofill the rest, or keep
+                    typing to enter a brand-new customer. */}
+                <div className="relative">
+                  <label className="block text-sm font-semibold text-gray-700 mb-1">Customer Name *</label>
+                  <input
+                    type="text"
+                    value={form.customer_name || ''}
+                    onChange={e => { setForm(p => ({ ...p, customer_name: e.target.value, contact_id: '' })); setShowContactDropdown(true) }}
+                    onFocus={() => setShowContactDropdown(true)}
+                    onBlur={() => setTimeout(() => setShowContactDropdown(false), 150)}
+                    placeholder="Type a name — picks an existing customer if one matches"
+                    className={inputCls}
+                    required
+                  />
+                  {showContactDropdown && (form.customer_name || '').length > 0 && (() => {
+                    const q = (form.customer_name || '').toLowerCase()
+                    const matches = contacts
+                      .filter(c => `${c.first_name} ${c.last_name} ${c.email} ${c.phone}`.toLowerCase().includes(q))
+                      .sort((a, b) => {
+                        const aName = `${a.first_name} ${a.last_name}`.toLowerCase()
+                        const bName = `${b.first_name} ${b.last_name}`.toLowerCase()
+                        const aStarts = aName.startsWith(q) || a.first_name?.toLowerCase().startsWith(q) ? 0 : 1
+                        const bStarts = bName.startsWith(q) || b.first_name?.toLowerCase().startsWith(q) ? 0 : 1
+                        if (aStarts !== bStarts) return aStarts - bStarts
+                        return aName.localeCompare(bName)
+                      })
+                      .slice(0, 8)
+                    if (matches.length === 0) return null
+                    return (
+                      <div className="absolute z-20 w-full mt-1 bg-white border border-gray-200 rounded-xl shadow-lg max-h-48 overflow-y-auto">
+                        {matches.map(c => (
+                          <button key={c.id} type="button"
+                            onMouseDown={e => e.preventDefault()}
+                            onClick={() => { autofill(c.id); setShowContactDropdown(false) }}
+                            className="w-full text-left px-4 py-2.5 hover:bg-blue-50 text-sm flex items-center justify-between border-b border-gray-50 last:border-0">
+                            <span className="font-medium text-gray-900">{c.first_name} {c.last_name}</span>
+                            <span className="text-xs text-gray-400 truncate ml-2">{c.email || formatPhone(c.phone || '')}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )
+                  })()}
+                </div>
                 {[
-                  {l:'Customer Name *',k:'customer_name'},
                   {l:'Company Name',k:'company_name',r:false},
                   {l:'Email *',k:'customer_email',t:'email'},
                   {l:'CC Emails (optional, comma-separated)',k:'cc_email',t:'text',r:false},

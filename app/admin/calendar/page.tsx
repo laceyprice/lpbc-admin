@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { ChevronLeft, ChevronRight, Plus, X, Loader2, Calendar, List, Grid } from 'lucide-react'
 import { formatCurrency, formatPhone } from '@/lib/utils'
 
@@ -16,6 +16,8 @@ interface Appointment {
   end_time: string
   status: string
   contact_id?: string
+  _source?: string        // 'google' for events pulled from Google Calendar
+  _html_link?: string
 }
 
 const HOURS = Array.from({ length: 13 }, (_, i) => i + 7) // 7am - 7pm
@@ -123,6 +125,33 @@ export default function CalendarPage() {
     setEditing(null)
   }
 
+  // ── Drag-and-drop reschedule ───────────────────────────────────────────────
+  const dragAppt = useRef<Appointment | null>(null)
+  const [dragOver, setDragOver] = useState<string | null>(null)
+  // Move an appointment to a new day (and optionally a new hour in week view),
+  // preserving its duration. Optimistic update, then persist (syncs to Google).
+  async function rescheduleAppt(a: Appointment, newDate: Date, newHour?: number) {
+    const s = new Date(a.start_time)
+    const e = new Date(a.end_time || a.start_time)
+    const durationMs = Math.max(0, e.getTime() - s.getTime())
+    const ns = new Date(newDate.getFullYear(), newDate.getMonth(), newDate.getDate(),
+      newHour != null ? newHour : s.getHours(), newHour != null ? 0 : s.getMinutes())
+    if (ns.getTime() === s.getTime()) return // dropped where it already was
+    const ne = new Date(ns.getTime() + durationMs)
+    const startISO = ns.toISOString(), endISO = ne.toISOString()
+    setAppointments(prev => prev.map(x => x.id === a.id ? { ...x, start_time: startISO, end_time: endISO } : x))
+    try {
+      const res = await fetch('/api/appointments', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: a.id, start_time: startISO, end_time: endISO }) })
+      if (!res.ok) alert('Could not reschedule — reverting.')
+    } catch { alert('Could not reschedule — reverting.') }
+    await load()
+  }
+  const apptDragProps = (a: Appointment) => ({
+    draggable: true,
+    onDragStart: (e: React.DragEvent) => { dragAppt.current = a; e.dataTransfer.effectAllowed = 'move'; e.stopPropagation() },
+    onDragEnd: () => { dragAppt.current = null; setDragOver(null) },
+  })
+
   function apptColor(status: string) {
     if (status === 'completed') return 'bg-green-100 border-green-300 text-green-800'
     if (status === 'cancelled') return 'bg-red-100 border-red-300 text-red-700'
@@ -211,14 +240,20 @@ export default function CalendarPage() {
                   <div className="px-2 py-1 text-xs text-gray-400 border-r border-gray-100 pt-1">{h % 12 || 12}{h < 12 ? 'am' : 'pm'}</div>
                   {weekDates.map((d, i) => {
                     const appts = apptForSlot(d, h)
+                    const slotKey = `${d.toDateString()}-${h}`
                     return (
                       <div key={i} onClick={() => { if (!appts.length) openCreate(new Date(d.getFullYear(), d.getMonth(), d.getDate(), h).toISOString().slice(0, 16)) }}
-                        className={`p-1 border-r border-gray-50 cursor-pointer hover:bg-blue-50/40 transition-colors relative ${isSameDay(d, new Date()) ? 'bg-blue-50/30' : ''}`}>
+                        onDragOver={e => { if (dragAppt.current) { e.preventDefault(); setDragOver(slotKey) } }}
+                        onDragLeave={() => setDragOver(prev => prev === slotKey ? null : prev)}
+                        onDrop={e => { e.preventDefault(); const a = dragAppt.current; setDragOver(null); if (a) rescheduleAppt(a, d, h) }}
+                        className={`p-1 border-r border-gray-50 cursor-pointer hover:bg-blue-50/40 transition-colors relative ${dragOver === slotKey ? 'ring-2 ring-inset ring-amber-400 bg-amber-50/60' : isSameDay(d, new Date()) ? 'bg-blue-50/30' : ''}`}>
                         {appts.map(a => (
-                          <div key={a.id} onClick={e => { e.stopPropagation(); setEditing(a); const sd = new Date(a.start_time); const pad2 = (n: number) => String(n).padStart(2,'0'); setForm({ ...a, appt_date: `${sd.getFullYear()}-${pad2(sd.getMonth()+1)}-${pad2(sd.getDate())}`, appt_period: sd.getHours() < 12 ? 'AM' : 'PM' } as any) }}
-                            className={`text-xs rounded px-1.5 py-0.5 mb-0.5 truncate cursor-pointer ${a.status === 'scheduled' ? 'text-white' : apptColor(a.status)}`}
-                            style={a.status === 'scheduled' ? { background: '#b8895a', borderLeft: '3px solid #1f2a2e' } : {}}>
-                            {a.customer_name}
+                          <div key={a.id} {...apptDragProps(a)}
+                            onClick={e => { e.stopPropagation(); setEditing(a); const sd = new Date(a.start_time); const pad2 = (n: number) => String(n).padStart(2,'0'); setForm({ ...a, appt_date: `${sd.getFullYear()}-${pad2(sd.getMonth()+1)}-${pad2(sd.getDate())}`, appt_period: sd.getHours() < 12 ? 'AM' : 'PM' } as any) }}
+                            title={a._source === 'google' ? 'From Google Calendar · drag to reschedule' : 'Drag to reschedule'}
+                            className={`text-xs rounded px-1.5 py-0.5 mb-0.5 truncate cursor-move ${a._source === 'google' || a.status === 'scheduled' ? 'text-white' : apptColor(a.status)}`}
+                            style={a._source === 'google' ? { background: '#0b8043', borderLeft: '3px solid #34a853' } : a.status === 'scheduled' ? { background: '#b8895a', borderLeft: '3px solid #1f2a2e' } : {}}>
+                            {a._source === 'google' ? '📅 ' : ''}{a.customer_name}
                           </div>
                         ))}
                       </div>
@@ -238,9 +273,13 @@ export default function CalendarPage() {
               <div className="grid grid-cols-7">
                 {monthDates.map((d, i) => {
                   const appts = d ? apptForDay(d) : []
+                  const dayKey = d ? d.toDateString() : `empty-${i}`
                   return (
                     <div key={i} onClick={() => d && openCreate(new Date(d.getFullYear(), d.getMonth(), d.getDate(), 9).toISOString().slice(0, 16))}
-                      className={`min-h-[90px] p-2 border-b border-r border-gray-50 cursor-pointer hover:bg-gray-50/60 transition-colors ${d && isSameDay(d, new Date()) ? 'bg-blue-50/30' : ''}`}>
+                      onDragOver={e => { if (d && dragAppt.current) { e.preventDefault(); setDragOver(dayKey) } }}
+                      onDragLeave={() => setDragOver(prev => prev === dayKey ? null : prev)}
+                      onDrop={e => { e.preventDefault(); const a = dragAppt.current; setDragOver(null); if (a && d) rescheduleAppt(a, d) }}
+                      className={`min-h-[90px] p-2 border-b border-r border-gray-50 cursor-pointer hover:bg-gray-50/60 transition-colors ${dragOver === dayKey ? 'ring-2 ring-inset ring-amber-400 bg-amber-50/60' : d && isSameDay(d, new Date()) ? 'bg-blue-50/30' : ''}`}>
                       {d && (
                         <>
                           <div className={`text-sm font-bold w-7 h-7 flex items-center justify-center rounded-full mb-1 ${isSameDay(d, new Date()) ? 'text-white' : 'text-gray-700'}`}
@@ -248,10 +287,12 @@ export default function CalendarPage() {
                             {d.getDate()}
                           </div>
                           {appts.slice(0, 3).map(a => (
-                            <div key={a.id} onClick={e => { e.stopPropagation(); setEditing(a); const sd = new Date(a.start_time); const pad2 = (n: number) => String(n).padStart(2,'0'); setForm({ ...a, appt_date: `${sd.getFullYear()}-${pad2(sd.getMonth()+1)}-${pad2(sd.getDate())}`, appt_period: sd.getHours() < 12 ? 'AM' : 'PM' } as any) }}
-                              className="text-xs rounded px-1.5 py-0.5 mb-0.5 truncate cursor-pointer text-white"
-                              style={{ background: a.status === 'cancelled' ? '#ef4444' : '#b8895a' }}>
-                              {a.customer_name}
+                            <div key={a.id} {...apptDragProps(a)}
+                              onClick={e => { e.stopPropagation(); setEditing(a); const sd = new Date(a.start_time); const pad2 = (n: number) => String(n).padStart(2,'0'); setForm({ ...a, appt_date: `${sd.getFullYear()}-${pad2(sd.getMonth()+1)}-${pad2(sd.getDate())}`, appt_period: sd.getHours() < 12 ? 'AM' : 'PM' } as any) }}
+                              title={a._source === 'google' ? 'From Google Calendar · drag to reschedule' : 'Drag to reschedule'}
+                              className="text-xs rounded px-1.5 py-0.5 mb-0.5 truncate cursor-move text-white"
+                              style={{ background: a._source === 'google' ? '#0b8043' : a.status === 'cancelled' ? '#ef4444' : '#b8895a' }}>
+                              {a._source === 'google' ? '📅 ' : ''}{a.customer_name}
                             </div>
                           ))}
                           {appts.length > 3 && <div className="text-xs text-gray-400">+{appts.length - 3} more</div>}
@@ -286,7 +327,7 @@ export default function CalendarPage() {
                           <div className="font-medium">{new Date(a.start_time).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}</div>
                           <div className="text-gray-400">{new Date(a.start_time).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}</div>
                         </td>
-                        <td className="px-5 py-3"><div className="font-semibold text-gray-900">{a.customer_name}</div><div className="text-xs text-gray-400">{formatPhone(a.customer_phone)}</div></td>
+                        <td className="px-5 py-3"><div className="font-semibold text-gray-900">{a._source === 'google' ? '📅 ' : ''}{a.customer_name}</div><div className="text-xs text-gray-400">{a._source === 'google' ? 'From Google Calendar' : formatPhone(a.customer_phone)}</div></td>
                         <td className="px-5 py-3 text-xs text-gray-600">{a.service_type || '—'}</td>
                         <td className="px-5 py-3 text-xs text-gray-600 max-w-[180px] truncate">{a.service_address || '—'}</td>
                         <td className="px-5 py-3"><span className={`text-xs px-2 py-0.5 rounded-full font-medium ${a.status === 'completed' ? 'bg-green-100 text-green-700' : a.status === 'cancelled' ? 'bg-red-100 text-red-600' : 'bg-blue-100 text-blue-700'}`}>{a.status}</span></td>

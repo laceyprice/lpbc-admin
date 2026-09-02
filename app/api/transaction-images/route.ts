@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 export const dynamic = 'force-dynamic'
 import { createServerClient } from '@/lib/supabase'
 import { attachSignedUrls, signedUrlFor } from '@/lib/signed-url'
+import { webSafeImage } from '@/lib/heic'
 
 const BUCKET = 'bookkeeping-images'
 
@@ -108,15 +109,17 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'image_type must be receipt or check' }, { status: 400 })
     }
 
-    const ext = (file.name.split('.').pop() || 'jpg').toLowerCase()
+    // HEIC → JPEG + downscale/compress so receipts don't eat storage.
+    const raw = Buffer.from(await file.arrayBuffer())
+    const safe = await webSafeImage(raw, file.type || 'application/octet-stream', file.name)
+    const ext = (safe.name.split('.').pop() || 'jpg').toLowerCase()
     const stamp = Date.now()
     const rand = Math.random().toString(36).slice(2, 8)
     const filePath = `${image_type}/${stamp}_${rand}.${ext}`
 
-    const buf = await file.arrayBuffer()
     const { error: upErr } = await supabase.storage
       .from(BUCKET)
-      .upload(filePath, buf, { contentType: file.type || undefined, upsert: false })
+      .upload(filePath, safe.buffer, { contentType: safe.contentType, upsert: false })
     if (upErr) return NextResponse.json({ error: `Storage upload failed: ${upErr.message}` }, { status: 500 })
 
     // Buckets are private; signed URLs are regenerated on every read in GET.

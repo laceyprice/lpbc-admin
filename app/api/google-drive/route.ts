@@ -3,6 +3,7 @@ export const dynamic = 'force-dynamic'
 export const maxDuration = 120
 import { createServerClient } from '@/lib/supabase'
 import { signedUrlFor } from '@/lib/signed-url'
+import { webSafeImage } from '@/lib/heic'
 
 const BUCKET = 'bookkeeping-images'
 const JOB_PLANNING_BUCKET = 'job-planning'
@@ -128,16 +129,19 @@ export async function POST(req: NextRequest) {
         if (declaredSize > MAX_BYTES) { skipped.push({ name: safeName, reason: `Too large (${(declaredSize / 1024 / 1024).toFixed(1)}MB > 15MB limit)` }); continue }
         try {
           const fileRes = await drive.files.get({ fileId, alt: 'media' }, { responseType: 'arraybuffer' })
-          const buf = Buffer.from(fileRes.data as ArrayBuffer)
-          if (buf.length > MAX_BYTES) { skipped.push({ name: safeName, reason: 'Too large after download' }); continue }
-          const storagePath = `${session_id}/${Date.now()}_${safeName}`
+          const rawBuf = Buffer.from(fileRes.data as ArrayBuffer)
+          if (rawBuf.length > MAX_BYTES) { skipped.push({ name: safeName, reason: 'Too large after download' }); continue }
+          // iPhone HEIC → JPEG so the imported photo renders in the browser.
+          const safe = await webSafeImage(rawBuf, safeMime, safeName)
+          const buf = safe.buffer
+          const storagePath = `${session_id}/${Date.now()}_${safe.name}`
           const { error: upErr } = await supabase.storage.from(JOB_PLANNING_BUCKET).upload(storagePath, buf, {
-            contentType: safeMime,
+            contentType: safe.contentType,
             upsert: false,
           })
           if (upErr) { skipped.push({ name: safeName, reason: upErr.message }); continue }
           const signed = await signedUrlFor(supabase, JOB_PLANNING_BUCKET, storagePath, 60 * 60 * 24)
-          uploaded.push({ path: storagePath, name: safeName, type: safeMime, size: buf.length, signed_url: signed })
+          uploaded.push({ path: storagePath, name: safe.name, type: safe.contentType, size: buf.length, signed_url: signed })
         } catch (e: any) {
           skipped.push({ name: safeName, reason: e?.message || 'Download failed' })
         }

@@ -4,7 +4,7 @@ import FloorPlanner from '@/components/admin/FloorPlanner'
 
 export default function FloorPlannerPage() {
   return (
-    <div className="p-4 sm:p-6 max-w-6xl mx-auto">
+    <div className="p-4 sm:p-6 pt-16 md:pt-6 max-w-6xl mx-auto">
       <div className="flex items-center gap-2 mb-1">
         <PencilRuler size={20} style={{ color: '#b8895a' }} />
         <h1 className="text-xl font-extrabold text-gray-900">Floor Planner</h1>

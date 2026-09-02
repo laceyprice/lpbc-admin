@@ -239,6 +239,7 @@ export default function VaultPage() {
             <section key={cat}>
               <h2 className="text-xs font-bold uppercase tracking-wider text-gray-500 mb-2">{cat} · {grouped[cat].length}</h2>
               <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+                <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead className="bg-gray-50 border-b border-gray-100">
                     <tr>
@@ -315,6 +316,7 @@ export default function VaultPage() {
                     })}
                   </tbody>
                 </table>
+                </div>
               </div>
             </section>
           ))}

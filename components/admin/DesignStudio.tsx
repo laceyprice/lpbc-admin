@@ -5,6 +5,7 @@ import {
   X, Palette, PenTool, Images, Sparkles, Loader2, Plus, Trash2, Save,
   Square, Minus, Type, Eraser, Undo2, RotateCcw, Wand2, Check, DollarSign,
   Camera, Upload, Cloud, ZoomIn, ZoomOut, ScanLine, AlertCircle, CheckCircle2, PencilRuler,
+  Pencil, Copy, ShoppingBag, ExternalLink, Image as ImageIcon,
 } from 'lucide-react'
 import FloorPlanner, { type PlanDoc } from './FloorPlanner'
 
@@ -18,6 +19,7 @@ export interface BoardItem {
   label: string
   notes: string
   price: number
+  link?: string   // source product/page link (when added "From link")
 }
 export interface SketchItem {
   id: string
@@ -44,13 +46,36 @@ export interface DesignSuggestion {
   why_it_fits?: string
   selected?: boolean
 }
+// A sourced finish/product the owner wants for the job — a link (vanity, fan,
+// sink, lights, appliance…) with optional price, room and notes.
+export interface FinishLink {
+  id: string
+  category: string
+  label: string
+  url: string
+  price: number
+  room: string
+  notes: string
+  image_path?: string        // preview image pulled from the link (storage path)
+  image_url?: string | null   // signed URL for display
+}
+// A project can hold several floor-plan sheets (e.g. Architectural, Electrical,
+// Renovation) that the user flips between — all inside the ONE project/plan.
+export interface FloorPlanSheet { id: string; name: string; doc: PlanDoc }
+export interface ProjectMessage { id: string; role: 'admin' | 'customer'; name: string; body: string; created_at: string }
 export interface DesignData {
   board?: BoardItem[]
   sketches?: SketchItem[]
   comparisons?: ComparisonItem[]
   ai_suggestions?: DesignSuggestion[]
+  finish_links?: FinishLink[]
+  messages?: ProjectMessage[]
   notes?: string
+  // `floorplan` is the LEGACY single plan + a live mirror of the active sheet
+  // (kept in sync so older readers — 3D cost, copy-to, estimate — keep working).
   floorplan?: PlanDoc
+  floorplans?: FloorPlanSheet[]   // the real list of sheets in this project
+  activeFloorplan?: string        // id of the sheet currently being edited
 }
 interface AttachmentLike {
   path: string
@@ -61,6 +86,7 @@ interface AttachmentLike {
 }
 
 const ROOMS = ['Kitchen', 'Primary Bath', 'Bathroom', 'Living Room', 'Bedroom', 'Exterior', 'Outdoor / Patio', 'Laundry', 'Office', 'Other']
+const FINISH_CATEGORIES = ['Vanity', 'Faucet', 'Sink', 'Toilet', 'Tub / Shower', 'Tile', 'Countertop', 'Cabinet', 'Lighting', 'Ceiling Fan', 'Appliance', 'Hardware', 'Mirror', 'Flooring', 'Paint', 'Plumbing Fixture', 'Door / Window', 'Other']
 const TABS = [
   { key: 'board', label: 'Mood Board', icon: Palette },
   { key: 'sketch', label: 'Floor Plan', icon: PencilRuler },
@@ -70,6 +96,19 @@ const TABS = [
 type TabKey = typeof TABS[number]['key']
 
 function newId(prefix: string) { return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}` }
+
+function planHasContent(doc?: PlanDoc): boolean {
+  if (!doc) return false
+  return !!(doc.walls?.length || doc.fixtures?.length || doc.rooms?.length || doc.openings?.length || doc.dims?.length || doc.wires?.length || doc.labels?.length)
+}
+// Derive the project's floor-plan sheets, migrating a legacy single `floorplan`
+// into a one-sheet list. Always returns at least one sheet.
+function getSheets(design: DesignData): FloorPlanSheet[] {
+  if (Array.isArray(design.floorplans) && design.floorplans.length) {
+    return design.floorplans.map((s, i) => ({ id: s.id || `fp_${i}`, name: s.name || `Floor Plan ${i + 1}`, doc: s.doc || {} }))
+  }
+  return [{ id: 'fp_1', name: 'Floor Plan 1', doc: design.floorplan || {} }]
+}
 
 type DesignStudioProps = {
   open: boolean
@@ -158,6 +197,41 @@ function DesignStudioInner({
 
   function patch(p: Partial<DesignData>) { onChange({ ...design, ...p }) }
 
+  // ── Floor-plan sheets (multiple plans within this one project) ─────────────
+  const sheets = getSheets(design)
+  const activeId = (design.activeFloorplan && sheets.some(s => s.id === design.activeFloorplan)) ? design.activeFloorplan : sheets[0].id
+  const activeSheet = sheets.find(s => s.id === activeId) || sheets[0]
+  // Persist the sheet list + which one is active, and mirror the active sheet
+  // into `floorplan` so existing readers (3D cost, copy-to, estimate) still work.
+  function writeSheets(next: FloorPlanSheet[], active?: string) {
+    const list = next.length ? next : [{ id: 'fp_1', name: 'Floor Plan 1', doc: {} }]
+    const act = (active && list.some(s => s.id === active)) ? active : list[0].id
+    const cur = list.find(s => s.id === act) || list[0]
+    patch({ floorplans: list, activeFloorplan: cur.id, floorplan: cur.doc })
+  }
+  const onActiveDocChange = (doc: PlanDoc) => writeSheets(sheets.map(s => s.id === activeId ? { ...s, doc } : s), activeId)
+  const switchSheet = (id: string) => { if (id !== activeId) writeSheets(sheets, id) }
+  const addSheet = () => { const id = newId('fp'); writeSheets([...sheets, { id, name: `Floor Plan ${sheets.length + 1}`, doc: {} }], id) }
+  const duplicateSheet = () => {
+    const id = newId('fp')
+    let clone: PlanDoc = {}
+    try { clone = JSON.parse(JSON.stringify(activeSheet.doc || {})) } catch { clone = { ...(activeSheet.doc || {}) } }
+    writeSheets([...sheets, { id, name: `${activeSheet.name} copy`, doc: clone }], id)
+  }
+  const renameSheet = (id: string) => {
+    const cur = sheets.find(s => s.id === id)
+    const name = window.prompt('Rename this floor plan:', cur?.name || '')
+    if (name == null) return
+    writeSheets(sheets.map(s => s.id === id ? { ...s, name: name.trim() || cur?.name || 'Floor Plan' } : s), activeId)
+  }
+  const deleteSheet = (id: string) => {
+    if (sheets.length <= 1) { alert('A project needs at least one floor plan.'); return }
+    const s = sheets.find(x => x.id === id)
+    if (!confirm(`Delete floor plan "${s?.name}"? This can't be undone.`)) return
+    const next = sheets.filter(x => x.id !== id)
+    writeSheets(next, id === activeId ? next[0].id : activeId)
+  }
+
   return (
     <div className="fixed inset-0 z-50 bg-black/40 flex items-stretch justify-center p-0 sm:p-4">
       <div className="bg-white w-full sm:max-w-none sm:rounded-2xl shadow-xl flex flex-col h-full overflow-hidden">
@@ -174,7 +248,7 @@ function DesignStudioInner({
           {TABS.map(t => {
             const Icon = t.icon
             const active = tab === t.key
-            const count = t.key === 'board' ? board.length : t.key === 'sketch' ? 0 : t.key === 'compare' ? comparisons.length : suggestions.length
+            const count = t.key === 'board' ? board.length : t.key === 'sketch' ? sheets.length : t.key === 'compare' ? comparisons.length : suggestions.length
             return (
               <button key={t.key} onClick={() => setTab(t.key)}
                 className={`flex items-center gap-1.5 text-xs font-bold px-3.5 py-2 rounded-t-xl border-b-2 transition-colors whitespace-nowrap ${active ? 'border-current text-gray-900' : 'border-transparent text-gray-400 hover:text-gray-600'}`}
@@ -198,7 +272,38 @@ function DesignStudioInner({
             />
           )}
           {tab === 'sketch' && (
-            <FloorPlanner value={design.floorplan} onChange={fp => patch({ floorplan: fp })} />
+            <div className="space-y-3">
+              {/* Sheet switcher — multiple floor plans inside THIS project */}
+              <div className="flex items-center gap-1.5 flex-wrap pb-2 border-b border-gray-100">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-gray-400 mr-1">Plans in this project:</span>
+                {sheets.map(s => {
+                  const act = s.id === activeId
+                  return (
+                    <div key={s.id} className={`flex items-center rounded-lg border ${act ? 'border-amber-300 bg-amber-50' : 'border-gray-200 bg-white hover:bg-gray-50'}`}>
+                      <button onClick={() => switchSheet(s.id)} className={`px-2.5 py-1.5 text-xs font-semibold ${act ? 'text-amber-700' : 'text-gray-600'}`}>{s.name}</button>
+                      {act && (
+                        <>
+                          <button onClick={() => renameSheet(s.id)} title="Rename this plan" className="px-1 py-1.5 text-amber-500 hover:text-amber-800"><Pencil size={11} /></button>
+                          {sheets.length > 1 && (
+                            <button onClick={() => deleteSheet(s.id)} title="Delete this plan" className="px-1.5 py-1.5 text-amber-300 hover:text-red-600"><Trash2 size={11} /></button>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  )
+                })}
+                <button onClick={addSheet} title="Add a blank floor plan to this project"
+                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-gray-200 text-xs font-semibold text-gray-600 hover:bg-gray-50">
+                  <Plus size={12} /> New plan
+                </button>
+                <button onClick={duplicateSheet} title="Copy the current plan into a new sheet in this project (for an electrical / renovation version)"
+                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-violet-200 bg-violet-50 text-xs font-semibold text-violet-700 hover:bg-violet-100">
+                  <Copy size={12} /> Duplicate this plan
+                </button>
+              </div>
+              {/* key forces a fresh mount when switching sheets so the canvas reseeds */}
+              <FloorPlanner key={activeId} value={activeSheet.doc} onChange={onActiveDocChange} />
+            </div>
           )}
           {tab === 'compare' && (
             <CompareTab comparisons={comparisons} attachments={attachments}
@@ -233,6 +338,37 @@ function DesignStudioInner({
       </div>
     </div>
   )
+}
+
+// A mood-board thumbnail that heals itself: if the stored signed URL has expired
+// (Supabase signed URLs are time-limited → a stale one loads as a broken image),
+// it re-requests a fresh URL for the file's path and retries once. Only falls
+// back to the placeholder if the file is genuinely missing.
+function BoardThumb({ item, freshUrl }: { item: BoardItem; freshUrl?: string | null }) {
+  const [src, setSrc] = useState<string>(freshUrl || item.signed_url || '')
+  const [failed, setFailed] = useState(false)
+  const triedRef = useRef(false)
+  // Adopt a fresher URL handed down from the parent (e.g. attachment re-sign).
+  useEffect(() => {
+    if (freshUrl && freshUrl !== src) { setSrc(freshUrl); setFailed(false); triedRef.current = false }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [freshUrl])
+
+  async function handleError() {
+    if (triedRef.current || !item.path) { setFailed(true); return }
+    triedRef.current = true
+    try {
+      const res = await fetch(`/api/job-planning?path=${encodeURIComponent(item.path)}`)
+      const d = await res.json()
+      if (res.ok && d?.url) { setSrc(d.url + (d.url.includes('?') ? '&' : '?') + 'r=' + Date.now()); return }
+    } catch {}
+    setFailed(true)
+  }
+
+  if (!src || failed) {
+    return <div className="w-full h-28 bg-gray-50 flex items-center justify-center text-gray-300"><Palette size={20} /></div>
+  }
+  return <img src={src} alt={item.label} className="w-full h-28 object-cover" onError={handleError} />
 }
 
 // ── Mood Board ─────────────────────────────────────────────────────────────
@@ -279,6 +415,63 @@ function MoodBoardTab({ board, attachments, sessionId, onAddAttachments, onOpenD
     }
     setUploading(false)
     if (fileInputRef.current) fileInputRef.current.value = ''
+  }
+
+  // ── Google Photos (Picker API) ─────────────────────────────────────────────
+  // Google deprecated broad library access — the user picks photos in Google's
+  // own UI (new tab), then we poll for the selection and import them.
+  const [photosImporting, setPhotosImporting] = useState(false)
+  const [photosMsg, setPhotosMsg] = useState('')
+  async function importFromGooglePhotos() {
+    setUploadError(''); setPhotosImporting(true); setPhotosMsg('Opening Google Photos…')
+    try {
+      const cs = await fetch('/api/google-photos?action=create-session', { method: 'POST' })
+      const csd = await cs.json()
+      if (!cs.ok || !csd.pickerUri) {
+        setUploadError(csd?.needsAuth
+          ? "Google Photos isn't authorized yet — re-connect Google at /admin/google-connect (it now includes Photos), then try again."
+          : (csd?.error || 'Could not open Google Photos.'))
+        setPhotosImporting(false); return
+      }
+      window.open(csd.pickerUri, '_blank', 'noopener')
+      setPhotosMsg('Pick photos in the Google Photos tab, then return here — importing automatically…')
+      const start = Date.now()
+      const poll = async () => {
+        if (Date.now() - start > 5 * 60 * 1000) { setUploadError('Timed out waiting for your Google Photos selection.'); setPhotosImporting(false); return }
+        try {
+          const r = await fetch('/api/google-photos?action=import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId: csd.sessionId, session_id: sessionId }) })
+          const d = await r.json()
+          if (!r.ok) { setUploadError(d?.error || 'Google Photos import failed'); setPhotosImporting(false); return }
+          if (d.pending) { setTimeout(poll, 3000); return }
+          const uploaded: AttachmentLike[] = d.uploaded || []
+          if (uploaded.length) {
+            onAdd(uploaded.map(att => ({ id: newId('board'), path: att.path, signed_url: att.signed_url, name: att.name, room: 'Other', label: att.name.replace(/\.[^.]+$/, ''), notes: '', price: 0 })))
+            if (onAddAttachments) onAddAttachments(uploaded)
+          } else setUploadError('No photos were imported.')
+          setPhotosImporting(false)
+        } catch (e: any) { setUploadError(e?.message || 'Google Photos import failed'); setPhotosImporting(false) }
+      }
+      setTimeout(poll, 4000)
+    } catch (e: any) { setUploadError(e?.message || 'Google Photos import failed'); setPhotosImporting(false) }
+  }
+
+  // ── Add from a link (pulls the preview image) ──────────────────────────────
+  const [linkUrl, setLinkUrl] = useState('')
+  const [linkLoading, setLinkLoading] = useState(false)
+  async function addFromLink() {
+    const u = linkUrl.trim()
+    if (!u) return
+    setLinkLoading(true); setUploadError('')
+    try {
+      const res = await fetch('/api/link-preview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: u, session_id: sessionId }) })
+      const d = await res.json()
+      if (!res.ok) { setUploadError(d?.error || 'Could not pull an image from that link.'); setLinkLoading(false); return }
+      const att = d.uploaded
+      onAdd([{ id: newId('board'), path: att.path, signed_url: att.signed_url, name: att.name, room: 'Other', label: (d.title || att.name || '').slice(0, 80), notes: '', price: 0, link: d.sourceUrl }])
+      if (onAddAttachments) onAddAttachments(att)
+      setLinkUrl('')
+    } catch (e: any) { setUploadError(e?.message || 'Could not pull an image from that link.') }
+    setLinkLoading(false)
   }
 
   function addFromAttachment(att: AttachmentLike) {
@@ -331,6 +524,11 @@ function MoodBoardTab({ board, attachments, sessionId, onAddAttachments, onOpenD
               <Cloud size={12} /> From Drive
             </button>
           )}
+          {/* Google Photos picker */}
+          <button onClick={importFromGooglePhotos} disabled={photosImporting}
+            className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg border border-gray-200 hover:bg-gray-50 disabled:opacity-50">
+            {photosImporting ? <Loader2 size={12} className="animate-spin" /> : <ImageIcon size={12} />} Google Photos
+          </button>
           {/* Add from already-uploaded plan photos */}
           {pickable.length > 0 && (
             <button onClick={() => setPicking(v => !v)} className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg border border-gray-200 hover:bg-gray-50">
@@ -342,7 +540,25 @@ function MoodBoardTab({ board, attachments, sessionId, onAddAttachments, onOpenD
           </button>
         </div>
       </div>
+
+      {/* Add from a link — pulls the preview image off the page */}
+      <div className="flex items-center gap-2">
+        <input value={linkUrl} onChange={e => setLinkUrl(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addFromLink() } }}
+          placeholder="Paste a product or image link — we'll pull the photo…"
+          className="flex-1 px-3 py-2 rounded-lg border border-gray-200 text-xs focus:outline-none focus:ring-2 focus:border-blue-400" />
+        <button onClick={addFromLink} disabled={linkLoading || !linkUrl.trim()}
+          className="flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-gray-200 hover:bg-gray-50 disabled:opacity-50 flex-shrink-0">
+          {linkLoading ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />} Add link
+        </button>
+      </div>
+
       {uploadError && <div className="text-xs text-red-600 bg-red-50 px-3 py-2 rounded-lg border border-red-100">{uploadError}</div>}
+      {photosImporting && (
+        <div className="text-xs text-blue-700 bg-blue-50 px-3 py-2 rounded-lg border border-blue-100 flex items-center gap-2">
+          <Loader2 size={12} className="animate-spin flex-shrink-0" /> {photosMsg}
+        </div>
+      )}
 
       {picking && (
         <div className="border border-gray-200 rounded-xl p-3 bg-gray-50">
@@ -374,7 +590,7 @@ function MoodBoardTab({ board, attachments, sessionId, onAddAttachments, onOpenD
                   if (!b) return null
                   return (
                     <div key={b.id ?? i} className="border border-gray-200 rounded-xl overflow-hidden bg-white group relative">
-                      {b.signed_url ? <img src={b.signed_url} alt={b.label} className="w-full h-28 object-cover" /> : <div className="w-full h-28 bg-gray-50 flex items-center justify-center text-gray-300"><Palette size={20} /></div>}
+                      <BoardThumb item={b} freshUrl={b.path ? attachments.find(a => a.path === b.path)?.signed_url : null} />
                       <button onClick={() => onRemove(i)} className="absolute top-1.5 right-1.5 bg-white/90 hover:bg-red-100 rounded-full p-1 shadow opacity-0 group-hover:opacity-100 transition-opacity">
                         <Trash2 size={11} className="text-red-600" />
                       </button>
@@ -392,6 +608,12 @@ function MoodBoardTab({ board, attachments, sessionId, onAddAttachments, onOpenD
                           <input type="number" min={0} step={0.01} value={b.price || ''} onChange={e => onUpdate(i, { ...b, price: Number(e.target.value) || 0 })} placeholder="0.00"
                             className="w-full px-2 py-1 rounded-lg border border-gray-200 text-[11px] focus:outline-none focus:ring-2 focus:border-blue-400" />
                         </div>
+                        {b.link && (
+                          <a href={/^https?:\/\//i.test(b.link) ? b.link : `https://${b.link}`} target="_blank" rel="noopener noreferrer"
+                            className="flex items-center gap-1 text-[11px] font-semibold text-blue-600 hover:text-blue-800 truncate">
+                            <ExternalLink size={11} className="flex-shrink-0" /> View source
+                          </a>
+                        )}
                       </div>
                     </div>
                   )
@@ -405,6 +627,172 @@ function MoodBoardTab({ board, attachments, sessionId, onAddAttachments, onOpenD
   )
 }
 
+
+// ── Finishes & Links ────────────────────────────────────────────────────────
+// A sourcing list of product links (vanities, fans, sinks, lights, appliances…)
+// grouped by category, each with a price/room/notes.
+// Self-healing finish thumbnail — re-signs an expired image URL from its path.
+function FinishThumb({ item }: { item: FinishLink }) {
+  const [src, setSrc] = useState<string>(item.image_url || '')
+  const triedRef = useRef(false)
+  useEffect(() => { setSrc(item.image_url || ''); triedRef.current = false }, [item.image_url])
+  async function onError() {
+    if (triedRef.current || !item.image_path) { setSrc(''); return }
+    triedRef.current = true
+    try {
+      const r = await fetch(`/api/job-planning?path=${encodeURIComponent(item.image_path)}`)
+      const d = await r.json()
+      if (r.ok && d?.url) { setSrc(d.url + (d.url.includes('?') ? '&' : '?') + 'r=' + Date.now()); return }
+    } catch {}
+    setSrc('')
+  }
+  if (!src) return <div className="w-14 h-14 rounded-lg bg-gray-100 flex items-center justify-center text-gray-300 flex-shrink-0"><ShoppingBag size={16} /></div>
+  return <img src={src} alt={item.label} onError={onError} className="w-14 h-14 rounded-lg object-cover border border-gray-200 flex-shrink-0" />
+}
+
+const linkHref = (u: string) => /^https?:\/\//i.test(u) ? u : `https://${u}`
+export function FinishesTab({ items, onSet, sessionId, onSave, saving }: { items: FinishLink[]; onSet: (list: FinishLink[]) => void; sessionId: string; onSave?: (list: FinishLink[]) => void | Promise<void>; saving?: boolean }) {
+  const [pulling, setPulling] = useState<string | null>(null) // item id currently pulling an image
+  const [editUrlId, setEditUrlId] = useState<string | null>(null) // item whose link is being edited
+  const [savingFin, setSavingFin] = useState(false)
+  const add = () => { const id = newId('fin'); onSet([...items, { id, category: 'Appliance', label: '', url: '', price: 0, room: 'Kitchen', notes: '' }]); setEditUrlId(id) }
+  const update = (i: number, patch: Partial<FinishLink>) => onSet(items.map((it, idx) => idx === i ? { ...it, ...patch } : it))
+  const remove = (i: number) => onSet(items.filter((_, idx) => idx !== i))
+  const total = items.reduce((s, it) => s + (Number(it.price) || 0), 0)
+  // Pull the product image (and price, if the item has none yet) from its link.
+  // silent = no alert on failure (for auto-pull on blur).
+  async function pullImage(i: number, silent = false) {
+    const it = items[i]; const u = (it?.url || '').trim()
+    if (!u) return
+    setPulling(it.id)
+    try {
+      const res = await fetch('/api/link-preview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: u, session_id: sessionId }) })
+      const d = await res.json()
+      if (res.ok && d.uploaded) {
+        const patch: Partial<FinishLink> = { image_path: d.uploaded.path, image_url: d.uploaded.signed_url, label: it.label || (d.title || '').slice(0, 80) }
+        if (!Number(it.price) && Number(d.price)) patch.price = Number(d.price)
+        update(i, patch)
+      } else if (!silent) alert(d?.error || 'Could not pull an image from that link.')
+    } catch { if (!silent) alert('Could not pull an image from that link.') }
+    setPulling(null)
+  }
+  // Save: backfill any missing prices (and missing images) from each link, then
+  // persist. Prices already entered by hand are left untouched.
+  async function handleSave() {
+    setSavingFin(true)
+    const list = items.map(it => ({ ...it }))
+    for (let i = 0; i < list.length; i++) {
+      const it = list[i]; const u = (it.url || '').trim()
+      if (!u) continue
+      const needImage = !it.image_path
+      const needPrice = !Number(it.price)
+      if (!needImage && !needPrice) continue
+      try {
+        const res = await fetch('/api/link-preview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: u, session_id: sessionId, priceOnly: !needImage }) })
+        const d = await res.json().catch(() => ({}))
+        if (needImage && res.ok && d.uploaded) {
+          it.image_path = d.uploaded.path; it.image_url = d.uploaded.signed_url
+          if (!it.label && d.title) it.label = String(d.title).slice(0, 80)
+        }
+        if (needPrice && Number(d.price)) it.price = Number(d.price)
+      } catch {}
+    }
+    onSet(list)
+    try { await onSave?.(list) } finally { setSavingFin(false) }
+  }
+  const busy = savingFin || !!saving
+  // group by category for a shopping-list feel
+  const byCat = new Map<string, number[]>()
+  items.forEach((it, i) => { const k = it?.category || 'Other'; if (!byCat.has(k)) byCat.set(k, []); byCat.get(k)!.push(i) })
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <p className="text-xs text-gray-500">Collect product links for finishes &amp; fixtures — vanities, faucets, sinks, lights, fans, appliances. Paste a link and we'll pull the product photo.</p>
+        <div className="flex items-center gap-3">
+          {total > 0 && <span className="text-sm font-bold text-gray-900">Total: ${total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>}
+          <button onClick={add} className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg border border-gray-200 hover:bg-gray-50"><Plus size={12} /> Add link</button>
+          {onSave && (
+            <button onClick={handleSave} disabled={busy}
+              className="flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-lg text-white disabled:opacity-50" style={{ background: '#b8895a' }}
+              title="Pull prices from links & save">
+              {busy ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />} Save finishes
+            </button>
+          )}
+        </div>
+      </div>
+
+      {items.length === 0 ? (
+        <div className="text-center py-10 text-gray-400 text-sm border-2 border-dashed border-gray-200 rounded-xl">
+          No finish links yet — click <strong>Add link</strong> to start your sourcing list.
+        </div>
+      ) : (
+        <div className="space-y-5">
+          {Array.from(byCat.entries()).map(([cat, idxs]) => (
+            <div key={cat}>
+              <h3 className="text-[11px] font-bold uppercase tracking-wider text-gray-400 mb-2">{cat} <span className="text-gray-300 font-normal">({idxs.length})</span></h3>
+              <div className="space-y-2.5">
+                {idxs.map(i => {
+                  const it = items[i]
+                  if (!it) return null
+                  return (
+                    <div key={it.id ?? i} className="border border-gray-200 rounded-xl p-3">
+                      <div className="flex gap-3">
+                        <FinishThumb item={it} />
+                        <div className="flex-1 min-w-0 space-y-2">
+                          <div className="flex items-center gap-2">
+                            <select value={it.category} onChange={e => update(i, { category: e.target.value })}
+                              className="px-2 py-1.5 rounded-lg border border-gray-200 text-xs bg-white focus:outline-none focus:ring-2 focus:border-blue-400">
+                              {FINISH_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                            </select>
+                            <input value={it.label} onChange={e => update(i, { label: e.target.value })} placeholder={'Label (e.g. Master vanity 48")'}
+                              className="flex-1 min-w-0 px-2.5 py-1.5 rounded-lg border border-gray-200 text-sm font-semibold focus:outline-none focus:ring-2 focus:border-blue-400" />
+                            <button onClick={() => remove(i)} className="text-gray-300 hover:text-red-500 p-1 flex-shrink-0"><Trash2 size={14} /></button>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            {(!it.url || editUrlId === it.id) ? (
+                              <input autoFocus={editUrlId === it.id} value={it.url} onChange={e => update(i, { url: e.target.value })}
+                                onBlur={() => { setEditUrlId(null); if (it.url?.trim() && !it.image_path) pullImage(i, true) }}
+                                placeholder="https://…  (product link)"
+                                className="flex-1 min-w-0 px-2.5 py-1.5 rounded-lg border border-gray-200 text-xs focus:outline-none focus:ring-2 focus:border-blue-400" />
+                            ) : (
+                              <a href={linkHref(it.url)} target="_blank" rel="noopener noreferrer"
+                                className="flex-1 min-w-0 truncate text-xs font-medium text-blue-600 hover:text-blue-800 underline">{it.url}</a>
+                            )}
+                            {it.url && editUrlId !== it.id && (
+                              <button onClick={() => setEditUrlId(it.id)} title="Edit link" className="text-gray-400 hover:text-gray-700 p-1 flex-shrink-0"><Pencil size={13} /></button>
+                            )}
+                            <button onClick={() => pullImage(i)} disabled={!it.url?.trim() || pulling === it.id} title="Pull the product image from this link"
+                              className="flex items-center gap-1 text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-teal-200 bg-teal-50 text-teal-700 hover:bg-teal-100 disabled:opacity-40 flex-shrink-0">
+                              {pulling === it.id ? <Loader2 size={13} className="animate-spin" /> : <ImageIcon size={13} />} Image
+                            </button>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-1 flex-1">
+                              <DollarSign size={13} className="text-gray-400" />
+                              <input type="number" min={0} step={0.01} value={it.price || ''} onChange={e => update(i, { price: Number(e.target.value) || 0 })} placeholder="0.00"
+                                className="w-full px-2 py-1.5 rounded-lg border border-gray-200 text-xs focus:outline-none focus:ring-2 focus:border-blue-400" />
+                            </div>
+                            <select value={it.room} onChange={e => update(i, { room: e.target.value })}
+                              className="flex-1 px-2 py-1.5 rounded-lg border border-gray-200 text-xs bg-white focus:outline-none focus:ring-2 focus:border-blue-400">
+                              {ROOMS.map(r => <option key={r} value={r}>{r}</option>)}
+                            </select>
+                          </div>
+                          <input value={it.notes} onChange={e => update(i, { notes: e.target.value })} placeholder="Notes (model #, color, qty…)"
+                            className="w-full px-2.5 py-1.5 rounded-lg border border-gray-200 text-xs focus:outline-none focus:ring-2 focus:border-blue-400" />
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
 
 // ── Before / After ─────────────────────────────────────────────────────────
 function CompareTab({ comparisons, attachments, onAdd, onUpdate, onRemove }: {

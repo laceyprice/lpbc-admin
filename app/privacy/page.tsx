@@ -40,7 +40,7 @@ export default function PrivacyPage() {
             <h2 className="text-xl font-bold text-gray-900 mb-3">3. Information Sharing</h2>
             <p>We do not sell, trade, or rent your personal information to third parties. We may share information with:</p>
             <ul className="list-disc pl-6 mt-2 space-y-1">
-              <li><strong>Service providers</strong> who assist us in operating our business (e.g., Stripe for payments, email and SMS services for reminders)</li>
+              <li><strong>Service providers</strong> who assist us in operating our business, including: Stripe (payment processing), Twilio (SMS text message reminders and notifications), Resend (email communications), Google Calendar and Google Drive (appointment scheduling and sharing project documents), Supabase (secure data storage), and Anthropic&apos;s Claude AI (used to help generate project estimates and design suggestions from the photos and descriptions you provide)</li>
               <li><strong>Legal authorities</strong> when required by law or to protect our legal rights</li>
             </ul>
           </section>

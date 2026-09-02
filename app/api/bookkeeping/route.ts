@@ -50,13 +50,20 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // For bank_transactions, also tag which ones are already posted to accounting
+  // For bank_transactions, also tag which ones are already posted to accounting.
+  // Only look up the transactions we're actually returning — querying the whole
+  // accounting_entries table hits Supabase's 1000-row cap and would miss posts
+  // for recent transactions once the ledger grows past 1000 entries.
   if (table === 'bank_transactions') {
-    const { data: posted } = await supabase
-      .from('accounting_entries')
-      .select('bank_transaction_id')
-      .not('bank_transaction_id', 'is', null)
-    const postedSet = new Set((posted || []).map((e: any) => e.bank_transaction_id))
+    const ids = (data || []).map((tx: any) => tx.id)
+    const postedSet = new Set<string>()
+    for (let i = 0; i < ids.length; i += 200) {   // chunk to keep the id filter URL small
+      const { data: posted } = await supabase
+        .from('accounting_entries')
+        .select('bank_transaction_id')
+        .in('bank_transaction_id', ids.slice(i, i + 200))
+      for (const e of (posted || [])) if (e.bank_transaction_id) postedSet.add(e.bank_transaction_id)
+    }
     const enriched = (data || []).map((tx: any) => ({ ...tx, _posted: postedSet.has(tx.id) }))
     return NextResponse.json(enriched)
   }

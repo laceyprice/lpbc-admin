@@ -10,6 +10,7 @@ import {
   MousePointer2, Minus, Square, DoorOpen, RectangleHorizontal, Hand,
   ZoomIn, ZoomOut, Trash2, RotateCcw, Copy, Check, ScanLine, Loader2, AlertCircle, X,
   Image as ImageIcon, Eye, EyeOff, Move, FileDown, Ruler, Bath, RotateCw, Undo2, Box,
+  Zap, Layers, Cable,
 } from 'lucide-react'
 
 // 3D view is heavy (Three.js) — load it only when opened, client-side only.
@@ -19,21 +20,41 @@ type Underlay = { src: string; x: number; y: number; w: number; h: number; opaci
 
 // ── Model ────────────────────────────────────────────────────────────────────
 type Pt = { x: number; y: number }            // world units = feet
-type Wall = { id: string; a: Pt; b: Pt; h?: number }   // h = wall height in ft (omitted = full)
+// Trade layers — let one plan carry an architectural shell plus overlays
+// (electrical, plumbing) and renovation markup (demo / new work) that can be
+// shown, hidden and printed independently. Untagged elements are 'arch'.
+type TradeLayer = 'arch' | 'electrical' | 'plumbing' | 'demo' | 'new'
+const LAYER_INFO: Record<TradeLayer, { name: string; short: string; color: string; dash?: string }> = {
+  arch:       { name: 'Architectural', short: 'ARCH',  color: '#1f2937' },
+  electrical: { name: 'Electrical',    short: 'ELEC',  color: '#d97706' },
+  plumbing:   { name: 'Plumbing',      short: 'PLMB',  color: '#2563eb' },
+  demo:       { name: 'Demo',          short: 'DEMO',  color: '#dc2626', dash: '7 4' },
+  new:        { name: 'New Work',      short: 'NEW',   color: '#16a34a' },
+}
+const LAYER_ORDER: TradeLayer[] = ['arch', 'electrical', 'plumbing', 'demo', 'new']
+const layerColor = (l?: TradeLayer) => LAYER_INFO[l || 'arch'].color
+type Wall = { id: string; a: Pt; b: Pt; h?: number; layer?: TradeLayer }   // h = wall height in ft (omitted = full)
 const FULL_WALL_H = 8
 type Opening = { id: string; wallId: string; t: number; width: number; kind: 'door' | 'window' | 'pocket'; flip: boolean; hinge?: boolean }
-type Room = { id: string; at: Pt; w: number; h: number; name: string }
-type Label = { id: string; at: Pt; text: string }
-type FixtureKind = 'toilet' | 'sink' | 'tub' | 'shower' | 'range' | 'fridge' | 'base' | 'upper' | 'island' | 'counter' | 'stairs' | 'railing'
-type Fixture = { id: string; kind: FixtureKind; at: Pt; w: number; h: number; rot: number }  // rot = degrees
-type Dim = { id: string; a: Pt; b: Pt; off: number }   // off = perpendicular offset of the dim line (ft)
-type Tool = 'select' | 'wall' | 'room' | 'door' | 'window' | 'dim' | 'fixture' | 'pan'
-type Sel = { kind: 'wall' | 'opening' | 'room' | 'vertex' | 'label' | 'fixture' | 'dim'; id: string; vx?: Pt } | null
+type Room = { id: string; at: Pt; w: number; h: number; name: string; layer?: TradeLayer }
+type Label = { id: string; at: Pt; text: string; layer?: TradeLayer }
+// Architectural/fixture kinds + a full set of electrical-plan symbols.
+type ArchFixtureKind = 'toilet' | 'sink' | 'tub' | 'shower' | 'range' | 'fridge' | 'base' | 'upper' | 'island' | 'counter' | 'stairs' | 'railing'
+type ElecFixtureKind = 'outlet' | 'gfci' | 'outlet220' | 'switch' | 'switch3' | 'dimmer' | 'recessed' | 'light' | 'pendant' | 'fan' | 'exhaust' | 'smoke' | 'panel' | 'data' | 'tv' | 'thermostat'
+type FixtureKind = ArchFixtureKind | ElecFixtureKind
+const ELEC_KINDS: ElecFixtureKind[] = ['outlet', 'gfci', 'outlet220', 'switch', 'switch3', 'dimmer', 'recessed', 'light', 'pendant', 'fan', 'exhaust', 'smoke', 'panel', 'data', 'tv', 'thermostat']
+const isElec = (k: FixtureKind): k is ElecFixtureKind => (ELEC_KINDS as string[]).includes(k)
+type Fixture = { id: string; kind: FixtureKind; at: Pt; w: number; h: number; rot: number; layer?: TradeLayer }  // rot = degrees
+type Dim = { id: string; a: Pt; b: Pt; off: number; layer?: TradeLayer }   // off = perpendicular offset of the dim line (ft)
+// A wiring / circuit run for the electrical plan — a polyline of points.
+type Wire = { id: string; pts: Pt[]; layer?: TradeLayer }
+type Tool = 'select' | 'wall' | 'room' | 'door' | 'window' | 'dim' | 'fixture' | 'wire' | 'pan'
+type Sel = { kind: 'wall' | 'opening' | 'room' | 'vertex' | 'label' | 'fixture' | 'dim' | 'wire'; id: string; vx?: Pt } | null
 
 export type FinishPick = { floor: number; walls: number; cabinet: number; counter: number }
 export type FinishSample = { id: string; name: string; url: string; scale?: number }   // url = data URL; scale = ft per image tile
 export type Finishes = { pick: FinishPick; schemes?: { name: string; pick: FinishPick }[]; samples?: Record<string, FinishSample[]> }
-export type PlanDoc = { walls?: Wall[]; openings?: Opening[]; rooms?: Room[]; labels?: Label[]; fixtures?: Fixture[]; dims?: Dim[]; finishes?: Finishes }
+export type PlanDoc = { walls?: Wall[]; openings?: Opening[]; rooms?: Room[]; labels?: Label[]; fixtures?: Fixture[]; dims?: Dim[]; wires?: Wire[]; finishes?: Finishes; wallThick?: number; wallStyle?: 'outline' | 'solid'; activeLayer?: TradeLayer }
 const DEFAULT_FINISHES: Finishes = { pick: { floor: 0, walls: 0, cabinet: 0, counter: 0 }, schemes: [] }
 
 // Default footprint (ft) per fixture kind.
@@ -50,6 +71,28 @@ const FIXTURES: Record<FixtureKind, { w: number; h: number; label: string }> = {
   counter: { w: 4, h: 2, label: 'Counter' },
   stairs: { w: 3, h: 10, label: 'Stairs' },
   railing: { w: 6, h: 0.5, label: 'Railing' },
+  // ── Electrical symbols (small, fixed footprint = symbol size in ft) ──
+  outlet:     { w: 0.9, h: 0.9, label: 'Outlet' },
+  gfci:       { w: 0.9, h: 0.9, label: 'GFCI' },
+  outlet220:  { w: 1.0, h: 1.0, label: '220V' },
+  switch:     { w: 0.8, h: 0.8, label: 'Switch' },
+  switch3:    { w: 0.8, h: 0.8, label: '3-Way' },
+  dimmer:     { w: 0.8, h: 0.8, label: 'Dimmer' },
+  recessed:   { w: 0.9, h: 0.9, label: 'Can Light' },
+  light:      { w: 1.0, h: 1.0, label: 'Ceiling Light' },
+  pendant:    { w: 0.8, h: 0.8, label: 'Pendant' },
+  fan:        { w: 2.2, h: 2.2, label: 'Ceiling Fan' },
+  exhaust:    { w: 1.0, h: 1.0, label: 'Exhaust Fan' },
+  smoke:      { w: 0.9, h: 0.9, label: 'Smoke Det.' },
+  panel:      { w: 1.4, h: 0.9, label: 'Panel' },
+  data:       { w: 0.9, h: 0.9, label: 'Data/Cable' },
+  tv:         { w: 0.9, h: 0.9, label: 'TV Outlet' },
+  thermostat: { w: 0.8, h: 0.8, label: 'Thermostat' },
+}
+// Short glyph stamped on electrical symbols that read by letter (S, GFI, …).
+const FIX_GLYPH: Partial<Record<FixtureKind, string>> = {
+  gfci: 'GFI', outlet220: '220', switch: 'S', switch3: 'S3', dimmer: 'SD',
+  exhaust: 'EF', smoke: 'SM', panel: 'PNL', data: 'D', tv: 'TV', thermostat: 'T',
 }
 // Primitive shapes in LOCAL feet (centered at origin, canonical orientation).
 type Prim =
@@ -116,6 +159,59 @@ function fixturePrims(kind: FixtureKind, w: number, h: number): Prim[] {
       const n = Math.max(2, Math.round(w / 3))
       for (let i = 0; i <= n; i++) { const px = x + (i * w) / n; prims.push({ t: 'line', x1: px, y1: -0.2, x2: px, y2: 0.2 }) }
       return prims
+    }
+    // ── Electrical symbols (canonical plan symbols, drawn in local feet) ──
+    case 'outlet': case 'gfci': case 'data': case 'tv': {  // receptacle: circle + two blades
+      const r = Math.min(w, h) * 0.42
+      return [
+        { t: 'circle', cx: 0, cy: 0, r },
+        { t: 'line', x1: -r * 0.45, y1: -r * 0.5, x2: -r * 0.45, y2: r * 0.5 },
+        { t: 'line', x1: r * 0.45, y1: -r * 0.5, x2: r * 0.45, y2: r * 0.5 },
+      ]
+    }
+    case 'outlet220': {  // 220V receptacle: circle + horizontal bar
+      const r = Math.min(w, h) * 0.42
+      return [{ t: 'circle', cx: 0, cy: 0, r }, { t: 'line', x1: -r * 0.55, y1: 0, x2: r * 0.55, y2: 0 }]
+    }
+    case 'switch': case 'switch3': case 'dimmer': {  // glyph-only (S / S3 / SD) + toggle stem
+      return [{ t: 'line', x1: 0, y1: h * 0.18, x2: 0, y2: h * 0.46 }]
+    }
+    case 'recessed': {  // recessed can: circle with a cross
+      const r = Math.min(w, h) * 0.45
+      return [{ t: 'circle', cx: 0, cy: 0, r }, { t: 'line', x1: -r, y1: 0, x2: r, y2: 0 }, { t: 'line', x1: 0, y1: -r, x2: 0, y2: r }]
+    }
+    case 'light': {  // surface ceiling light: circle + radiating ticks
+      const r = Math.min(w, h) * 0.34
+      const prims: Prim[] = [{ t: 'circle', cx: 0, cy: 0, r }]
+      for (let i = 0; i < 4; i++) { const a = (i / 4) * 2 * Math.PI; prims.push({ t: 'line', x1: r * Math.cos(a), y1: r * Math.sin(a), x2: r * 1.7 * Math.cos(a), y2: r * 1.7 * Math.sin(a) }) }
+      return prims
+    }
+    case 'pendant': {  // pendant: small circle + drop line
+      const r = Math.min(w, h) * 0.28
+      return [{ t: 'circle', cx: 0, cy: h * 0.12, r }, { t: 'line', x1: 0, y1: -h * 0.4, x2: 0, y2: h * 0.12 - r }]
+    }
+    case 'fan': {  // ceiling fan: hub + four blades
+      const R = Math.min(w, h) * 0.46, r = Math.min(w, h) * 0.08
+      const prims: Prim[] = [{ t: 'circle', cx: 0, cy: 0, r }]
+      for (let i = 0; i < 4; i++) { const a = (i / 4) * 2 * Math.PI + Math.PI / 4; prims.push({ t: 'line', x1: 0, y1: 0, x2: R * Math.cos(a), y2: R * Math.sin(a) }) }
+      return prims
+    }
+    case 'exhaust': {  // exhaust fan: square with an X
+      const s = Math.min(w, h) * 0.42
+      return [
+        { t: 'rect', x: -s, y: -s, w: s * 2, h: s * 2 },
+        { t: 'line', x1: -s, y1: -s, x2: s, y2: s }, { t: 'line', x1: s, y1: -s, x2: -s, y2: s },
+      ]
+    }
+    case 'smoke': {  // smoke detector: circle with inner dot
+      const r = Math.min(w, h) * 0.45
+      return [{ t: 'circle', cx: 0, cy: 0, r }, { t: 'circle', cx: 0, cy: 0, r: r * 0.18 }]
+    }
+    case 'thermostat': {  // thermostat: small circle (glyph 'T')
+      return [{ t: 'circle', cx: 0, cy: 0, r: Math.min(w, h) * 0.4 }]
+    }
+    case 'panel': {  // electrical panel: box (glyph 'PNL')
+      return [{ t: 'rect', x, y, w, h }]
     }
   }
 }
@@ -192,7 +288,16 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
   const [labels, setLabels] = useState<Label[]>(value?.labels || [])
   const [fixtures, setFixtures] = useState<Fixture[]>(value?.fixtures || [])
   const [dims, setDims] = useState<Dim[]>(value?.dims || [])
+  const [wires, setWires] = useState<Wire[]>(value?.wires || [])
   const [fixKind, setFixKind] = useState<FixtureKind>('toilet')
+  // ── Trade layers ───────────────────────────────────────────────────────────
+  const [activeLayer, setActiveLayer] = useState<TradeLayer>(value?.activeLayer || 'arch')
+  const [hidden, setHidden] = useState<Set<TradeLayer>>(new Set())
+  const [showLayers, setShowLayers] = useState(false)
+  const vis = (l?: TradeLayer) => !hidden.has(l || 'arch')
+  const toggleLayer = (l: TradeLayer) => setHidden(prev => { const n = new Set(prev); n.has(l) ? n.delete(l) : n.add(l); return n })
+  // The wire-in-progress: a chain of clicked points committed on double-click.
+  const wireDraft = useRef<Pt[]>([])
   const updFixture = (id: string, p: Partial<Fixture>) => { checkpoint('fx' + id); setFixtures(prev => prev.map(f => f.id === id ? { ...f, ...p } : f)) }
   const dimStart = useRef<Pt | null>(null)
   const [tool, setTool] = useState<Tool>('wall')
@@ -201,8 +306,8 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
   // default sizes for newly-placed openings (feet)
   const [defDoorW, setDefDoorW] = useState(3)
   const [defWinW, setDefWinW] = useState(3)
-  const [wallThick, setWallThick] = useState(0.5)   // wall thickness in feet (6")
-  const [wallStyle, setWallStyle] = useState<'outline' | 'solid'>('outline')  // double-line vs poché
+  const [wallThick, setWallThick] = useState<number>(value?.wallThick ?? 0.5)   // wall thickness in feet (6")
+  const [wallStyle, setWallStyle] = useState<'outline' | 'solid'>(value?.wallStyle ?? 'outline')  // double-line vs poché
   const [showWallDims, setShowWallDims] = useState(true)   // auto per-wall length labels
   const [show3D, setShow3D] = useState(false)
   const [finishes, setFinishes] = useState<Finishes>(value?.finishes || DEFAULT_FINISHES)
@@ -238,9 +343,9 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
   const firstEmit = useRef(true)
   useEffect(() => {
     if (firstEmit.current) { firstEmit.current = false; return }
-    onChange?.({ walls, openings, rooms, labels, fixtures, dims, finishes })
+    onChange?.({ walls, openings, rooms, labels, fixtures, dims, wires, finishes, wallThick, wallStyle, activeLayer })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [walls, openings, rooms, labels, fixtures, dims, finishes])
+  }, [walls, openings, rooms, labels, fixtures, dims, wires, finishes, wallThick, wallStyle, activeLayer])
 
   // view
   const [ppf, setPpf] = useState(16)            // pixels per foot at zoom 1
@@ -268,7 +373,7 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
     const now = Date.now()
     if (tag && tag === cpTag.current && now - cpTime.current < 700) return
     cpTime.current = now; cpTag.current = tag
-    past.current.push({ walls, openings, rooms, labels, fixtures, dims })
+    past.current.push({ walls, openings, rooms, labels, fixtures, dims, wires })
     if (past.current.length > 60) past.current.shift()
     setUndoDepth(past.current.length)
   }
@@ -276,7 +381,7 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
     const prev = past.current.pop()
     if (!prev) return
     setWalls(prev.walls || []); setOpenings(prev.openings || []); setRooms(prev.rooms || [])
-    setLabels(prev.labels || []); setFixtures(prev.fixtures || []); setDims(prev.dims || [])
+    setLabels(prev.labels || []); setFixtures(prev.fixtures || []); setDims(prev.dims || []); setWires(prev.wires || [])
     setSel(null); cpTag.current = ''; setUndoDepth(past.current.length)
   }
 
@@ -363,8 +468,18 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
       const def = FIXTURES[fixKind]
       const id = uid()
       checkpoint('place')
-      setFixtures(prev => [...prev, { id, kind: fixKind, at: sp, w: def.w, h: def.h, rot: 0 }])
+      // Electrical symbols default onto the Electrical layer; everything else
+      // onto whatever layer is active.
+      const lyr = isElec(fixKind) ? 'electrical' : activeLayer
+      setFixtures(prev => [...prev, { id, kind: fixKind, at: sp, w: def.w, h: def.h, rot: 0, layer: lyr }])
       setSel({ kind: 'fixture', id })
+      return
+    }
+
+    if (tool === 'wire') {
+      // Chain points; double-click (or Escape) finishes the run.
+      wireDraft.current = [...wireDraft.current, sp]
+      force(n => n + 1)
       return
     }
 
@@ -374,7 +489,7 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
         if (dist(dimStart.current, sp) > 0.1) {
           const id = uid()
           checkpoint('place')
-          setDims(prev => [...prev, { id, a: dimStart.current!, b: sp, off: 1.5 }])
+          setDims(prev => [...prev, { id, a: dimStart.current!, b: sp, off: 1.5, layer: activeLayer }])
           setSel({ kind: 'dim', id })
         }
         dimStart.current = null
@@ -434,13 +549,13 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
         const dragged = dist(down, up) > 0.4
         if (dragged) {
           checkpoint('wall')
-          setWalls(prev => [...prev, { id: uid(), a: down, b: up }])
+          setWalls(prev => [...prev, { id: uid(), a: down, b: up, layer: activeLayer }])
           wallChain.current = up
         } else {
           // a click: start a chain anchor, or close a segment to the chain anchor
           if (chain && dist(chain, up) > 0.1) {
             checkpoint('wall')
-            setWalls(prev => [...prev, { id: uid(), a: chain, b: up }])
+            setWalls(prev => [...prev, { id: uid(), a: chain, b: up, layer: activeLayer }])
           }
           wallChain.current = up
         }
@@ -457,9 +572,9 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
         checkpoint('room')
         const tl = { x: x0, y: y0 }, tr = { x: x1, y: y0 }, br = { x: x1, y: y1 }, bl = { x: x0, y: y1 }
         setWalls(prev => [...prev,
-          { id: uid(), a: tl, b: tr }, { id: uid(), a: tr, b: br },
-          { id: uid(), a: br, b: bl }, { id: uid(), a: bl, b: tl }])
-        setRooms(prev => [...prev, { id: uid(), at: { x: (x0 + x1) / 2, y: (y0 + y1) / 2 }, w, h, name: 'Room' }])
+          { id: uid(), a: tl, b: tr, layer: activeLayer }, { id: uid(), a: tr, b: br, layer: activeLayer },
+          { id: uid(), a: br, b: bl, layer: activeLayer }, { id: uid(), a: bl, b: tl, layer: activeLayer }])
+        setRooms(prev => [...prev, { id: uid(), at: { x: (x0 + x1) / 2, y: (y0 + y1) / 2 }, w, h, name: 'Room', layer: activeLayer }])
       }
       roomDrag.current = null
       setRoomPreview(null)
@@ -467,7 +582,24 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
     dragging.current = null
   }
 
-  function onDouble() { if (tool === 'wall') { wallChain.current = null; wallDown.current = null; force(n => n + 1) } }
+  // Commit the in-progress wire run (needs ≥2 points). Wires drawn while on the
+  // architectural layer default to Electrical (that's what a wire run is for).
+  function commitWire() {
+    // Drop consecutive duplicate points (a double-click registers the last point twice).
+    const clean: Pt[] = []
+    for (const p of wireDraft.current) { const last = clean[clean.length - 1]; if (!last || dist(last, p) > 0.05) clean.push({ ...p }) }
+    if (clean.length >= 2) {
+      checkpoint('wire')
+      const lyr: TradeLayer = activeLayer === 'arch' ? 'electrical' : activeLayer
+      setWires(prev => [...prev, { id: uid(), pts: clean, layer: lyr }])
+    }
+    wireDraft.current = []
+    force(n => n + 1)
+  }
+  function onDouble() {
+    if (tool === 'wall') { wallChain.current = null; wallDown.current = null; force(n => n + 1) }
+    if (tool === 'wire') commitWire()
+  }
 
   function nearestWall(p: Pt) {
     let best: { wall: Wall; t: number; dist: number } | null = null
@@ -481,35 +613,42 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
 
   function hitTest(p: Pt): Sel {
     const tolPx = 10
-    // vertices first
-    for (const wl of walls) for (const v of [wl.a, wl.b]) {
+    // vertices first (only on visible walls)
+    for (const wl of walls) { if (!vis(wl.layer)) continue; for (const v of [wl.a, wl.b]) {
       if (dist(toPx(p), toPx(v)) < tolPx) return { kind: 'vertex', id: wl.id, vx: v }
-    }
+    } }
     // openings
     for (const o of openings) {
-      const wl = walls.find(w => w.id === o.wallId); if (!wl) continue
+      const wl = walls.find(w => w.id === o.wallId); if (!wl || !vis(wl.layer)) continue
       const c = add(wl.a, mul(sub(wl.b, wl.a), o.t))
       if (dist(toPx(p), toPx(c)) < tolPx + 4) return { kind: 'opening', id: o.id }
     }
     // fixtures (inside footprint, in fixture-local space)
     for (const f of fixtures) {
+      if (!vis(f.layer)) continue
       const rad = -f.rot * Math.PI / 180, dx = p.x - f.at.x, dy = p.y - f.at.y
       const lx = dx * Math.cos(rad) - dy * Math.sin(rad), ly = dx * Math.sin(rad) + dy * Math.cos(rad)
       if (Math.abs(lx) <= f.w / 2 && Math.abs(ly) <= f.h / 2) return { kind: 'fixture', id: f.id }
     }
+    // wires (near any segment of the run)
+    for (const wr of wires) {
+      if (!vis(wr.layer)) continue
+      for (let i = 0; i < wr.pts.length - 1; i++) if (nearestOnSeg(p, wr.pts[i], wr.pts[i + 1]).dist * scale < tolPx) return { kind: 'wire', id: wr.id }
+    }
     // dimensions (near the dim line)
     for (const d of dims) {
+      if (!vis(d.layer)) continue
       const u = norm(sub(d.b, d.a)), n = perp(u)
       const a2 = add(d.a, mul(n, d.off)), b2 = add(d.b, mul(n, d.off))
       if (nearestOnSeg(p, a2, b2).dist * scale < tolPx) return { kind: 'dim', id: d.id }
     }
     // text labels (room names / dimensions) — grab a wide box so they're easy to hit
-    for (const l of labels) { const c = toPx(l.at); if (Math.abs(toPx(p).x - c.x) < 6 + l.text.length * 3.5 && Math.abs(toPx(p).y - c.y) < 9) return { kind: 'label', id: l.id } }
+    for (const l of labels) { if (!vis(l.layer)) continue; const c = toPx(l.at); if (Math.abs(toPx(p).x - c.x) < 6 + l.text.length * 3.5 && Math.abs(toPx(p).y - c.y) < 9) return { kind: 'label', id: l.id } }
     // room labels
-    for (const r of rooms) if (dist(toPx(p), toPx(r.at)) < 26) return { kind: 'room', id: r.id }
+    for (const r of rooms) if (vis(r.layer) && dist(toPx(p), toPx(r.at)) < 26) return { kind: 'room', id: r.id }
     // walls
     const nw = nearestWall(p)
-    if (nw && nw.dist * scale < tolPx) return { kind: 'wall', id: nw.wall.id }
+    if (nw && vis(nw.wall.layer) && nw.dist * scale < tolPx) return { kind: 'wall', id: nw.wall.id }
     return null
   }
 
@@ -533,6 +672,7 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
     else if (sel.kind === 'label') setLabels(prev => prev.filter(l => l.id !== sel.id))
     else if (sel.kind === 'fixture') setFixtures(prev => prev.filter(f => f.id !== sel.id))
     else if (sel.kind === 'dim') setDims(prev => prev.filter(d => d.id !== sel.id))
+    else if (sel.kind === 'wire') setWires(prev => prev.filter(w => w.id !== sel.id))
     setSel(null)
   }
 
@@ -600,13 +740,14 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Delete' || e.key === 'Backspace') { if (sel) { e.preventDefault(); deleteSel() } }
-      if (e.key === 'Escape') { wallChain.current = null; wallDown.current = null; dimStart.current = null; setSel(null); roomDrag.current = null; setRoomPreview(null); force(n => n + 1) }
+      if (e.key === 'Escape') { wallChain.current = null; wallDown.current = null; dimStart.current = null; wireDraft.current = []; setSel(null); roomDrag.current = null; setRoomPreview(null); force(n => n + 1) }
+      if (e.key === 'Enter' && tool === 'wire' && wireDraft.current.length >= 2) { e.preventDefault(); commitWire() }
       if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')) { e.preventDefault(); undo() }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sel, walls, rooms, openings])
+  }, [sel, walls, rooms, openings, tool, activeLayer])
 
   function zoomBy(factor: number, center?: Pt) {
     const c = center || { x: size.w / 2, y: size.h / 2 }
@@ -622,7 +763,7 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
     zoomBy(e.deltaY < 0 ? 1.1 : 1 / 1.1, { x: e.clientX - rect.left, y: e.clientY - rect.top })
   }
 
-  function clearAll() { if (confirm('Clear the whole plan?')) { checkpoint('clear'); setWalls([]); setOpenings([]); setRooms([]); setLabels([]); setFixtures([]); setDims([]); setSel(null); wallChain.current = null } }
+  function clearAll() { if (confirm('Clear the whole plan?')) { checkpoint('clear'); setWalls([]); setOpenings([]); setRooms([]); setLabels([]); setFixtures([]); setDims([]); setWires([]); setSel(null); wallChain.current = null; wireDraft.current = [] } }
 
   function copyJSON() {
     const doc = { units: 'feet', walls, openings, rooms, labels }
@@ -636,7 +777,7 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity
     const see = (p: Pt) => { if (p.x < x0) x0 = p.x; if (p.y < y0) y0 = p.y; if (p.x > x1) x1 = p.x; if (p.y > y1) y1 = p.y }
     walls.forEach(w => { see(w.a); see(w.b) }); labels.forEach(l => see(l.at)); rooms.forEach(r => see(r.at))
-    fixtures.forEach(f => see(f.at)); dims.forEach(d => { see(d.a); see(d.b) })
+    fixtures.forEach(f => see(f.at)); dims.forEach(d => { see(d.a); see(d.b) }); wires.forEach(wr => wr.pts.forEach(see))
     const bw = Math.max(1, x1 - x0), bh = Math.max(1, y1 - y0)
     const SCALES = [
       { v: 0.25, l: '1/4" = 1\'-0"' }, { v: 0.1875, l: '3/16" = 1\'-0"' }, { v: 0.125, l: '1/8" = 1\'-0"' },
@@ -652,11 +793,15 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
     const wpx = Math.max(2, wallThick * ppf)
     const pFace = Math.min(2.5, Math.max(0.7, wpx * 0.16)), pInner = Math.max(0.4, wpx - 2 * pFace)
     const esc = (s: string) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    const lc = (l?: TradeLayer) => (l && l !== 'arch') ? LAYER_INFO[l].color : '#111827'
+    const vw = walls.filter(w => vis(w.layer))   // visible walls only (print what's shown)
     const P: string[] = []
-    for (const w of walls) P.push(`<line x1="${X(w.a)}" y1="${Y(w.a)}" x2="${X(w.b)}" y2="${Y(w.b)}" stroke="#111827" stroke-width="${wpx.toFixed(1)}" stroke-linecap="round"/>`)
-    if (wallStyle === 'outline') for (const w of walls) P.push(`<line x1="${X(w.a)}" y1="${Y(w.a)}" x2="${X(w.b)}" y2="${Y(w.b)}" stroke="#fff" stroke-width="${pInner.toFixed(1)}" stroke-linecap="round"/>`)
+    for (const w of vw) { const dash = w.layer === 'demo' ? ` stroke-dasharray="${(wpx * 1.4).toFixed(1)} ${(wpx).toFixed(1)}"` : ''
+      P.push(`<line x1="${X(w.a)}" y1="${Y(w.a)}" x2="${X(w.b)}" y2="${Y(w.b)}" stroke="${lc(w.layer)}" stroke-width="${wpx.toFixed(1)}" stroke-linecap="round"${dash}/>`) }
+    if (wallStyle === 'outline') for (const w of vw) { if (w.layer === 'demo') continue
+      P.push(`<line x1="${X(w.a)}" y1="${Y(w.a)}" x2="${X(w.b)}" y2="${Y(w.b)}" stroke="#fff" stroke-width="${pInner.toFixed(1)}" stroke-linecap="round"/>`) }
     for (const o of openings) {
-      const wl = walls.find(w => w.id === o.wallId); if (!wl) continue
+      const wl = walls.find(w => w.id === o.wallId); if (!wl || !vis(wl.layer)) continue
       const u = norm(sub(wl.b, wl.a)), c = add(wl.a, mul(sub(wl.b, wl.a), o.t)), half = o.width / 2
       const j1 = sub(c, mul(u, half)), j2 = add(c, mul(u, half)), n = mul(perp(u), o.flip ? -1 : 1)
       P.push(`<line x1="${X(j1)}" y1="${Y(j1)}" x2="${X(j2)}" y2="${Y(j2)}" stroke="#fff" stroke-width="${(wpx + 1).toFixed(1)}"/>`)
@@ -679,29 +824,41 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
         P.push(`<line x1="${X(j1)}" y1="${Y(j1)}" x2="${X(j2)}" y2="${Y(j2)}" stroke="#111827" stroke-width="1.5"/>`)
       }
     }
-    for (const f of fixtures) for (const pl of fixtureWorldPolys(f)) {
-      P.push(`<polyline points="${pl.map(p => `${X(p)},${Y(p)}`).join(' ')}" fill="none" stroke="#111827" stroke-width="1"/>`)
+    for (const f of fixtures) {
+      if (!vis(f.layer)) continue
+      const col = lc(f.layer)
+      for (const pl of fixtureWorldPolys(f)) P.push(`<polyline points="${pl.map(p => `${X(p)},${Y(p)}`).join(' ')}" fill="none" stroke="${col}" stroke-width="1"/>`)
+      const glyph = FIX_GLYPH[f.kind]
+      if (glyph) { const g = X(f.at), gy = Y(f.at); P.push(`<text x="${g}" y="${gy}" font-size="${(Math.min(f.w, f.h) * 0.5 * ppf).toFixed(1)}" font-weight="bold" fill="${col}" text-anchor="middle" dominant-baseline="central">${esc(glyph)}</text>`) }
+    }
+    // wiring runs
+    for (const wr of wires) {
+      if (!vis(wr.layer) || wr.pts.length < 2) continue
+      P.push(`<polyline points="${wr.pts.map(p => `${X(p)},${Y(p)}`).join(' ')}" fill="none" stroke="${lc(wr.layer)}" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>`)
     }
     for (const dm of dims) {
+      if (!vis(dm.layer)) continue
+      const dcol = lc(dm.layer)
       const u = norm(sub(dm.b, dm.a)), n = perp(u)
       const a2 = add(dm.a, mul(n, dm.off)), b2 = add(dm.b, mul(n, dm.off)), m = mul(add(a2, b2), 0.5)
-      P.push(`<line x1="${X(a2)}" y1="${Y(a2)}" x2="${X(b2)}" y2="${Y(b2)}" stroke="#111827" stroke-width="0.8"/>`)
-      P.push(`<line x1="${X(dm.a)}" y1="${Y(dm.a)}" x2="${X(a2)}" y2="${Y(a2)}" stroke="#111827" stroke-width="0.4"/>`)
-      P.push(`<line x1="${X(dm.b)}" y1="${Y(dm.b)}" x2="${X(b2)}" y2="${Y(b2)}" stroke="#111827" stroke-width="0.4"/>`)
+      P.push(`<line x1="${X(a2)}" y1="${Y(a2)}" x2="${X(b2)}" y2="${Y(b2)}" stroke="${dcol}" stroke-width="0.8"/>`)
+      P.push(`<line x1="${X(dm.a)}" y1="${Y(dm.a)}" x2="${X(a2)}" y2="${Y(a2)}" stroke="${dcol}" stroke-width="0.4"/>`)
+      P.push(`<line x1="${X(dm.b)}" y1="${Y(dm.b)}" x2="${X(b2)}" y2="${Y(b2)}" stroke="${dcol}" stroke-width="0.4"/>`)
       const ang = Math.atan2(b2.y - a2.y, b2.x - a2.x) * 180 / Math.PI, aa = (ang > 90 || ang < -90) ? ang + 180 : ang
-      P.push(`<text x="${X(m)}" y="${(Y(m) - 2).toFixed(1)}" font-size="8" fill="#111827" text-anchor="middle" transform="rotate(${aa.toFixed(1)} ${X(m)} ${Y(m)})">${esc(fmtFt(dist(dm.a, dm.b)))}</text>`)
+      P.push(`<text x="${X(m)}" y="${(Y(m) - 2).toFixed(1)}" font-size="8" fill="${dcol}" text-anchor="middle" transform="rotate(${aa.toFixed(1)} ${X(m)} ${Y(m)})">${esc(fmtFt(dist(dm.a, dm.b)))}</text>`)
     }
-    for (const w of walls) {
+    for (const w of vw) {
       const L = dist(w.a, w.b); if (L < 1) continue
       const m = add(mul(add(w.a, w.b), 0.5), mul(perp(norm(sub(w.b, w.a))), 0.6))
       const ang = Math.atan2(w.b.y - w.a.y, w.b.x - w.a.x) * 180 / Math.PI, a2 = (ang > 90 || ang < -90) ? ang + 180 : ang
       P.push(`<text x="${X(m)}" y="${Y(m)}" font-size="8" fill="#374151" text-anchor="middle" transform="rotate(${a2.toFixed(1)} ${X(m)} ${Y(m)})">${esc(fmtFt(L))}</text>`)
     }
     for (const r of rooms) {
+      if (!vis(r.layer)) continue
       P.push(`<text x="${X(r.at)}" y="${Y(r.at)}" font-size="9" font-weight="bold" fill="#111827" text-anchor="middle">${esc(r.name)}</text>`)
       P.push(`<text x="${X(r.at)}" y="${(Y(r.at) + 11).toFixed(1)}" font-size="8" fill="#374151" text-anchor="middle">${esc(fmtFt(r.w) + ' x ' + fmtFt(r.h))}</text>`)
     }
-    for (const l of labels) P.push(`<text x="${X(l.at)}" y="${Y(l.at)}" font-size="9" font-weight="bold" fill="#111827" text-anchor="middle">${esc(l.text)}</text>`)
+    for (const l of labels) { if (!vis(l.layer)) continue; P.push(`<text x="${X(l.at)}" y="${Y(l.at)}" font-size="9" font-weight="bold" fill="${lc(l.layer)}" text-anchor="middle">${esc(l.text)}</text>`) }
     const svg = `<svg width="${W.toFixed(0)}" height="${H.toFixed(0)}" viewBox="0 0 ${W.toFixed(0)} ${H.toFixed(0)}" xmlns="http://www.w3.org/2000/svg">${P.join('')}</svg>`
     const today = new Date().toLocaleDateString()
     const html = `<!doctype html><html><head><meta charset="utf-8"><title>Floor Plan</title><style>
@@ -730,15 +887,19 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
     const text = (p: Pt, s: string, h: number, layer: string) => g(0, 'TEXT', 8, layer, 10, FX(p.x), 20, FY(p.y), 30, 0, 40, h, 1, s)
     const poly = (pts: Pt[], layer: string) => { for (let i = 0; i < pts.length - 1; i++) line(pts[i], pts[i + 1], layer) }
     // TABLES → layers (color: ACI)
-    const layers: [string, number][] = [['WALLS', 7], ['DOORS', 30], ['WINDOWS', 5], ['FIXTURES', 8], ['DIMS', 1], ['TEXT', 3]]
+    const layers: [string, number][] = [['WALLS', 7], ['DOORS', 30], ['WINDOWS', 5], ['FIXTURES', 8], ['DIMS', 1], ['TEXT', 3],
+      ['ELEC', 30], ['PLMB', 5], ['DEMO', 1], ['NEWWORK', 3], ['WIRING', 30]]
     g(0, 'SECTION', 2, 'TABLES', 0, 'TABLE', 2, 'LAYER', 70, layers.length)
     for (const [nm, col] of layers) g(0, 'LAYER', 2, nm, 70, 0, 62, col, 6, 'CONTINUOUS')
     g(0, 'ENDTAB', 0, 'ENDSEC')
+    // Map a trade layer onto its DXF layer name (arch falls back to the base layer).
+    const TLAYER: Record<TradeLayer, string> = { arch: '', electrical: 'ELEC', plumbing: 'PLMB', demo: 'DEMO', new: 'NEWWORK' }
+    const dlayer = (l: TradeLayer | undefined, base: string) => (l && l !== 'arch') ? TLAYER[l] : base
     // ENTITIES
     g(0, 'SECTION', 2, 'ENTITIES')
-    for (const w of walls) line(w.a, w.b, 'WALLS')
+    for (const w of walls) { if (!vis(w.layer)) continue; line(w.a, w.b, dlayer(w.layer, 'WALLS')) }
     for (const o of openings) {
-      const wl = walls.find(w => w.id === o.wallId); if (!wl) continue
+      const wl = walls.find(w => w.id === o.wallId); if (!wl || !vis(wl.layer)) continue
       const u = norm(sub(wl.b, wl.a)), c = add(wl.a, mul(sub(wl.b, wl.a), o.t)), half = o.width / 2
       const j1 = sub(c, mul(u, half)), j2 = add(c, mul(u, half)), n = mul(perp(u), o.flip ? -1 : 1)
       const hp = o.hinge ? j2 : j1, lp = o.hinge ? j1 : j2
@@ -756,15 +917,25 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
         line(add(lp, off), add(pk, off), 'DOORS')
       } else line(j1, j2, 'WINDOWS')
     }
-    for (const f of fixtures) for (const pl of fixtureWorldPolys(f)) poly(pl, 'FIXTURES')
+    for (const f of fixtures) {
+      if (!vis(f.layer)) continue
+      const flayer = dlayer(f.layer, 'FIXTURES')
+      for (const pl of fixtureWorldPolys(f)) poly(pl, flayer)
+      const glyph = FIX_GLYPH[f.kind]
+      if (glyph) text({ x: f.at.x - Math.min(f.w, f.h) * 0.2, y: f.at.y - Math.min(f.w, f.h) * 0.2 }, glyph, Math.min(f.w, f.h) * 0.45, flayer)
+    }
+    // wiring runs
+    for (const wr of wires) { if (!vis(wr.layer) || wr.pts.length < 2) continue; poly(wr.pts, dlayer(wr.layer, 'WIRING')) }
     for (const d of dims) {
+      if (!vis(d.layer)) continue
+      const dl = dlayer(d.layer, 'DIMS')
       const u = norm(sub(d.b, d.a)), n = perp(u)
       const a2 = add(d.a, mul(n, d.off)), b2 = add(d.b, mul(n, d.off))
-      line(a2, b2, 'DIMS'); line(d.a, a2, 'DIMS'); line(d.b, b2, 'DIMS')
-      text(mul(add(a2, b2), 0.5), fmtFt(dist(d.a, d.b)), 0.4, 'DIMS')
+      line(a2, b2, dl); line(d.a, a2, dl); line(d.b, b2, dl)
+      text(mul(add(a2, b2), 0.5), fmtFt(dist(d.a, d.b)), 0.4, dl)
     }
-    for (const r of rooms) { text(r.at, r.name, 0.5, 'TEXT'); text({ x: r.at.x, y: r.at.y + 0.8 }, `${fmtFt(r.w)} x ${fmtFt(r.h)}`, 0.35, 'TEXT') }
-    for (const l of labels) text(l.at, l.text, 0.5, 'TEXT')
+    for (const r of rooms) { if (!vis(r.layer)) continue; text(r.at, r.name, 0.5, 'TEXT'); text({ x: r.at.x, y: r.at.y + 0.8 }, `${fmtFt(r.w)} x ${fmtFt(r.h)}`, 0.35, 'TEXT') }
+    for (const l of labels) { if (!vis(l.layer)) continue; text(l.at, l.text, 0.5, dlayer(l.layer, 'TEXT')) }
     g(0, 'ENDSEC', 0, 'EOF')
     const blob = new Blob([L.join('\r\n')], { type: 'application/dxf' })
     const url = URL.createObjectURL(blob)
@@ -794,7 +965,7 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
 
   // door/window symbol geometry → svg elements
   function renderOpening(o: Opening) {
-    const wl = walls.find(w => w.id === o.wallId); if (!wl) return null
+    const wl = walls.find(w => w.id === o.wallId); if (!wl || !vis(wl.layer)) return null
     const u = norm(sub(wl.b, wl.a))
     const c = add(wl.a, mul(sub(wl.b, wl.a), o.t))
     const half = o.width / 2
@@ -898,7 +1069,15 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
         <ToolBtn t="window" icon={RectangleHorizontal} label="Window" />
         <ToolBtn t="dim" icon={Ruler} label="Dimension" />
         <ToolBtn t="fixture" icon={Bath} label="Fixture" />
+        <ToolBtn t="wire" icon={Cable} label="Wire" />
         <ToolBtn t="pan" icon={Hand} label="Pan" />
+        <div className="w-px h-6 bg-gray-200 mx-1" />
+        <button onClick={() => setShowLayers(v => !v)}
+          title="Show/hide trade layers (Architectural, Electrical, Plumbing, Demo, New)"
+          className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-semibold transition-colors ${showLayers ? 'border-amber-300 bg-amber-50 text-amber-700' : 'border-gray-200 text-gray-500 hover:bg-gray-50'}`}>
+          <Layers size={14} /> <span className="hidden sm:inline">Layers</span>
+          <span className="px-1.5 py-0.5 rounded text-[10px] font-bold" style={{ background: layerColor(activeLayer), color: '#fff' }}>{LAYER_INFO[activeLayer].short}</span>
+        </button>
         <div className="w-px h-6 bg-gray-200 mx-1" />
         {/* AI sketch import */}
         <input ref={fileRef} type="file" accept="image/*" className="hidden"
@@ -959,10 +1138,51 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
         </button>
       </div>
 
+      {/* Trade layers panel */}
+      {showLayers && (
+        <div className="bg-white border border-gray-200 rounded-xl px-3 py-2.5">
+          <div className="flex items-center gap-2 mb-2">
+            <Layers size={13} className="text-gray-500" />
+            <span className="text-xs font-bold text-gray-700">Trade layers</span>
+            <span className="text-[11px] text-gray-400">— click a layer to draw on it; toggle the eye to show/hide. New items land on the active layer.</span>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {LAYER_ORDER.map(l => {
+              const info = LAYER_INFO[l]
+              const on = vis(l)
+              const isActive = activeLayer === l
+              const count = walls.filter(w => (w.layer || 'arch') === l).length
+                + fixtures.filter(f => (f.layer || 'arch') === l).length
+                + dims.filter(d => (d.layer || 'arch') === l).length
+                + wires.filter(w => (w.layer || 'arch') === l).length
+                + rooms.filter(r => (r.layer || 'arch') === l).length
+                + labels.filter(x => (x.layer || 'arch') === l).length
+              return (
+                <div key={l} className={`flex items-center gap-1.5 rounded-lg border pl-1.5 pr-2 py-1 ${isActive ? 'ring-2' : ''}`}
+                  style={{ borderColor: info.color, background: isActive ? `${info.color}14` : '#fff', boxShadow: isActive ? `0 0 0 2px ${info.color}33` : undefined }}>
+                  <button onClick={() => toggleLayer(l)} title={on ? 'Hide layer' : 'Show layer'}
+                    className="p-0.5 rounded hover:bg-gray-100 text-gray-500">
+                    {on ? <Eye size={13} /> : <EyeOff size={13} className="text-gray-300" />}
+                  </button>
+                  <button onClick={() => setActiveLayer(l)} className="flex items-center gap-1.5">
+                    <span className="w-2.5 h-2.5 rounded-sm" style={{ background: info.color }} />
+                    <span className={`text-xs ${isActive ? 'font-bold' : 'font-semibold'}`} style={{ color: on ? info.color : '#9ca3af' }}>{info.name}</span>
+                    {count > 0 && <span className="text-[10px] text-gray-400 tabular-nums">({count})</span>}
+                    {isActive && <span className="text-[9px] font-bold uppercase tracking-wide px-1 py-0.5 rounded" style={{ background: info.color, color: '#fff' }}>active</span>}
+                  </button>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
       <p className="text-xs text-gray-500">
         Grid = 1 ft, snapping to 3&quot;. <strong>Import sketch (AI)</strong> drafts an editable plan from a photo, then refine it:{' '}
         <strong>Wall</strong>: drag to draw one wall, or click corner-to-corner (double-click to finish). <strong>Room</strong> drags a rectangle,{' '}
-        <strong>Door/Window</strong> clicks a wall, <strong>Select</strong> drags corners, labels & fixtures (Delete removes).
+        <strong>Door/Window</strong> clicks a wall, <strong>Select</strong> drags corners, labels & fixtures (Delete removes).{' '}
+        <strong>Fixture</strong> includes <strong style={{ color: '#b45309' }}>electrical symbols</strong> (outlets, switches, lights, panel…), <strong>Wire</strong> routes circuits.{' '}
+        Use <strong>Layers</strong> to draw electrical / plumbing / demo / new-work on separate, toggleable overlays.
       </p>
 
       {importErr && (
@@ -982,15 +1202,35 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
         </div>
       )}
 
-      {/* Fixture picker */}
+      {/* Fixture picker — architectural fixtures + electrical symbols */}
       {tool === 'fixture' && (
-        <div className="flex flex-wrap items-center gap-2 bg-teal-50 border border-teal-100 rounded-xl px-3 py-2 text-xs">
-          <span className="font-semibold text-teal-800">Fixture:</span>
-          {(Object.keys(FIXTURES) as FixtureKind[]).map(k => (
-            <button key={k} onClick={() => setFixKind(k)}
-              className={`px-2 py-0.5 rounded-lg border capitalize ${fixKind === k ? 'bg-teal-600 text-white border-teal-600' : 'bg-white text-gray-600 border-teal-200 hover:bg-teal-100'}`}>{FIXTURES[k].label}</button>
-          ))}
-          <span className="text-gray-400">— click to place; select to rotate/resize.</span>
+        <div className="space-y-2">
+          <div className="flex flex-wrap items-center gap-2 bg-teal-50 border border-teal-100 rounded-xl px-3 py-2 text-xs">
+            <span className="font-semibold text-teal-800 flex items-center gap-1"><Bath size={12} /> Fixtures:</span>
+            {(Object.keys(FIXTURES) as FixtureKind[]).filter(k => !isElec(k)).map(k => (
+              <button key={k} onClick={() => setFixKind(k)}
+                className={`px-2 py-0.5 rounded-lg border capitalize ${fixKind === k ? 'bg-teal-600 text-white border-teal-600' : 'bg-white text-gray-600 border-teal-200 hover:bg-teal-100'}`}>{FIXTURES[k].label}</button>
+            ))}
+          </div>
+          <div className="flex flex-wrap items-center gap-2 rounded-xl px-3 py-2 text-xs" style={{ background: '#fdf3e7', border: '1px solid #f4d9b5' }}>
+            <span className="font-semibold flex items-center gap-1" style={{ color: '#b45309' }}><Zap size={12} /> Electrical:</span>
+            {ELEC_KINDS.map(k => (
+              <button key={k} onClick={() => { setFixKind(k); setActiveLayer('electrical') }}
+                className="px-2 py-0.5 rounded-lg border"
+                style={fixKind === k
+                  ? { background: '#d97706', color: '#fff', borderColor: '#d97706' }
+                  : { background: '#fff', color: '#92704a', borderColor: '#f0cfa0' }}>{FIXTURES[k].label}</button>
+            ))}
+            <span className="text-gray-400">— click to place; select to rotate/resize.</span>
+          </div>
+        </div>
+      )}
+
+      {tool === 'wire' && (
+        <div className="flex flex-wrap items-center gap-2 rounded-xl px-3 py-2 text-xs" style={{ background: '#fdf3e7', border: '1px solid #f4d9b5' }}>
+          <Cable size={13} style={{ color: '#b45309' }} /> <span className="font-semibold" style={{ color: '#b45309' }}>Wire run:</span>
+          <span className="text-gray-500">click each point to route a circuit / home-run; <strong>double-click</strong> or <strong>Enter</strong> to finish, <strong>Esc</strong> to cancel. Draws on the{' '}
+            <strong style={{ color: layerColor(activeLayer === 'arch' ? 'electrical' : activeLayer) }}>{LAYER_INFO[activeLayer === 'arch' ? 'electrical' : activeLayer].name}</strong> layer.</span>
         </div>
       )}
 
@@ -1138,7 +1378,7 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
           })()}
 
           {/* rooms (fill + label) */}
-          {rooms.map(r => {
+          {rooms.filter(r => vis(r.layer)).map(r => {
             const p = toPx(r.at)
             const seld = sel?.kind === 'room' && sel.id === r.id
             return (
@@ -1151,25 +1391,28 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
             )
           })}
 
-          {/* walls — dark faces (full thickness) */}
-          {walls.map(wl => {
+          {/* walls — dark faces (full thickness); non-arch layers take their trade color */}
+          {walls.filter(wl => vis(wl.layer)).map(wl => {
             if (!validPt(wl.a) || !validPt(wl.b)) return null
             const a = toPx(wl.a), b = toPx(wl.b)
             const seld = sel?.kind === 'wall' && sel.id === wl.id
+            const info = LAYER_INFO[wl.layer || 'arch']
             return <line key={wl.id} x1={a.x} y1={a.y} x2={b.x} y2={b.y}
-              stroke={seld ? '#f59e0b' : '#1f2937'} strokeWidth={wallPx} strokeLinecap="round"
+              stroke={seld ? '#f59e0b' : (wl.layer && wl.layer !== 'arch' ? info.color : '#1f2937')}
+              strokeWidth={wallPx} strokeLinecap="round" strokeDasharray={info.dash}
               onClick={() => tool === 'select' && setSel({ kind: 'wall', id: wl.id })}
               style={{ cursor: tool === 'select' ? 'pointer' : undefined }} />
           })}
-          {/* walls — white interior (double-line look); corners mitre via overlap */}
-          {wallStyle === 'outline' && walls.map(wl => {
+          {/* walls — white interior (double-line look); corners mitre via overlap.
+              Skip the demo layer (dashed single line reads better for a wall to remove). */}
+          {wallStyle === 'outline' && walls.filter(wl => vis(wl.layer) && wl.layer !== 'demo').map(wl => {
             if (!validPt(wl.a) || !validPt(wl.b)) return null
             const a = toPx(wl.a), b = toPx(wl.b)
             return <line key={wl.id + '_in'} x1={a.x} y1={a.y} x2={b.x} y2={b.y}
               stroke="#ffffff" strokeWidth={wallInnerPx} strokeLinecap="round" style={{ pointerEvents: 'none' }} />
           })}
           {/* half walls — dashed teal centerline so they're distinguishable in plan */}
-          {walls.map(wl => (wl.h ?? FULL_WALL_H) < FULL_WALL_H ? (() => {
+          {walls.filter(wl => vis(wl.layer)).map(wl => (wl.h ?? FULL_WALL_H) < FULL_WALL_H ? (() => {
             const a = toPx(wl.a), b = toPx(wl.b)
             return <line key={wl.id + '_half'} x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="#0d9488" strokeWidth={1.5} strokeDasharray="5 3" style={{ pointerEvents: 'none' }} />
           })() : null)}
@@ -1177,32 +1420,54 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
           {/* openings */}
           {openings.map(renderOpening)}
 
-          {/* fixtures */}
-          {fixtures.map(f => {
+          {/* fixtures (architectural + electrical symbols) */}
+          {fixtures.filter(f => vis(f.layer)).map(f => {
             const p = toPx(f.at)
             const seld = sel?.kind === 'fixture' && sel.id === f.id
-            const col = seld ? '#f59e0b' : '#475569'
+            const col = seld ? '#f59e0b' : (f.layer && f.layer !== 'arch' ? layerColor(f.layer) : '#475569')
+            const glyph = FIX_GLYPH[f.kind]
+            const sw = isElec(f.kind) ? 1.4 : 1
             return (
               <g key={f.id} transform={`translate(${p.x} ${p.y}) rotate(${f.rot}) scale(${scale} ${scale})`}
                 onClick={() => tool === 'select' && setSel({ kind: 'fixture', id: f.id })}
                 style={{ cursor: tool === 'select' ? 'move' : undefined }}>
                 {fixturePrims(f.kind, f.w, f.h).map((pr, i) => {
-                  if (pr.t === 'rect') return <rect key={i} x={pr.x} y={pr.y} width={pr.w} height={pr.h} fill="none" stroke={col} strokeWidth={1} vectorEffect="non-scaling-stroke" />
-                  if (pr.t === 'ellipse') return <ellipse key={i} cx={pr.cx} cy={pr.cy} rx={pr.rx} ry={pr.ry} fill="none" stroke={col} strokeWidth={1} vectorEffect="non-scaling-stroke" />
-                  if (pr.t === 'circle') return <circle key={i} cx={pr.cx} cy={pr.cy} r={pr.r} fill="none" stroke={col} strokeWidth={1} vectorEffect="non-scaling-stroke" />
-                  return <line key={i} x1={pr.x1} y1={pr.y1} x2={pr.x2} y2={pr.y2} stroke={col} strokeWidth={1} vectorEffect="non-scaling-stroke" />
+                  if (pr.t === 'rect') return <rect key={i} x={pr.x} y={pr.y} width={pr.w} height={pr.h} fill="none" stroke={col} strokeWidth={sw} vectorEffect="non-scaling-stroke" />
+                  if (pr.t === 'ellipse') return <ellipse key={i} cx={pr.cx} cy={pr.cy} rx={pr.rx} ry={pr.ry} fill="none" stroke={col} strokeWidth={sw} vectorEffect="non-scaling-stroke" />
+                  if (pr.t === 'circle') return <circle key={i} cx={pr.cx} cy={pr.cy} r={pr.r} fill="none" stroke={col} strokeWidth={sw} vectorEffect="non-scaling-stroke" />
+                  return <line key={i} x1={pr.x1} y1={pr.y1} x2={pr.x2} y2={pr.y2} stroke={col} strokeWidth={sw} vectorEffect="non-scaling-stroke" />
                 })}
+                {glyph && <text x={0} y={0} textAnchor="middle" dominantBaseline="central" fontSize={Math.min(f.w, f.h) * 0.5} fontWeight={700} fill={col}>{glyph}</text>}
+              </g>
+            )
+          })}
+
+          {/* wires / circuit runs */}
+          {wires.filter(w => vis(w.layer)).map(wr => {
+            const seld = sel?.kind === 'wire' && sel.id === wr.id
+            const col = seld ? '#f59e0b' : layerColor(wr.layer)
+            const pts = wr.pts.map(toPx)
+            return (
+              <g key={wr.id} onClick={() => tool === 'select' && setSel({ kind: 'wire', id: wr.id })}
+                style={{ cursor: tool === 'select' ? 'pointer' : undefined }}>
+                <polyline points={pts.map(p => `${p.x},${p.y}`).join(' ')} fill="none" stroke={col} strokeWidth={seld ? 2.4 : 1.6} strokeLinecap="round" strokeLinejoin="round" />
+                {/* home-run tick at the first leg (toward the panel) */}
+                {pts.length >= 2 && (() => {
+                  const a = pts[0], b = pts[1], u = norm(sub(b, a)), n = perp(u)
+                  const m = add(a, mul(u, 12)); const t1 = add(m, mul(n, 5)), t2 = sub(m, mul(n, 5))
+                  return <line x1={t1.x} y1={t1.y} x2={t2.x} y2={t2.y} stroke={col} strokeWidth={1.4} />
+                })()}
               </g>
             )
           })}
 
           {/* dimensions */}
-          {dims.map(d => {
+          {dims.filter(d => vis(d.layer)).map(d => {
             const u = norm(sub(d.b, d.a)), n = perp(u)
             const a2 = toPx(add(d.a, mul(n, d.off))), b2 = toPx(add(d.b, mul(n, d.off)))
             const pa = toPx(d.a), pb = toPx(d.b), m = { x: (a2.x + b2.x) / 2, y: (a2.y + b2.y) / 2 }
             const seld = sel?.kind === 'dim' && sel.id === d.id
-            const col = seld ? '#f59e0b' : '#2563eb'
+            const col = seld ? '#f59e0b' : (d.layer && d.layer !== 'arch' ? layerColor(d.layer) : '#2563eb')
             const ang = Math.atan2(b2.y - a2.y, b2.x - a2.x) * 180 / Math.PI, aa = (ang > 90 || ang < -90) ? ang + 180 : ang
             return (
               <g key={d.id} onClick={() => tool === 'select' && setSel({ kind: 'dim', id: d.id })} style={{ cursor: tool === 'select' ? 'pointer' : undefined }}>
@@ -1221,16 +1486,16 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
           })()}
 
           {/* labels (room names / dimensions imported from a sketch) */}
-          {labels.map(l => {
+          {labels.filter(l => vis(l.layer)).map(l => {
             const p = toPx(l.at)
             const seld = sel?.kind === 'label' && sel.id === l.id
             return <text key={l.id} x={p.x} y={p.y} textAnchor="middle" fontSize={11} fontWeight={600}
-              fill={seld ? '#f59e0b' : '#374151'} style={{ cursor: tool === 'select' ? 'move' : undefined }}
+              fill={seld ? '#f59e0b' : (l.layer && l.layer !== 'arch' ? layerColor(l.layer) : '#374151')} style={{ cursor: tool === 'select' ? 'move' : undefined }}
               onClick={() => tool === 'select' && setSel({ kind: 'label', id: l.id })}>{l.text}</text>
           })}
 
           {/* wall dimensions — offset clear of the wall + white halo so they read */}
-          {showWallDims && walls.map(wl => {
+          {showWallDims && walls.filter(wl => vis(wl.layer)).map(wl => {
             const l = dist(wl.a, wl.b)
             if (l < 0.5) return null
             const mid = mul(add(wl.a, wl.b), 0.5)
@@ -1244,7 +1509,7 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
           })}
 
           {/* vertices (select mode) */}
-          {tool === 'select' && walls.flatMap(wl => [wl.a, wl.b]).map((v, i) => {
+          {tool === 'select' && walls.filter(wl => vis(wl.layer)).flatMap(wl => [wl.a, wl.b]).map((v, i) => {
             const p = toPx(v)
             return <circle key={i} cx={p.x} cy={p.y} r={4} fill="#fff" stroke="#1f2937" strokeWidth={1.5} style={{ cursor: 'move' }} />
           })}
@@ -1256,6 +1521,17 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
             return <>
               <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="#b8895a" strokeWidth={wallPx} strokeLinecap="round" opacity={0.5} />
               <text x={(a.x + b.x) / 2} y={(a.y + b.y) / 2 - 6} textAnchor="middle" fontSize={10} fill="#b8895a">{fmtFt(dist(anchor, cursor))}</text>
+            </>
+          })()}
+
+          {/* wire-in-progress preview */}
+          {tool === 'wire' && wireDraft.current.length > 0 && (() => {
+            const col = layerColor(activeLayer === 'arch' ? 'electrical' : activeLayer)
+            const pts = wireDraft.current.map(toPx)
+            const all = cursor ? [...pts, toPx(cursor)] : pts
+            return <>
+              <polyline points={all.map(p => `${p.x},${p.y}`).join(' ')} fill="none" stroke={col} strokeWidth={1.6} strokeDasharray="5 3" opacity={0.8} />
+              {pts.map((p, i) => <circle key={i} cx={p.x} cy={p.y} r={3} fill="#fff" stroke={col} strokeWidth={1.4} />)}
             </>
           })()}
 
@@ -1288,6 +1564,8 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
         <span>{walls.length} walls</span>
         <span>{openings.length} openings</span>
         <span>{rooms.length} rooms</span>
+        {fixtures.some(f => isElec(f.kind)) && <span>{fixtures.filter(f => isElec(f.kind)).length} elec</span>}
+        {wires.length > 0 && <span>{wires.length} wire runs</span>}
         {cursor && <span className="ml-auto tabular-nums">x {cursor.x.toFixed(2)}′ · y {cursor.y.toFixed(2)}′</span>}
       </div>
 

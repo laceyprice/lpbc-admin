@@ -21,7 +21,7 @@ const nextConfig = {
   eslint: { ignoreDuringBuilds: true },
   typescript: { ignoreBuildErrors: true },
   experimental: {
-    serverComponentsExternalPackages: ['@anthropic-ai/sdk', 'googleapis'],
+    serverComponentsExternalPackages: ['@anthropic-ai/sdk', 'googleapis', 'heic-convert', 'libheif-js'],
   },
   images: {
     remotePatterns: [

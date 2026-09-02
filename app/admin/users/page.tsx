@@ -1,6 +1,6 @@
 'use client'
 import { useEffect, useState } from 'react'
-import { Plus, Trash2, Loader2, X, UserCog, Shield, FileText, BookOpen, User } from 'lucide-react'
+import { Plus, Trash2, Loader2, X, UserCog, Shield, FileText, BookOpen, User, ChevronDown } from 'lucide-react'
 
 interface UserRole {
   id: string
@@ -9,7 +9,50 @@ interface UserRole {
   display_name: string | null
   role: 'admin' | 'bookkeeper' | 'invoicing' | 'customer'
   assigned_account_id: string | null
+  assigned_project_id: string | null
+  assigned_account_ids?: string[] | null
+  assigned_project_ids?: string[] | null
   created_at: string
+}
+
+// Assigned ids with fallback to the legacy single column.
+function multiIds(arr: any, single: any): string[] {
+  if (Array.isArray(arr) && arr.length) return arr.filter(Boolean)
+  return single ? [single] : []
+}
+
+// Checkbox dropdown for picking several options.
+function MultiSelect({ options, selected, onChange, placeholder, emptyText }: {
+  options: { id: string; label: string }[]; selected: string[]; onChange: (ids: string[]) => void; placeholder: string; emptyText?: string
+}) {
+  const [open, setOpen] = useState(false)
+  const toggle = (id: string) => onChange(selected.includes(id) ? selected.filter(x => x !== id) : [...selected, id])
+  const chosen = options.filter(o => selected.includes(o.id))
+  const label = chosen.length === 0 ? placeholder : chosen.length === 1 ? chosen[0].label : `${chosen.length} selected`
+  return (
+    <div className="relative">
+      <button type="button" onClick={() => setOpen(o => !o)}
+        className="w-full max-w-[240px] flex items-center justify-between gap-1 text-xs px-2 py-1.5 rounded-lg border border-gray-200 bg-white hover:bg-gray-50">
+        <span className={`truncate ${chosen.length ? 'text-gray-800' : 'text-gray-400'}`}>{label}</span>
+        <ChevronDown size={13} className="text-gray-400 flex-shrink-0" />
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
+          <div className="absolute z-20 mt-1 w-64 max-h-60 overflow-y-auto bg-white border border-gray-200 rounded-xl shadow-lg p-1">
+            {options.length === 0 ? (
+              <div className="p-2 text-xs text-gray-400">{emptyText || 'Nothing to choose'}</div>
+            ) : options.map(o => (
+              <label key={o.id} className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-gray-50 cursor-pointer text-sm">
+                <input type="checkbox" checked={selected.includes(o.id)} onChange={() => toggle(o.id)} />
+                <span className="truncate">{o.label}</span>
+              </label>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  )
 }
 
 interface FinancialAccount {
@@ -18,34 +61,48 @@ interface FinancialAccount {
   color: string
 }
 
+// A "project" is a job plan from Plan & Design Studio — what the customer
+// views (read-only) in their portal.
+interface Project {
+  id: string
+  title: string
+  status?: string
+}
+
 const ROLE_INFO: Record<string, { label: string; desc: string; color: string; bg: string; icon: any }> = {
   admin:      { label: 'Admin',      desc: 'Full access to everything',                          color: 'text-blue-700',   bg: 'bg-blue-100',   icon: Shield },
   bookkeeper: { label: 'Bookkeeper', desc: 'Full admin access (bookkeeping, reports, accounts)', color: 'text-green-700',  bg: 'bg-green-100',  icon: BookOpen },
   invoicing:  { label: 'Invoicing',  desc: 'Invoices, quotes, CRM only',                        color: 'text-orange-700', bg: 'bg-orange-100', icon: FileText },
-  customer:   { label: 'Customer',   desc: 'View-only access to their assigned account',         color: 'text-purple-700', bg: 'bg-purple-100', icon: User },
+  customer:   { label: 'Customer',   desc: 'Read-only access to their assigned project',         color: 'text-purple-700', bg: 'bg-purple-100', icon: User },
 }
 
 export default function UsersPage() {
   const [users, setUsers] = useState<UserRole[]>([])
   const [accounts, setAccounts] = useState<FinancialAccount[]>([])
+  const [projects, setProjects] = useState<Project[]>([])
   const [loading, setLoading] = useState(true)
   const [adding, setAdding] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [selectedRole, setSelectedRole] = useState('invoicing')
+  const [selectedProjects, setSelectedProjects] = useState<string[]>([])
+  const [selectedAccounts, setSelectedAccounts] = useState<string[]>([])
 
   useEffect(() => { load() }, [])
 
   async function load() {
     setLoading(true)
-    const [usersRes, acctRes] = await Promise.all([
+    const [usersRes, acctRes, projRes] = await Promise.all([
       fetch('/api/user-roles'),
       fetch('/api/financial-accounts'),
+      fetch('/api/job-plans'),
     ])
     const usersData = await usersRes.json()
     const acctData = await acctRes.json()
+    const projData = await projRes.json()
     setUsers(Array.isArray(usersData) ? usersData : [])
     setAccounts(Array.isArray(acctData) ? acctData : [])
+    setProjects(Array.isArray(projData) ? projData.map((p: any) => ({ id: p.id, title: p.title, status: p.status })) : [])
     setLoading(false)
   }
 
@@ -63,7 +120,8 @@ export default function UsersPage() {
         password: Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2).toUpperCase() + '!',
         display_name: fd.get('display_name'),
         role: fd.get('role'),
-        assigned_account_id: fd.get('assigned_account_id') || null,
+        assigned_project_ids: selectedProjects,
+        assigned_account_ids: selectedAccounts,
         send_welcome_email: fd.get('send_welcome_email') === 'on',
         welcome_message: fd.get('welcome_message') || null,
       }),
@@ -73,6 +131,7 @@ export default function UsersPage() {
     setAdding(false)
     setSaving(false)
     setSelectedRole('invoicing')
+    setSelectedProjects([]); setSelectedAccounts([])
     await load()
   }
 
@@ -85,11 +144,11 @@ export default function UsersPage() {
     await load()
   }
 
-  async function changeAccount(id: string, assigned_account_id: string) {
+  async function changeAssignment(id: string, patch: Record<string, any>) {
     await fetch('/api/user-roles', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id, assigned_account_id: assigned_account_id || null }),
+      body: JSON.stringify({ id, ...patch }),
     })
     await load()
   }
@@ -100,10 +159,6 @@ export default function UsersPage() {
     await load()
   }
 
-  function accountName(id: string | null) {
-    if (!id) return null
-    return accounts.find(a => a.id === id)?.name ?? null
-  }
 
   const inputCls = 'w-full px-3 py-2.5 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:border-blue-400'
 
@@ -142,9 +197,10 @@ export default function UsersPage() {
         </div>
       ) : (
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+          <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead><tr className="bg-gray-50 border-b border-gray-100">
-              {['User', 'Email', 'Role', 'Assigned Account', 'Actions'].map(h => (
+              {['User', 'Email', 'Role', 'Assigned Projects / Accounts', 'Actions'].map(h => (
                 <th key={h} className="text-left px-5 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wider">{h}</th>
               ))}
             </tr></thead>
@@ -166,11 +222,17 @@ export default function UsersPage() {
                     </td>
                     <td className="px-5 py-3">
                       {u.role === 'customer' ? (
-                        <select value={u.assigned_account_id || ''} onChange={e => changeAccount(u.id, e.target.value)}
-                          className="text-xs px-2 py-1 rounded-lg border border-gray-200 focus:outline-none">
-                          <option value="">— No account assigned —</option>
-                          {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-                        </select>
+                        <div className="space-y-1.5">
+                          <MultiSelect placeholder="— Projects —" emptyText="No projects yet — create one in Plan & Design Studio"
+                            options={projects.map(p => ({ id: p.id, label: p.title }))}
+                            selected={multiIds(u.assigned_project_ids, u.assigned_project_id)}
+                            onChange={ids => changeAssignment(u.id, { assigned_project_ids: ids })} />
+                          <MultiSelect placeholder="— Bank accounts —" emptyText="No accounts yet"
+                            options={accounts.map(a => ({ id: a.id, label: a.name }))}
+                            selected={multiIds(u.assigned_account_ids, u.assigned_account_id)}
+                            onChange={ids => changeAssignment(u.id, { assigned_account_ids: ids })} />
+                          <div className="text-[11px] text-gray-400">Read-only in the customer portal</div>
+                        </div>
                       ) : (
                         <span className="text-xs text-gray-400 italic">—</span>
                       )}
@@ -185,6 +247,7 @@ export default function UsersPage() {
               })}
             </tbody>
           </table>
+          </div>
         </div>
       )}
 
@@ -193,7 +256,7 @@ export default function UsersPage() {
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
             <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
               <h2 className="font-bold text-gray-900">Add User</h2>
-              <button onClick={() => { setAdding(false); setError(''); setSelectedRole('invoicing') }}><X size={18} className="text-gray-400" /></button>
+              <button onClick={() => { setAdding(false); setError(''); setSelectedRole('invoicing'); setSelectedProjects([]); setSelectedAccounts([]) }}><X size={18} className="text-gray-400" /></button>
             </div>
             <form onSubmit={addUser} className="p-6 space-y-4">
               {error && <div className="bg-red-50 border border-red-100 text-red-700 text-sm px-4 py-3 rounded-xl">{error}</div>}
@@ -214,19 +277,24 @@ export default function UsersPage() {
                   <option value="invoicing">Invoicing — Invoices, quotes, CRM only</option>
                   <option value="bookkeeper">Bookkeeper — Full admin access</option>
                   <option value="admin">Admin — Full access + user management</option>
-                  <option value="customer">Customer — View their assigned account only</option>
+                  <option value="customer">Customer — Read-only access to their assigned project</option>
                 </select>
               </div>
               {selectedRole === 'customer' && (
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-1">Assigned Account</label>
-                  <select name="assigned_account_id" className={inputCls}>
-                    <option value="">— Select an account —</option>
-                    {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-                  </select>
-                  {accounts.length === 0 && (
-                    <p className="text-xs text-amber-600 mt-1">No accounts created yet. Add accounts in Bookkeeping first.</p>
-                  )}
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-1">Assigned Projects</label>
+                    <MultiSelect placeholder="— Select projects —" emptyText="No projects yet — create one in Plan & Design Studio"
+                      options={projects.map(p => ({ id: p.id, label: p.title }))}
+                      selected={selectedProjects} onChange={setSelectedProjects} />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-1">Bank Accounts (optional)</label>
+                    <MultiSelect placeholder="— Select bank accounts —" emptyText="No accounts yet"
+                      options={accounts.map(a => ({ id: a.id, label: a.name }))}
+                      selected={selectedAccounts} onChange={setSelectedAccounts} />
+                  </div>
+                  <p className="text-xs text-gray-500">The customer can view the assigned projects (estimate, design &amp; progress) in their portal — read-only. You can assign more than one.</p>
                 </div>
               )}
 

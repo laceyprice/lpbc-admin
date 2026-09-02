@@ -275,6 +275,33 @@ export async function sendUserWelcomeEmail({ to, displayName, temporaryPassword,
   })
 }
 
+function escapeHtml(s: string) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
+// A message posted on a project — emailed to the other party (customer ⇄ admin).
+export async function sendProjectMessageEmail({ to, toName, fromName, fromRole, projectTitle, body, recipient }: {
+  to: string; toName?: string | null; fromName: string; fromRole: 'admin' | 'customer'
+  projectTitle?: string | null; body: string; recipient: 'admin' | 'customer'
+}) {
+  const link = recipient === 'customer' ? `${APP}/portal` : `${APP}/admin/plan-job`
+  const linkLabel = recipient === 'customer' ? 'Open Your Project Portal' : 'Open in Admin'
+  const who = fromRole === 'admin' ? 'L. Price Building Company' : fromName
+  return getResend().emails.send({
+    from: `L. Price Building Company <${FROM}>`,
+    to,
+    subject: `New message${projectTitle ? ` — ${projectTitle}` : ' on your project'}`,
+    html: baseHtml(`
+      <h2 style="color:#2f5a5e;margin-top:0">New Project Message</h2>
+      <p>${toName ? `Hi ${escapeHtml(toName)},` : 'Hello,'}</p>
+      <p><strong>${escapeHtml(who)}</strong> wrote${projectTitle ? ` on <strong>${escapeHtml(projectTitle)}</strong>` : ''}:</p>
+      <div style="background:white;border-left:4px solid #b8895a;border-radius:4px;padding:14px 18px;margin:16px 0;color:#1f2a2e;line-height:1.6;white-space:pre-wrap">${escapeHtml(body).replace(/\n/g, '<br>')}</div>
+      <div style="text-align:center;margin:24px 0"><a href="${link}" style="background:#b8895a;color:white;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:bold">${linkLabel}</a></div>
+      <p style="font-size:13px;color:#6b7280">Reply by opening the project and posting a message — both of you get an email of the conversation.</p>
+    `),
+  })
+}
+
 export async function sendContactMessage({ name, email, phone, message }: { name: string; email: string; phone?: string; message: string }) {
   return getResend().emails.send({
     from: `LPBC Website <${FROM}>`,
