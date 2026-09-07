@@ -58,7 +58,7 @@ export default function InvoicesPage() {
       setTimeout(() => {
         setForm({
           invoice_type: type,
-          invoice_number: generateDocNumber(type, invoices),
+          invoice_number: generateDocNumber(type, allInvoices),
           customer_name: params.get('customer_name') || '',
           customer_email: params.get('customer_email') || '',
           customer_phone: params.get('customer_phone') || '',
@@ -239,7 +239,7 @@ export default function InvoicesPage() {
 
   async function convertToInvoice(quote: Invoice) {
     if (!confirm(`Convert Quote ${quote.invoice_number} to an Invoice?`)) return
-    const newNumber = generateDocNumber('invoice', invoices)
+    const newNumber = generateDocNumber('invoice', allInvoices)
     const res = await fetch('/api/invoices', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -364,7 +364,7 @@ export default function InvoicesPage() {
               setFormError('')
               setForm({
                 invoice_type: typeFilter,
-                invoice_number: generateDocNumber(typeFilter as 'invoice' | 'quote', invoices),
+                invoice_number: generateDocNumber(typeFilter as 'invoice' | 'quote', allInvoices),
               })
               setShowContactDropdown(false)
               setShowForm(true)
@@ -804,7 +804,7 @@ export default function InvoicesPage() {
                         ...p,
                         invoice_type: newType,
                         // re-generate the doc number to use the right prefix when type flips on a new doc
-                        invoice_number: (form as any).id ? p.invoice_number : generateDocNumber(newType, invoices),
+                        invoice_number: (form as any).id ? p.invoice_number : generateDocNumber(newType, allInvoices),
                       }))
                     }} className={inputCls}>
                     <option value="invoice">Invoice</option><option value="quote">Quote</option>
