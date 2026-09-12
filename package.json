@@ -20,6 +20,8 @@
     "@types/three": "^0.169.0",
     "clsx": "^2.1.0",
     "date-fns": "^3.3.1",
+    "docx": "^9.7.1",
+    "exceljs": "^4.4.0",
     "googleapis": "^137.0.0",
     "heic-convert": "^2.1.0",
     "jspdf": "^4.2.1",

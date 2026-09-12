@@ -108,19 +108,6 @@ export default function ReportsPage() {
     await loadSavedReports()
   }
 
-  async function downloadSavedReport(report: any) {
-    try {
-      if (!report.report_data || (typeof report.report_data === 'object' && Object.keys(report.report_data).length === 0)) {
-        alert('This saved report has no data attached. It may have been generated when the reports API failed. Please delete it and regenerate.')
-        return
-      }
-      await downloadPDFWith(report.report_type, report.report_data, report.period_from, report.period_to)
-    } catch (e: any) {
-      console.error('PDF download error:', e)
-      alert('Failed to generate PDF: ' + (e?.message || String(e)))
-    }
-  }
-
   function viewSavedReport(report: any) {
     // Switch to the appropriate tab and load the saved data into view
     setData(report.report_data)
@@ -404,6 +391,129 @@ export default function ReportsPage() {
     doc.save(filename)
   }
 
+  const REPORT_LABELS: Record<string, string> = { pnl: 'Profit & Loss', 'balance-sheet': 'Balance Sheet', 'cash-flow': 'Cash Flow Statement', reconciliation: 'Reconciliation Report' }
+
+  async function generateExcel(reportTab: string, reportData: any, reportFrom: string, reportTo: string) {
+    const ExcelJS = (await import('exceljs')).default
+    const wb = new ExcelJS.Workbook()
+    wb.creator = 'L. Price Building Company'
+    wb.created = new Date()
+    const ws = wb.addWorksheet(REPORT_LABELS[reportTab].slice(0, 31))
+
+    let r = ws.addRow(['L. Price Building Company'])
+    r.font = { bold: true, size: 16, color: { argb: 'FF2F5A5E' } }
+    r = ws.addRow([REPORT_LABELS[reportTab]])
+    r.font = { bold: true, size: 13 }
+    r = ws.addRow([`Period: ${reportFrom} to ${reportTo}`])
+    r.font = { italic: true, color: { argb: 'FF666666' } }
+    ws.addRow([])
+
+    const moneyFmt = '"$"#,##0.00;[Red]-"$"#,##0.00'
+    const sections = buildReportSections(reportTab, reportData)
+
+    for (const sec of sections) {
+      if (sec.heading) {
+        const hr = ws.addRow([sec.heading])
+        hr.font = { bold: true, color: { argb: 'FF2F5A5E' } }
+      }
+      if (sec.columns) {
+        const hr = ws.addRow(sec.columns)
+        hr.eachCell(c => {
+          c.font = { bold: true, color: { argb: 'FFFFFFFF' } }
+          c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF2F5A5E' } }
+        })
+      }
+      for (const row of sec.rows) {
+        const rr = ws.addRow(row)
+        for (const ci of sec.moneyCols || []) {
+          const cell = rr.getCell(ci + 1)
+          if (typeof cell.value === 'number') cell.numFmt = moneyFmt
+        }
+      }
+      if (sec.footer) {
+        const fr = ws.addRow(sec.footer)
+        fr.font = { bold: true }
+        for (const ci of sec.moneyCols || []) {
+          const cell = fr.getCell(ci + 1)
+          if (typeof cell.value === 'number') cell.numFmt = moneyFmt
+        }
+      }
+      ws.addRow([])
+    }
+
+    ws.columns.forEach((col, i) => { col.width = i === 0 ? 34 : 18 })
+
+    const buf = await wb.xlsx.writeBuffer()
+    const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
+    triggerDownload(blob, `${REPORT_LABELS[reportTab].replace(/ /g, '_')}_${reportFrom}_to_${reportTo}.xlsx`)
+  }
+
+  async function generateWord(reportTab: string, reportData: any, reportFrom: string, reportTo: string) {
+    const { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, WidthType, AlignmentType, HeadingLevel } = await import('docx')
+
+    const fmtCell = (v: any) => typeof v === 'number' ? fmtMoney(v) : (v ?? '')
+    const cell = (text: string, opts: { header?: boolean; right?: boolean } = {}) =>
+      new TableCell({
+        shading: opts.header ? { fill: '2F5A5E' } : undefined,
+        children: [new Paragraph({
+          alignment: opts.right ? AlignmentType.RIGHT : AlignmentType.LEFT,
+          children: [new TextRun({ text, bold: !!opts.header, color: opts.header ? 'FFFFFF' : undefined })],
+        })],
+      })
+
+    const sections = buildReportSections(reportTab, reportData)
+    const children: any[] = [
+      new Paragraph({ text: 'L. Price Building Company', heading: HeadingLevel.TITLE }),
+      new Paragraph({ text: REPORT_LABELS[reportTab], heading: HeadingLevel.HEADING_1 }),
+      new Paragraph({ text: `Period: ${reportFrom} to ${reportTo}` }),
+      new Paragraph({ text: '' }),
+    ]
+
+    for (const sec of sections) {
+      if (sec.heading) children.push(new Paragraph({ text: sec.heading, heading: HeadingLevel.HEADING_2 }))
+      const rows: any[] = []
+      if (sec.columns) {
+        rows.push(new TableRow({ children: sec.columns.map((c, i) => cell(c, { header: true, right: (sec.moneyCols || []).includes(i) })) }))
+      }
+      for (const row of sec.rows) {
+        rows.push(new TableRow({ children: row.map((v, i) => cell(fmtCell((sec.moneyCols || []).includes(i) ? (v ?? 0) : v), { right: (sec.moneyCols || []).includes(i) })) }))
+      }
+      if (sec.footer) {
+        rows.push(new TableRow({ children: sec.footer.map((v, i) => cell(fmtCell((sec.moneyCols || []).includes(i) ? (v ?? 0) : v), { right: (sec.moneyCols || []).includes(i) })) }))
+      }
+      children.push(new Table({ width: { size: 100, type: WidthType.PERCENTAGE }, rows }))
+      children.push(new Paragraph({ text: '' }))
+    }
+
+    const doc = new Document({ sections: [{ children }] })
+    const blob = await Packer.toBlob(doc)
+    triggerDownload(blob, `${REPORT_LABELS[reportTab].replace(/ /g, '_')}_${reportFrom}_to_${reportTo}.docx`)
+  }
+
+  async function downloadCurrentAs(format: 'xlsx' | 'docx') {
+    if (!data || tab === 'generate') return
+    try {
+      if (format === 'xlsx') await generateExcel(tab, data, from, to)
+      else await generateWord(tab, data, from, to)
+    } catch (e: any) {
+      alert(`Could not generate the ${format.toUpperCase()} file: ` + (e?.message || String(e)))
+    }
+  }
+
+  async function downloadSavedReportAs(report: any, format: 'pdf' | 'xlsx' | 'docx') {
+    if (!report.report_data || (typeof report.report_data === 'object' && Object.keys(report.report_data).length === 0)) {
+      alert('This saved report has no data attached. It may have been generated when the reports API failed. Please delete it and regenerate.')
+      return
+    }
+    try {
+      if (format === 'pdf') await downloadPDFWith(report.report_type, report.report_data, report.period_from, report.period_to)
+      else if (format === 'xlsx') await generateExcel(report.report_type, report.report_data, report.period_from, report.period_to)
+      else await generateWord(report.report_type, report.report_data, report.period_from, report.period_to)
+    } catch (e: any) {
+      alert(`Could not generate the ${format.toUpperCase()} file: ` + (e?.message || String(e)))
+    }
+  }
+
   return (
     <div className="p-6 md:p-8 pt-16 md:pt-8">
       <div className="flex items-center justify-between mb-6">
@@ -411,10 +521,18 @@ export default function ReportsPage() {
           <h1 className="text-2xl font-extrabold text-gray-900">Financial Reports</h1>
           <p className="text-gray-500 text-sm mt-0.5">P&L · Balance Sheet · Cash Flow · Reconciliation</p>
         </div>
-        {data && !data.error && (
-          <button onClick={downloadPDF} className="flex items-center gap-2 text-white font-semibold px-4 py-2.5 rounded-xl shadow-md" style={{ background: '#b8895a' }}>
-            <Download size={14} />Download PDF
-          </button>
+        {data && !data.error && tab !== 'generate' && (
+          <div className="flex items-center gap-2">
+            <button onClick={downloadPDF} className="flex items-center gap-1.5 text-white font-semibold px-3.5 py-2.5 rounded-xl shadow-md text-sm" style={{ background: '#b8895a' }}>
+              <Download size={14} />PDF
+            </button>
+            <button onClick={() => downloadCurrentAs('xlsx')} className="flex items-center gap-1.5 text-white font-semibold px-3.5 py-2.5 rounded-xl shadow-md text-sm" style={{ background: '#1D6F42' }}>
+              <Download size={14} />Excel
+            </button>
+            <button onClick={() => downloadCurrentAs('docx')} className="flex items-center gap-1.5 text-white font-semibold px-3.5 py-2.5 rounded-xl shadow-md text-sm" style={{ background: '#2B579A' }}>
+              <Download size={14} />Word
+            </button>
+          </div>
         )}
       </div>
 
@@ -603,8 +721,14 @@ export default function ReportsPage() {
                       <button onClick={() => viewSavedReport(r)} className="flex items-center gap-1 text-xs font-semibold px-3 py-1.5 rounded-lg border" style={{ borderColor: '#b8895a', color: '#b8895a' }}>
                         View
                       </button>
-                      <button onClick={() => downloadSavedReport(r)} className="flex items-center gap-1 text-xs font-semibold px-3 py-1.5 rounded-lg text-white" style={{ background: '#b8895a' }}>
+                      <button onClick={() => downloadSavedReportAs(r, 'pdf')} title="Download PDF" className="flex items-center gap-1 text-xs font-semibold px-2.5 py-1.5 rounded-lg text-white" style={{ background: '#b8895a' }}>
                         <Download size={12} />PDF
+                      </button>
+                      <button onClick={() => downloadSavedReportAs(r, 'xlsx')} title="Download Excel" className="flex items-center gap-1 text-xs font-semibold px-2.5 py-1.5 rounded-lg text-white" style={{ background: '#1D6F42' }}>
+                        <Download size={12} />Excel
+                      </button>
+                      <button onClick={() => downloadSavedReportAs(r, 'docx')} title="Download Word" className="flex items-center gap-1 text-xs font-semibold px-2.5 py-1.5 rounded-lg text-white" style={{ background: '#2B579A' }}>
+                        <Download size={12} />Word
                       </button>
                       <button onClick={() => deleteSavedReport(r.id)} className="text-gray-300 hover:text-red-500 p-1"><Trash2 size={13} /></button>
                     </div>
@@ -827,6 +951,143 @@ function ReconciliationReport({ data, onRefresh }: { data: any; onRefresh: () =>
       )}
     </div>
   )
+}
+
+// ─── EXCEL / WORD HELPERS ───────────────────────────────────
+// Both export formats render the exact same section data — built once here
+// so the PDF layout logic above doesn't have to be duplicated a second and
+// third time.
+
+type ReportSection = {
+  heading?: string
+  columns?: string[]
+  rows: (string | number | null)[][]
+  footer?: (string | number | null)[]
+  moneyCols?: number[] // 0-indexed column positions that hold currency values
+}
+
+function buildReportSections(reportTab: string, d: any): ReportSection[] {
+  const sections: ReportSection[] = []
+
+  if (reportTab === 'pnl') {
+    sections.push({
+      heading: 'REVENUE', columns: ['Account', 'Amount'], moneyCols: [1],
+      rows: [
+        ...(d.revenue || []).map((l: any) => [l.name, l.total]),
+        ...((d.uncategorized?.revenue > 0) ? [['Uncategorized', d.uncategorized.revenue]] : []),
+      ],
+      footer: ['Total Revenue', d.totalRevenue ?? 0],
+    })
+    sections.push({
+      heading: 'EXPENSES', columns: ['Account', 'Amount'], moneyCols: [1],
+      rows: [
+        ...(d.expenses || []).map((l: any) => [l.name, l.total]),
+        ...((d.uncategorized?.expense > 0) ? [['Uncategorized', d.uncategorized.expense]] : []),
+      ],
+      footer: ['Total Expenses', d.totalExpenses ?? 0],
+    })
+    if ((d.distributions || []).length > 0) {
+      sections.push({
+        heading: 'OWNER DISTRIBUTIONS', columns: ['Account', 'Amount'], moneyCols: [1],
+        rows: (d.distributions || []).map((l: any) => [l.name, l.total]),
+        footer: ['Total Distributions', d.totalDistributions ?? 0],
+      })
+    }
+    sections.push({
+      heading: 'SUMMARY', moneyCols: [1],
+      rows: [
+        ['Total Revenue', d.totalRevenue ?? 0],
+        ['Total Expenses', d.totalExpenses ?? 0],
+        ...(((d.totalDistributions ?? 0) > 0) ? [['Total Distributions', d.totalDistributions]] : []),
+      ],
+      footer: ['NET INCOME', d.netIncome ?? 0],
+    })
+  }
+
+  if (reportTab === 'balance-sheet') {
+    for (const [label, key] of [['ASSETS', 'assets'], ['LIABILITIES', 'liabilities'], ['EQUITY', 'equity']] as const) {
+      const lines = (d[key] || []).map((l: any) => [l.name, l.opening, l.activity, l.balance])
+      if (key === 'equity') lines.push(['Net Income (Current Period)', null, null, d.netIncome ?? 0])
+      const totalVal = key === 'equity'
+        ? (d.totalEquity ?? 0) + (d.netIncome ?? 0)
+        : (d[`total${label.charAt(0) + label.slice(1).toLowerCase()}`] ?? 0)
+      sections.push({
+        heading: label, columns: ['Account', 'Opening', 'Activity', 'Balance'], moneyCols: [1, 2, 3],
+        rows: lines,
+        footer: [`Total ${label}`, null, null, totalVal],
+      })
+    }
+    sections.push({
+      heading: 'TOTALS', moneyCols: [1],
+      rows: [
+        ['Total Assets', d.totalAssets ?? 0],
+        ['Total Liabilities & Equity', d.totalLiabilitiesAndEquity ?? 0],
+      ],
+      footer: ['Difference', Math.abs((d.totalAssets ?? 0) - (d.totalLiabilitiesAndEquity ?? 0))],
+    })
+  }
+
+  if (reportTab === 'cash-flow') {
+    sections.push({
+      heading: 'MONTHLY CASH FLOW', columns: ['Month', 'Inflows', 'Outflows', 'Net'], moneyCols: [1, 2, 3],
+      rows: (d.monthly || []).map((m: any) => [m.month, m.inflows, m.outflows, m.net]),
+      footer: ['TOTAL', d.totalInflows ?? 0, d.totalOutflows ?? 0, d.netCashFlow ?? 0],
+    })
+    if ((d.byAccount || []).length > 0) {
+      sections.push({
+        heading: 'CASH FLOW BY ACCOUNT', columns: ['Account', 'Type', 'Net Amount'], moneyCols: [2],
+        rows: (d.byAccount || []).map((a: any) => [a.name, a.type, a.total]),
+      })
+    }
+  }
+
+  if (reportTab === 'reconciliation') {
+    sections.push({
+      heading: 'RECONCILIATION SUMMARY', columns: ['Metric', 'Value'],
+      rows: [
+        ['Bank Transactions', d.bankTransactionCount ?? 0],
+        ['Accounting Entries', d.accountingEntryCount ?? 0],
+        ['Reconciled', d.reconciledCount ?? 0],
+        ['Unreconciled', d.unreconciledCount ?? 0],
+        ['Uncategorized', d.uncategorizedCount ?? 0],
+      ],
+    })
+    sections.push({
+      heading: 'RECONCILIATION TOTALS', columns: ['Metric', 'Amount'], moneyCols: [1],
+      rows: [
+        ['Bank Total', d.bankTotal ?? 0],
+        ['Accounting Total', d.accountingTotal ?? 0],
+      ],
+      footer: ['Difference', d.difference ?? 0],
+    })
+    if ((d.unreconciled || []).length > 0) {
+      sections.push({
+        heading: `UNRECONCILED TRANSACTIONS (${d.unreconciledCount})`,
+        columns: ['Date', 'Description', 'Payee', 'Amount'], moneyCols: [3],
+        rows: (d.unreconciled || []).map((tx: any) => [tx.transaction_date, tx.description, tx.payee || '—', tx.amount]),
+      })
+    }
+    if ((d.uncategorized || []).length > 0) {
+      sections.push({
+        heading: `UNCATEGORIZED TRANSACTIONS (${d.uncategorizedCount})`,
+        columns: ['Date', 'Description', 'Payee', 'Amount'], moneyCols: [3],
+        rows: (d.uncategorized || []).map((tx: any) => [tx.transaction_date, tx.description, tx.payee || '—', tx.amount]),
+      })
+    }
+  }
+
+  return sections
+}
+
+function triggerDownload(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 
 // ─── PDF HELPERS ────────────────────────────────────────────
