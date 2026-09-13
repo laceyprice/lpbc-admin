@@ -5,7 +5,7 @@
 // Loaded client-only (no SSR) from the Floor Planner.
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Canvas } from '@react-three/fiber'
-import { OrbitControls } from '@react-three/drei'
+import { OrbitControls, RoundedBox } from '@react-three/drei'
 import * as THREE from 'three'
 import { X, Save, Trash2, DollarSign, Upload } from 'lucide-react'
 import type { PlanDoc, Finishes, FinishPick } from './FloorPlanner'
@@ -16,12 +16,26 @@ type Cat = FinishCat
 // default real-world feet that one uploaded sample image represents, per surface
 const SAMPLE_SCALE: Record<string, number> = { floor: 3, walls: 4, cabinet: 2, counter: 6 }
 
-const FIX3D: Record<string, { h: number; y: number; cat: Cat | 'appliance' | 'porcelain' }> = {
+const FIX3D: Record<string, { h: number; y: number; cat: Cat | 'appliance' | 'porcelain' | 'hardware' | 'glass' | 'fixture' }> = {
   base: { h: 3, y: 0, cat: 'cabinet' }, island: { h: 3, y: 0, cat: 'cabinet' },
   upper: { h: 2.5, y: 4.5, cat: 'cabinet' }, counter: { h: 3, y: 0, cat: 'counter' },
   range: { h: 3, y: 0, cat: 'appliance' }, fridge: { h: 6, y: 0, cat: 'appliance' },
   toilet: { h: 1.3, y: 0, cat: 'porcelain' }, sink: { h: 0.9, y: 2.2, cat: 'porcelain' },
   tub: { h: 1.6, y: 0, cat: 'porcelain' }, shower: { h: 0.4, y: 0, cat: 'porcelain' },
+  // ── New realistic fixture kinds ──────────────────────────────
+  // y = wall-mount base height (ft); h = vertical extent (repurposes the plan's
+  // "depth" field as real height for these thin wall-mounted items, since a
+  // top-down 2D footprint has no meaningful depth for a flat mirror/bar).
+  mirror: { h: 3.5, y: 3.5, cat: 'glass' },
+  towel_bar: { h: 0.3, y: 3.5, cat: 'hardware' },
+  towel_ring: { h: 0.3, y: 4, cat: 'hardware' },
+  robe_hook: { h: 0.2, y: 5.5, cat: 'hardware' },
+  // ── Electrical symbols that previously had no 3D form at all ─
+  // y = ceiling attachment point (WALL_H); h = how far the fixture hangs down.
+  light: { h: 0.5, y: WALL_H, cat: 'fixture' },
+  pendant: { h: 2.5, y: WALL_H, cat: 'fixture' },
+  recessed: { h: 0.15, y: WALL_H, cat: 'fixture' },
+  fan: { h: 1.2, y: WALL_H, cat: 'fixture' },
 }
 
 // Build a tiny procedural texture (wood grain / tile grout / stone speckle).
@@ -59,6 +73,214 @@ function makeTexture(tex: Tex, color: string): THREE.Texture | null {
 
 function Row({ label, val }: { label: string; val: number }) {
   return <div className="flex justify-between"><span className="text-gray-400 truncate mr-2">{label}</span><span className="tabular-nums whitespace-nowrap">${Math.round(val).toLocaleString()}</span></div>
+}
+
+// One fixture instance in the 3D scene. Kinds without a bespoke shape below
+// (cabinets, counters, shower) fall through to a plain box, same as before —
+// real cabinetry IS boxy, so that's not a regression. Kinds WITH a case here
+// get realistic geometry instead of a generic cube. A separate component (not
+// inline in the parent's .map()) so each instance can safely call its own
+// hook for loading its optional product photo.
+function FixtureItem({ f, cx, cz, rot, spec, mTex, col, rough }: {
+  f: any; cx: number; cz: number; rot: number
+  spec: { h: number; y: number; cat: string }
+  mTex: THREE.Texture | null; col: string; rough: number
+}) {
+  // Per-instance product photo (mirror/light/pendant only) — a single image
+  // mapped once onto the fixture's face, not tiled like the surface samples.
+  const imgTex = useMemo(() => {
+    if (!f.img) return null
+    const t = new THREE.TextureLoader().load(f.img)
+    t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping
+    t.colorSpace = THREE.SRGBColorSpace
+    return t
+  }, [f.img])
+
+  const HW = '#c7c9cc' // brushed-chrome hardware color, shared by towel bar/ring/hook
+
+  switch (f.kind) {
+    case 'toilet': {
+      const tankH = spec.h * 0.4, bowlH = spec.h * 0.62
+      return (
+        <group position={[cx, spec.y, cz]} rotation={[0, rot, 0]}>
+          <mesh position={[0, spec.h - tankH / 2, -f.h * 0.3]} castShadow receiveShadow>
+            <boxGeometry args={[f.w * 0.8, tankH, f.h * 0.35]} />
+            <meshStandardMaterial color="#f2f2f0" roughness={0.25} />
+          </mesh>
+          <mesh position={[0, bowlH / 2, f.h * 0.05]} castShadow receiveShadow>
+            <cylinderGeometry args={[f.w * 0.4, f.w * 0.3, bowlH, 20]} />
+            <meshStandardMaterial color="#f2f2f0" roughness={0.25} />
+          </mesh>
+        </group>
+      )
+    }
+    case 'sink': {
+      return (
+        <group position={[cx, spec.y, cz]} rotation={[0, rot, 0]}>
+          <mesh position={[0, spec.h / 2, 0]} castShadow receiveShadow>
+            <boxGeometry args={[f.w, spec.h, f.h]} />
+            <meshStandardMaterial color="#f2f2f0" roughness={0.2} />
+          </mesh>
+          <mesh position={[0, spec.h * 0.8, 0]}>
+            <cylinderGeometry args={[f.w * 0.32, f.w * 0.36, spec.h * 0.4, 20]} />
+            <meshStandardMaterial color="#e9e9e6" roughness={0.3} />
+          </mesh>
+          <mesh position={[0, spec.h + 0.4, -f.h * 0.3]} castShadow>
+            <cylinderGeometry args={[0.04, 0.04, 0.8, 8]} />
+            <meshStandardMaterial color={HW} roughness={0.25} metalness={0.8} />
+          </mesh>
+        </group>
+      )
+    }
+    case 'tub': {
+      return (
+        <RoundedBox args={[f.w, spec.h, f.h]} radius={Math.min(0.25, spec.h * 0.3)} smoothness={4}
+          position={[cx, spec.y + spec.h / 2, cz]} rotation={[0, rot, 0]} castShadow receiveShadow>
+          <meshStandardMaterial color="#f2f2f0" roughness={0.2} />
+        </RoundedBox>
+      )
+    }
+    case 'range': {
+      const burnerR = Math.min(f.w, f.h) * 0.11
+      const offs: [number, number][] = [[-0.22, -0.22], [0.22, -0.22], [-0.22, 0.22], [0.22, 0.22]]
+      return (
+        <group position={[cx, spec.y, cz]} rotation={[0, rot, 0]}>
+          <mesh position={[0, spec.h / 2, 0]} castShadow receiveShadow>
+            <boxGeometry args={[f.w, spec.h, f.h]} />
+            <meshStandardMaterial color="#b8c0c4" roughness={0.35} metalness={0.6} />
+          </mesh>
+          {offs.map(([ox, oz], i) => (
+            <mesh key={i} position={[ox * f.w, spec.h + 0.03, oz * f.h]} castShadow>
+              <cylinderGeometry args={[burnerR, burnerR, 0.06, 16]} />
+              <meshStandardMaterial color="#2a2a2a" roughness={0.5} metalness={0.4} />
+            </mesh>
+          ))}
+        </group>
+      )
+    }
+    case 'fridge': {
+      return (
+        <group position={[cx, spec.y, cz]} rotation={[0, rot, 0]}>
+          <mesh position={[0, spec.h / 2, 0]} castShadow receiveShadow>
+            <boxGeometry args={[f.w, spec.h, f.h]} />
+            <meshStandardMaterial color="#b8c0c4" roughness={0.35} metalness={0.6} />
+          </mesh>
+          <mesh position={[0, spec.h / 2, f.h / 2 + 0.005]}>
+            <boxGeometry args={[0.02, spec.h * 0.98, 0.02]} />
+            <meshStandardMaterial color="#8a9094" roughness={0.4} metalness={0.5} />
+          </mesh>
+        </group>
+      )
+    }
+    case 'mirror': {
+      return (
+        <group position={[cx, spec.y, cz]} rotation={[0, rot, 0]}>
+          <mesh castShadow>
+            <boxGeometry args={[f.w, f.h, 0.06]} />
+            <meshStandardMaterial color="#8a7355" roughness={0.5} metalness={0.2} />
+          </mesh>
+          <mesh position={[0, 0, 0.035]}>
+            <planeGeometry args={[f.w * 0.9, f.h * 0.9]} />
+            {imgTex
+              ? <meshStandardMaterial map={imgTex} roughness={0.1} metalness={0.1} />
+              : <meshStandardMaterial color="#dbe6ea" roughness={0.05} metalness={0.9} />}
+          </mesh>
+        </group>
+      )
+    }
+    case 'light': case 'pendant': {
+      const isPendant = f.kind === 'pendant'
+      const dropLen = isPendant ? spec.h * 0.7 : 0
+      const shadeY = -dropLen - spec.h * 0.2
+      const shadeR = Math.min(f.w, f.h) * (isPendant ? 0.4 : 0.35)
+      return (
+        <group position={[cx, spec.y, cz]} rotation={[0, rot, 0]}>
+          {isPendant && (
+            <mesh position={[0, -dropLen / 2, 0]}>
+              <cylinderGeometry args={[0.015, 0.015, dropLen, 6]} />
+              <meshStandardMaterial color="#333" roughness={0.6} />
+            </mesh>
+          )}
+          <mesh position={[0, shadeY, 0]} castShadow>
+            {isPendant
+              ? <coneGeometry args={[shadeR, spec.h * 0.4, 20, 1, true]} />
+              : <sphereGeometry args={[shadeR, 20, 16, 0, Math.PI * 2, 0, Math.PI / 2]} />}
+            {imgTex
+              ? <meshStandardMaterial map={imgTex} side={THREE.DoubleSide} emissive="#fff3d6" emissiveIntensity={0.15} />
+              : <meshStandardMaterial color="#f5e9c8" roughness={0.4} emissive="#fff3d6" emissiveIntensity={0.25} side={THREE.DoubleSide} />}
+          </mesh>
+          <pointLight position={[0, shadeY - 0.2, 0]} intensity={0.4} distance={10} color="#fff3d6" />
+        </group>
+      )
+    }
+    case 'recessed': {
+      const r = Math.min(f.w, f.h) * 0.4
+      return (
+        <mesh position={[cx, spec.y - spec.h / 2, cz]} rotation={[Math.PI / 2, 0, 0]}>
+          <cylinderGeometry args={[r, r, spec.h, 20]} />
+          <meshStandardMaterial color="#e8e8e8" emissive="#fff8e6" emissiveIntensity={0.2} roughness={0.4} />
+        </mesh>
+      )
+    }
+    case 'fan': {
+      const R = Math.min(f.w, f.h) * 0.45
+      return (
+        <group position={[cx, spec.y - spec.h * 0.3, cz]} rotation={[0, rot, 0]}>
+          <mesh castShadow>
+            <cylinderGeometry args={[R * 0.18, R * 0.18, spec.h * 0.4, 12]} />
+            <meshStandardMaterial color="#4a4438" roughness={0.4} metalness={0.5} />
+          </mesh>
+          {[0, 1, 2, 3].map(i => (
+            <mesh key={i} position={[0, -spec.h * 0.15, 0]} rotation={[0, (i / 4) * Math.PI * 2, 0]} castShadow>
+              <boxGeometry args={[R * 1.7, 0.03, R * 0.35]} />
+              <meshStandardMaterial color="#6b5a3f" roughness={0.6} />
+            </mesh>
+          ))}
+        </group>
+      )
+    }
+    case 'towel_bar': {
+      return (
+        <group position={[cx, spec.y, cz]} rotation={[0, rot, 0]}>
+          <mesh rotation={[0, 0, Math.PI / 2]} castShadow>
+            <cylinderGeometry args={[0.03, 0.03, f.w, 12]} />
+            <meshStandardMaterial color={HW} roughness={0.25} metalness={0.85} />
+          </mesh>
+          {[-f.w / 2, f.w / 2].map((x, i) => (
+            <mesh key={i} position={[x, 0, 0]} castShadow>
+              <cylinderGeometry args={[0.05, 0.05, 0.1, 12]} />
+              <meshStandardMaterial color={HW} roughness={0.25} metalness={0.85} />
+            </mesh>
+          ))}
+        </group>
+      )
+    }
+    case 'towel_ring': {
+      return (
+        <mesh position={[cx, spec.y, cz]} rotation={[0, rot, 0]} castShadow>
+          <torusGeometry args={[Math.min(f.w, f.h) * 0.35, 0.025, 10, 24]} />
+          <meshStandardMaterial color={HW} roughness={0.25} metalness={0.85} />
+        </mesh>
+      )
+    }
+    case 'robe_hook': {
+      return (
+        <mesh position={[cx, spec.y, cz]} rotation={[Math.PI / 2, rot, 0]} castShadow>
+          <cylinderGeometry args={[0.03, 0.03, 0.15, 10]} />
+          <meshStandardMaterial color={HW} roughness={0.25} metalness={0.85} />
+        </mesh>
+      )
+    }
+    default: {
+      // cabinets, counters, shower — unchanged: a textured/colored box.
+      return (
+        <mesh position={[cx, spec.y + spec.h / 2, cz]} rotation={[0, rot, 0]} castShadow receiveShadow>
+          <boxGeometry args={[f.w, spec.h, f.h]} />
+          <meshStandardMaterial map={mTex || undefined} color={mTex ? '#ffffff' : col} roughness={rough} metalness={spec.cat === 'appliance' ? 0.6 : 0} />
+        </mesh>
+      )
+    }
+  }
 }
 
 export default function FloorPlan3D({ plan, wallThick = 0.5, finishes, onFinishesChange, onClose, readOnly = false }: {
@@ -301,15 +523,20 @@ export default function FloorPlan3D({ plan, wallThick = 0.5, finishes, onFinishe
               // form — skip anything we don't have a spec for.
               const spec = FIX3D[f.kind]
               if (!spec) return null
+              // Only cabinet/counter surfaces pick up a user-selected finish sample;
+              // the rest (appliance/porcelain/hardware/glass/fixture) get a fixed,
+              // realistic material chosen per-kind inside FixtureItem, or here for
+              // the shared default box path.
               const mTex = spec.cat === 'cabinet' ? tex.cabTex : spec.cat === 'counter' ? tex.counterTex : null
-              const col = spec.cat === 'appliance' ? '#b8c0c4' : spec.cat === 'porcelain' ? '#f2f2f0' : color(spec.cat as Cat)
-              const rough = spec.cat === 'appliance' ? 0.35 : spec.cat === 'porcelain' ? 0.25 : 0.6
-              return (
-                <mesh key={f.id} position={[cx, spec.y + spec.h / 2, cz]} rotation={[0, rot, 0]} castShadow receiveShadow>
-                  <boxGeometry args={[f.w, spec.h, f.h]} />
-                  <meshStandardMaterial map={mTex || undefined} color={mTex ? '#ffffff' : col} roughness={rough} metalness={spec.cat === 'appliance' ? 0.6 : 0} />
-                </mesh>
-              )
+              const isSurfaceCat = spec.cat === 'cabinet' || spec.cat === 'counter'
+              const col = spec.cat === 'appliance' ? '#b8c0c4'
+                : spec.cat === 'porcelain' ? '#f2f2f0'
+                : spec.cat === 'hardware' ? '#c7c9cc'
+                : spec.cat === 'glass' ? '#dbe6ea'
+                : spec.cat === 'fixture' ? '#f5e9c8'
+                : isSurfaceCat ? color(spec.cat as Cat) : '#cccccc'
+              const rough = spec.cat === 'appliance' ? 0.35 : spec.cat === 'porcelain' ? 0.25 : spec.cat === 'hardware' ? 0.25 : spec.cat === 'glass' ? 0.05 : 0.6
+              return <FixtureItem key={f.id} f={f} cx={cx} cz={cz} rot={rot} spec={spec} mTex={mTex} col={col} rough={rough} />
             })}
 
             {/* door slabs (swung open) + window glass */}

@@ -39,12 +39,12 @@ type Opening = { id: string; wallId: string; t: number; width: number; kind: 'do
 type Room = { id: string; at: Pt; w: number; h: number; name: string; layer?: TradeLayer }
 type Label = { id: string; at: Pt; text: string; layer?: TradeLayer }
 // Architectural/fixture kinds + a full set of electrical-plan symbols.
-type ArchFixtureKind = 'toilet' | 'sink' | 'tub' | 'shower' | 'range' | 'fridge' | 'base' | 'upper' | 'island' | 'counter' | 'stairs' | 'railing'
+type ArchFixtureKind = 'toilet' | 'sink' | 'tub' | 'shower' | 'range' | 'fridge' | 'base' | 'upper' | 'island' | 'counter' | 'stairs' | 'railing' | 'mirror' | 'towel_bar' | 'towel_ring' | 'robe_hook'
 type ElecFixtureKind = 'outlet' | 'gfci' | 'outlet220' | 'switch' | 'switch3' | 'dimmer' | 'recessed' | 'light' | 'pendant' | 'fan' | 'exhaust' | 'smoke' | 'panel' | 'data' | 'tv' | 'thermostat'
 type FixtureKind = ArchFixtureKind | ElecFixtureKind
 const ELEC_KINDS: ElecFixtureKind[] = ['outlet', 'gfci', 'outlet220', 'switch', 'switch3', 'dimmer', 'recessed', 'light', 'pendant', 'fan', 'exhaust', 'smoke', 'panel', 'data', 'tv', 'thermostat']
 const isElec = (k: FixtureKind): k is ElecFixtureKind => (ELEC_KINDS as string[]).includes(k)
-type Fixture = { id: string; kind: FixtureKind; at: Pt; w: number; h: number; rot: number; layer?: TradeLayer }  // rot = degrees
+type Fixture = { id: string; kind: FixtureKind; at: Pt; w: number; h: number; rot: number; layer?: TradeLayer; img?: string }  // rot = degrees; img = data-URL product photo (mirror/light/pendant only)
 type Dim = { id: string; a: Pt; b: Pt; off: number; layer?: TradeLayer }   // off = perpendicular offset of the dim line (ft)
 // A wiring / circuit run for the electrical plan — a polyline of points.
 type Wire = { id: string; pts: Pt[]; layer?: TradeLayer }
@@ -71,6 +71,10 @@ const FIXTURES: Record<FixtureKind, { w: number; h: number; label: string }> = {
   counter: { w: 4, h: 2, label: 'Counter' },
   stairs: { w: 3, h: 10, label: 'Stairs' },
   railing: { w: 6, h: 0.5, label: 'Railing' },
+  mirror: { w: 3, h: 0.3, label: 'Mirror' },
+  towel_bar: { w: 2, h: 0.3, label: 'Towel Bar' },
+  towel_ring: { w: 0.6, h: 0.3, label: 'Towel Ring' },
+  robe_hook: { w: 0.4, h: 0.3, label: 'Robe Hook' },
   // ── Electrical symbols (small, fixed footprint = symbol size in ft) ──
   outlet:     { w: 0.9, h: 0.9, label: 'Outlet' },
   gfci:       { w: 0.9, h: 0.9, label: 'GFCI' },
@@ -213,6 +217,25 @@ function fixturePrims(kind: FixtureKind, w: number, h: number): Prim[] {
     case 'panel': {  // electrical panel: box (glyph 'PNL')
       return [{ t: 'rect', x, y, w, h }]
     }
+    case 'mirror': {  // mirror: rounded-look rectangle (inset outline reads as glass)
+      return [
+        { t: 'rect', x, y, w, h },
+        { t: 'rect', x: x + w * 0.08, y: y + h * 0.08, w: w * 0.84, h: h * 0.84 },
+      ]
+    }
+    case 'towel_bar': {  // towel bar: two end posts + the bar between them
+      return [
+        { t: 'line', x1: x, y1: 0, x2: x + w, y2: 0 },
+        { t: 'circle', cx: x, cy: 0, r: Math.min(w, h) * 0.1 },
+        { t: 'circle', cx: x + w, cy: 0, r: Math.min(w, h) * 0.1 },
+      ]
+    }
+    case 'towel_ring': {  // towel ring: a single ring on the wall
+      return [{ t: 'circle', cx: 0, cy: 0, r: Math.min(w, h) * 0.42 }]
+    }
+    case 'robe_hook': {  // robe hook: a small peg
+      return [{ t: 'circle', cx: 0, cy: 0, r: Math.min(w, h) * 0.22 }]
+    }
   }
 }
 // Sample fixture prims into world-feet polylines (for PDF / DXF), applying rot+pos.
@@ -323,6 +346,25 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
   const [importing, setImporting] = useState(false)
   const [importErr, setImportErr] = useState('')
   const fileRef = useRef<HTMLInputElement>(null)
+
+  // Per-fixture product photo (mirror/light/pendant) — downscaled to a data URL
+  // and stored on the fixture itself so it saves/loads with the plan and maps
+  // onto that fixture's face in the 3D view (FloorPlan3D.tsx).
+  const fixtureImgRef = useRef<HTMLInputElement>(null)
+  const fixtureImgFor = useRef<string | null>(null)
+  function uploadFixtureImage(fixtureId: string, file: File) {
+    const img = new Image()
+    img.onload = () => {
+      const MAX = 512, k = Math.min(1, MAX / Math.max(img.width, img.height))
+      const w = Math.round(img.width * k), h = Math.round(img.height * k)
+      const cv = document.createElement('canvas'); cv.width = w; cv.height = h
+      cv.getContext('2d')?.drawImage(img, 0, 0, w, h)
+      const url = cv.toDataURL('image/jpeg', 0.85)
+      updFixture(fixtureId, { img: url })
+      URL.revokeObjectURL(img.src)
+    }
+    img.src = URL.createObjectURL(file)
+  }
 
   // Sketch underlay — the original photo faded behind the grid, aligned to the
   // walls, so you can trace the lines the AI missed. (Local only; not persisted.)
@@ -1088,6 +1130,13 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
           {importing ? <Loader2 size={13} className="animate-spin" /> : <ScanLine size={13} />}
           <span className="hidden sm:inline">{importing ? 'Tracing…' : 'Import sketch (AI)'}</span>
         </button>
+        {/* Per-fixture product photo (mirror/light/pendant) — see fixture toolbar below */}
+        <input ref={fixtureImgRef} type="file" accept="image/*" className="hidden"
+          onChange={e => {
+            const file = e.target.files?.[0]
+            if (file && fixtureImgFor.current) uploadFixtureImage(fixtureImgFor.current, file)
+            if (fixtureImgRef.current) fixtureImgRef.current.value = ''
+          }} />
         {/* Manual photo underlay (trace over any image) */}
         <input ref={underlayRef} type="file" accept="image/*" className="hidden"
           onChange={e => { const f = e.target.files?.[0]; if (f) loadUnderlayImage(f); if (underlayRef.current) underlayRef.current.value = '' }} />
@@ -1314,12 +1363,25 @@ export default function FloorPlanner({ value, onChange }: FloorPlannerProps = {}
         }
         if (sel.kind === 'fixture') {
           const f = fixtures.find(x => x.id === sel.id); if (!f) return null
+          const photoCapable = f.kind === 'mirror' || f.kind === 'light' || f.kind === 'pendant'
           return (
             <div className="flex flex-wrap items-center gap-2 bg-blue-50 border border-blue-100 rounded-xl px-3 py-2 text-xs">
               <span className="font-bold text-blue-800">{FIXTURES[f.kind].label}</span>
               <span className="text-gray-500">W</span><SizeStepper value={f.w} onChange={v => updFixture(f.id, { w: v })} min={0.5} max={12} />
               <span className="text-gray-500">H</span><SizeStepper value={f.h} onChange={v => updFixture(f.id, { h: v })} min={0.5} max={12} />
               <button onClick={() => updFixture(f.id, { rot: (f.rot + 90) % 360 })} className="flex items-center gap-1 px-2 py-0.5 rounded border border-blue-200 bg-white text-gray-600 hover:bg-blue-100 font-semibold"><RotateCw size={12} /> Rotate</button>
+              {photoCapable && (
+                <>
+                  {f.img && <img src={f.img} alt="" className="w-5 h-5 rounded object-cover border border-blue-200" />}
+                  <button onClick={() => { fixtureImgFor.current = f.id; fixtureImgRef.current?.click() }}
+                    className="flex items-center gap-1 px-2 py-0.5 rounded border border-blue-200 bg-white text-gray-600 hover:bg-blue-100 font-semibold">
+                    <ImageIcon size={12} /> {f.img ? 'Replace photo' : 'Add photo'}
+                  </button>
+                  {f.img && (
+                    <button onClick={() => updFixture(f.id, { img: undefined })} className="text-gray-400 hover:text-red-500 font-semibold">Remove photo</button>
+                  )}
+                </>
+              )}
               <button onClick={deleteSel} className="ml-auto flex items-center gap-1 text-red-500 hover:text-red-700 font-semibold"><Trash2 size={12} /> Delete</button>
             </div>
           )
