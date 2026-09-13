@@ -144,7 +144,8 @@ If no permits are required at all, return an empty permits array and say so in s
         'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify({
-        model: 'claude-opus-4-5',
+        // Sonnet handles this lookup/reasoning task fine at a fraction of Opus's cost.
+        model: 'claude-sonnet-4-5',
         max_tokens: 2000,
         messages: [{ role: 'user', content: prompt }],
       }),

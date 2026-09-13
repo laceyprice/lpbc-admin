@@ -334,56 +334,6 @@ export default function InventoryPage() {
   const [syncing, setSyncing] = useState(false)
   const [syncResult, setSyncResult] = useState<string | null>(null)
 
-  // Price search modal
-  const [priceSearchItem, setPriceSearchItem] = useState<InventoryItem | null>(null)
-  const [priceSearchLoading, setPriceSearchLoading] = useState(false)
-  const [priceSearchResults, setPriceSearchResults] = useState<any | null>(null)
-  const [priceSearchError, setPriceSearchError] = useState('')
-
-  async function runPriceSearch(item: InventoryItem) {
-    setPriceSearchItem(item)
-    setPriceSearchLoading(true)
-    setPriceSearchResults(null)
-    setPriceSearchError('')
-    try {
-      const res = await fetch(`/api/inventory?action=price-search&id=${item.id}`)
-      const ct = res.headers.get('content-type') || ''
-      const raw = await res.text()
-      // If the server returned HTML (404, 500 page, etc.), show a useful message
-      if (!ct.includes('application/json')) {
-        const isNotFound = raw.includes('404') || res.status === 404
-        throw new Error(
-          isNotFound
-            ? 'Price-search endpoint not found — the new image may not be deployed yet. Redeploy on Flux and try again.'
-            : `Server returned ${res.status}. ${raw.slice(0, 200)}`
-        )
-      }
-      const d = JSON.parse(raw)
-      if (!res.ok) throw new Error(d.error || `Search failed (${res.status})`)
-      setPriceSearchResults(d)
-    } catch (e: any) {
-      setPriceSearchError(e.message)
-    } finally {
-      setPriceSearchLoading(false)
-    }
-  }
-
-  async function applyCheapestPrice() {
-    if (!priceSearchItem || !priceSearchResults?.cheapest_price) return
-    await fetch('/api/inventory', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        id: priceSearchItem.id,
-        unit_cost: priceSearchResults.cheapest_price,
-        supplier: priceSearchResults.cheapest_supplier,
-      }),
-    })
-    await loadInventory()
-    setPriceSearchItem(null)
-    setPriceSearchResults(null)
-  }
-
   const loadInventory = useCallback(async () => {
     setLoading(true)
     const res = await fetch('/api/inventory')
@@ -655,11 +605,6 @@ export default function InventoryPage() {
                             </td>
                             <td className="px-3 py-3">
                               <div className="flex items-center justify-end gap-1">
-                                <button onClick={() => runPriceSearch(item)}
-                                  title="AI: Find cheapest price online"
-                                  className="p-1.5 rounded-lg text-gray-400 hover:text-purple-600 hover:bg-purple-50 transition-colors">
-                                  <Sparkles size={16} />
-                                </button>
                                 <button onClick={() => setShowAdjust(item)}
                                   title="Adjust stock"
                                   className="p-1.5 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors">
@@ -1119,109 +1064,6 @@ export default function InventoryPage() {
           onClose={() => setShowCatalog(false)}
           onImported={() => { setShowCatalog(false); loadInventory() }}
         />
-      )}
-      {priceSearchItem && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto">
-            <div className="sticky top-0 bg-white px-6 py-4 border-b border-gray-100 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Sparkles size={18} className="text-purple-600" />
-                <div>
-                  <h2 className="text-lg font-bold text-gray-900">AI Price Search</h2>
-                  <p className="text-xs text-gray-500">{priceSearchItem.name}</p>
-                </div>
-              </div>
-              <button onClick={() => { setPriceSearchItem(null); setPriceSearchResults(null); setPriceSearchError('') }}>
-                <X size={18} className="text-gray-400 hover:text-gray-700" />
-              </button>
-            </div>
-            <div className="p-6">
-              {priceSearchLoading && (
-                <div className="flex flex-col items-center justify-center py-12 gap-3">
-                  <RefreshCw size={28} className="animate-spin text-purple-600" />
-                  <p className="text-sm font-semibold text-gray-700">Searching retailers…</p>
-                  <p className="text-xs text-gray-500">This usually takes 20-40 seconds. Looking at the major suppliers (Home Depot, Lowe's, Ferguson, SupplyHouse, Amazon, etc.).</p>
-                </div>
-              )}
-              {priceSearchError && (
-                <div className="p-4 rounded-xl bg-red-50 border border-red-200 text-sm text-red-700">{priceSearchError}</div>
-              )}
-              {priceSearchResults && !priceSearchLoading && (
-                <div className="space-y-4">
-                  {priceSearchResults.search_summary && (
-                    <p className="text-sm text-gray-600 italic">{priceSearchResults.search_summary}</p>
-                  )}
-                  {Array.isArray(priceSearchResults.results) && priceSearchResults.results.length > 0 ? (
-                    <>
-                      <div className="overflow-hidden rounded-xl border border-gray-100">
-                        <div className="overflow-x-auto">
-                        <table className="w-full text-sm">
-                          <thead className="bg-gray-50">
-                            <tr>
-                              <th className="px-3 py-2 text-left text-xs font-bold uppercase text-gray-500">Supplier</th>
-                              <th className="px-3 py-2 text-left text-xs font-bold uppercase text-gray-500">Product</th>
-                              <th className="px-3 py-2 text-right text-xs font-bold uppercase text-gray-500">Price</th>
-                              <th className="px-3 py-2 text-center text-xs font-bold uppercase text-gray-500">Stock</th>
-                              <th className="px-3 py-2"></th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {priceSearchResults.results.map((r: any, i: number) => {
-                              const isCheapest = i === 0
-                              return (
-                                <tr key={i} className={`border-t border-gray-100 ${isCheapest ? 'bg-green-50' : ''}`}>
-                                  <td className="px-3 py-3 font-semibold text-gray-900">
-                                    {isCheapest && <span className="inline-block px-1.5 py-0.5 text-[10px] font-bold rounded bg-green-200 text-green-800 mr-1.5">CHEAPEST</span>}
-                                    {r.supplier}
-                                  </td>
-                                  <td className="px-3 py-3 text-gray-600">
-                                    <div className="font-medium text-gray-800">{r.product_name}</div>
-                                    {r.notes && <div className="text-xs text-gray-500 mt-0.5">{r.notes}</div>}
-                                  </td>
-                                  <td className="px-3 py-3 text-right">
-                                    <div className={`font-bold ${isCheapest ? 'text-green-700' : 'text-gray-900'}`}>${Number(r.price).toFixed(2)}</div>
-                                    <div className="text-xs text-gray-500">{r.unit}</div>
-                                  </td>
-                                  <td className="px-3 py-3 text-center">
-                                    {r.in_stock === false ? <span className="text-red-600 text-xs font-semibold">Out</span> : <span className="text-green-600 text-xs font-semibold">In stock</span>}
-                                  </td>
-                                  <td className="px-3 py-3 text-right">
-                                    {r.url && (
-                                      <a href={r.url} target="_blank" rel="noopener noreferrer"
-                                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-blue-50 text-blue-600 text-xs font-bold hover:bg-blue-100">
-                                        Buy ↗
-                                      </a>
-                                    )}
-                                  </td>
-                                </tr>
-                              )
-                            })}
-                          </tbody>
-                        </table>
-                        </div>
-                      </div>
-                      {priceSearchResults.cheapest_price && (
-                        <div className="flex items-center justify-between p-4 bg-green-50 rounded-xl border border-green-200">
-                          <div>
-                            <div className="text-xs font-bold text-green-800 uppercase">Best price found</div>
-                            <div className="text-2xl font-extrabold text-green-700">${Number(priceSearchResults.cheapest_price).toFixed(2)}</div>
-                            <div className="text-sm text-green-600">{priceSearchResults.cheapest_supplier}</div>
-                          </div>
-                          <button onClick={applyCheapestPrice}
-                            className="px-4 py-2.5 bg-green-600 text-white rounded-xl text-sm font-bold hover:bg-green-700">
-                            Save as Unit Cost
-                          </button>
-                        </div>
-                      )}
-                    </>
-                  ) : (
-                    <p className="text-sm text-gray-500 py-8 text-center">No price results returned. Try editing the item name to be more specific (add brand, size, model number).</p>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
       )}
     </div>
   )
