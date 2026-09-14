@@ -76,6 +76,11 @@ export interface DesignData {
   floorplan?: PlanDoc
   floorplans?: FloorPlanSheet[]   // the real list of sheets in this project
   activeFloorplan?: string        // id of the sheet currently being edited
+  // A second, non-destructive AI estimate kept alongside a manually-built one
+  // so they can be compared side by side — see plan-job/page.tsx's `aiCompare`.
+  // Typed loosely here (that Estimate shape lives in plan-job/page.tsx) to avoid
+  // a circular import; plan-job casts it back to its own Estimate type.
+  ai_comparison_estimate?: any
 }
 interface AttachmentLike {
   path: string

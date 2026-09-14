@@ -62,6 +62,7 @@ function inferSection(category: string | undefined, notes: string | undefined): 
 interface ProcessStep { step: number; title: string; description: string; estimated_days: number }
 interface SimilarJob { service_date: string; amount: number; description: string }
 interface Estimate {
+  source?: 'manual' | 'ai'   // how this estimate was created — governs regenerate-vs-compare behavior below
   estimated_total: number
   materials_breakdown: BudgetLine[]
   // Legacy fields from older estimate shapes — folded into materials_breakdown
@@ -166,6 +167,9 @@ export default function PlanJobPage() {
   const [measurements, setMeasurements] = useState('')
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [estimate, setEstimate] = useState<Estimate | null>(null)
+  // A separate AI-generated estimate kept for comparison when the active
+  // estimate was built by hand — see generate()'s manual-source branch below.
+  const [aiCompare, setAiCompare] = useState<Estimate | null>(null)
   const [meta, setMeta] = useState<any>(null)
   const [sessionId, setSessionId] = useState<string>(() => newSessionId())
 
@@ -413,6 +417,7 @@ export default function PlanJobPage() {
     setMeasurements('')
     setAttachments([])
     setEstimate(null)
+    setAiCompare(null)
     setMeta(null)
     setSavedAt(null)
     setError('')
@@ -444,6 +449,7 @@ export default function PlanJobPage() {
       setMeasurements(d.measurements || '')
       setAttachments(Array.isArray(d.attachments) ? d.attachments : [])
       setEstimate(d.estimate ? normalizeEstimate(d.estimate) : null)
+      setAiCompare(d.design?.ai_comparison_estimate ? normalizeEstimate(d.design.ai_comparison_estimate) : null)
       setSessionId(d.session_id || newSessionId())
       setShowLoadPanel(false)
       setSavedAt(d.updated_at ? new Date(d.updated_at) : null)
@@ -699,10 +705,15 @@ export default function PlanJobPage() {
 
   async function generate() {
     if (description.trim().length < 10) { setError('Add at least a sentence or two describing the job'); return }
-    // Regenerating replaces the whole Budget Breakdown — give a heads-up if there's
-    // tracked Quoted/Actual data on line items that would otherwise quietly vanish.
+    // A manually-built estimate is never overwritten by a click of the AI
+    // button — instead the AI result lands in a separate comparison slot so
+    // both can be looked at side by side (see the `compareOnly` branch below).
+    const compareOnly = estimate?.source === 'manual'
+    // Regenerating an AI estimate replaces the whole Budget Breakdown — give a
+    // heads-up if there's tracked Quoted/Actual data that would otherwise
+    // quietly vanish. Not applicable when we're only generating a comparison.
     const priorEstimate = estimate
-    if (priorEstimate) {
+    if (priorEstimate && !compareOnly) {
       const hasTrackingData = priorEstimate.materials_breakdown.some(m => m.quoted_cost != null || m.actual_cost != null)
       if (hasTrackingData) {
         const ok = window.confirm(
@@ -771,14 +782,23 @@ export default function PlanJobPage() {
       }
 
       if (finalEstimate) {
-        // Carry forward attached quote/invoice files across a regeneration —
-        // those documents describe the real world, not the AI's draft numbers.
-        if (priorEstimate?.actual_documents?.length) {
-          finalEstimate.actual_documents = [...priorEstimate.actual_documents, ...(finalEstimate.actual_documents || [])]
+        finalEstimate.source = 'ai'
+        if (compareOnly) {
+          // Leave the manual estimate untouched — park the AI result in the
+          // comparison slot instead, persisted alongside `design`.
+          setAiCompare(finalEstimate)
+          setMeta(finalMeta)
+          setTimeout(() => save({ ...design, ai_comparison_estimate: finalEstimate }), 0)
+        } else {
+          // Carry forward attached quote/invoice files across a regeneration —
+          // those documents describe the real world, not the AI's draft numbers.
+          if (priorEstimate?.actual_documents?.length) {
+            finalEstimate.actual_documents = [...priorEstimate.actual_documents, ...(finalEstimate.actual_documents || [])]
+          }
+          setEstimate(finalEstimate)
+          setMeta(finalMeta)
+          setTimeout(() => saveAfterEstimate(finalEstimate!), 0)
         }
-        setEstimate(finalEstimate)
-        setMeta(finalMeta)
-        setTimeout(() => saveAfterEstimate(finalEstimate!), 0)
       }
     } catch (e: any) {
       setError(e?.message || 'Estimate failed')
@@ -786,11 +806,11 @@ export default function PlanJobPage() {
     setLoading(false)
   }
 
-  async function saveAfterEstimate(est: Estimate) {
+  async function saveAfterEstimate(est: Estimate, designOverride?: DesignData) {
     try {
       const body: any = {
         title: title || deriveTitle(description) || 'Untitled Plan',
-        description, measurements, session_id: sessionId, attachments, estimate: est, design,
+        description, measurements, session_id: sessionId, attachments, estimate: est, design: designOverride ?? design,
         worksite_id: worksiteId,
         status: status === 'draft' ? 'estimated' : status,
         shared_with_account_id: sharedWithAccountId,
@@ -813,6 +833,7 @@ export default function PlanJobPage() {
   // instead of from a (paid) AI call. Lands straight in "Edit Numbers" mode.
   function startManualEstimate() {
     const blank: Estimate = {
+      source: 'manual',
       estimated_total: 0,
       materials_breakdown: [],
       duration_business_days: 0,
@@ -831,6 +852,25 @@ export default function PlanJobPage() {
     setEstimate(blank)
     setEditingEstimate(true)
     saveAfterEstimate(blank)
+  }
+
+  // Swap the AI comparison estimate in as the active one (discarding the
+  // manual numbers) — an explicit choice, never automatic.
+  function useAiCompareEstimate() {
+    if (!aiCompare) return
+    const promoted = aiCompare
+    const newDesign = { ...design, ai_comparison_estimate: null }
+    setEstimate(promoted)
+    setAiCompare(null)
+    setDesign(newDesign)
+    saveAfterEstimate(promoted, newDesign)
+  }
+  // Keep the manual estimate, throw away the AI comparison.
+  function dismissAiCompare() {
+    const newDesign = { ...design, ai_comparison_estimate: null }
+    setAiCompare(null)
+    setDesign(newDesign)
+    save(newDesign)
   }
 
   function onDrop(e: React.DragEvent) { e.preventDefault(); if (e.dataTransfer.files?.length) handleFiles(e.dataTransfer.files) }
@@ -1383,7 +1423,9 @@ export default function PlanJobPage() {
 
         <div className="flex items-center justify-between pt-1">
           <div className="text-xs text-gray-400">
-            {estimate
+            {estimate?.source === 'manual'
+              ? 'Your manual numbers are safe — Generate AI Comparison won\'t touch them, it just runs a second estimate to check against.'
+              : estimate
               ? 'Changed the scope above? Click Regenerate for fresh numbers — quote/invoice files carry over automatically.'
               : planId ? 'Changes auto-save when you generate an estimate.' : 'Save your draft now — come back later, generate when ready.'}
           </div>
@@ -1399,7 +1441,10 @@ export default function PlanJobPage() {
               className="flex items-center gap-2 text-sm font-bold px-5 py-2.5 rounded-xl text-white shadow-md disabled:opacity-50"
               style={{ background: '#b8895a' }}>
               {loading ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
-              {loading ? 'Analyzing your books + photos…' : estimate ? 'Regenerate Estimate' : 'Generate Estimate'}
+              {loading
+                ? 'Analyzing your books + photos…'
+                : estimate?.source === 'manual' ? 'Generate AI Comparison'
+                : estimate ? 'Regenerate Estimate' : 'Generate Estimate'}
             </button>
           </div>
         </div>
@@ -1619,6 +1664,44 @@ export default function PlanJobPage() {
             <Stat label="Duration" value={`${estimate.duration_business_days} days`}
               sublabel={editingEstimate ? '= sum of process step days below' : undefined} icon={Clock} />
           </div>
+
+          {aiCompare && (
+            <div className="rounded-2xl border border-purple-200 bg-purple-50/60 overflow-hidden">
+              <div className="px-5 py-3 border-b border-purple-100 flex items-center gap-2">
+                <Sparkles size={14} className="text-purple-600" />
+                <h3 className="font-bold text-purple-900 text-sm">AI Comparison</h3>
+                <span className="text-[11px] text-purple-500">Your manual numbers above are untouched — this is a separate AI estimate to check them against.</span>
+              </div>
+              <div className="px-5 py-4 grid grid-cols-2 sm:grid-cols-4 gap-4">
+                <div>
+                  <div className="text-[11px] font-semibold text-purple-500 uppercase tracking-wider">Job Cost</div>
+                  <div className="text-lg font-bold text-purple-900">${aiCompare.estimated_total.toFixed(2)}</div>
+                </div>
+                <div>
+                  <div className="text-[11px] font-semibold text-purple-500 uppercase tracking-wider">Design + PM Fee</div>
+                  <div className="text-lg font-bold text-purple-900">${aiCompare.design_pm_fee.toFixed(2)}</div>
+                </div>
+                <div>
+                  <div className="text-[11px] font-semibold text-purple-500 uppercase tracking-wider">Total to Client</div>
+                  <div className="text-lg font-bold text-purple-900">${(aiCompare.estimated_total + aiCompare.design_pm_fee).toFixed(2)}</div>
+                </div>
+                <div>
+                  <div className="text-[11px] font-semibold text-purple-500 uppercase tracking-wider">Duration</div>
+                  <div className="text-lg font-bold text-purple-900">{aiCompare.duration_business_days} days</div>
+                </div>
+              </div>
+              <div className="px-5 pb-4 flex items-center gap-2">
+                <button onClick={useAiCompareEstimate}
+                  className="flex items-center gap-1.5 text-xs font-bold px-3 py-2 rounded-lg text-white" style={{ background: '#7c3aed' }}>
+                  Use AI Numbers Instead
+                </button>
+                <button onClick={dismissAiCompare}
+                  className="flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-purple-200 text-purple-700 hover:bg-purple-100">
+                  Dismiss
+                </button>
+              </div>
+            </div>
+          )}
 
           <Section title="Budget Breakdown" icon={ListChecks}>
             <div className="px-5 pt-3 pb-2 flex items-start justify-between gap-4">
