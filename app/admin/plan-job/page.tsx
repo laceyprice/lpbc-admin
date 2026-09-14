@@ -808,6 +808,31 @@ export default function PlanJobPage() {
     } catch {}
   }
 
+  // Build a blank estimate by hand — same Budget Breakdown table, process
+  // steps, and fee fields the AI-generated estimate uses, just started empty
+  // instead of from a (paid) AI call. Lands straight in "Edit Numbers" mode.
+  function startManualEstimate() {
+    const blank: Estimate = {
+      estimated_total: 0,
+      materials_breakdown: [],
+      duration_business_days: 0,
+      process_steps: [],
+      design_pm_fee: 0,
+      design_pm_fee_percent: 0,
+      design_pm_fee_rationale: '',
+      confidence: 'medium',
+      confidence_rationale: 'Manually built — no AI estimate was generated.',
+      similar_past_jobs: [],
+      assumptions: [],
+      risks: [],
+      photo_observations: [],
+      actual_documents: [],
+    }
+    setEstimate(blank)
+    setEditingEstimate(true)
+    saveAfterEstimate(blank)
+  }
+
   function onDrop(e: React.DragEvent) { e.preventDefault(); if (e.dataTransfer.files?.length) handleFiles(e.dataTransfer.files) }
 
   // ── Live recalculation when the estimate is hand-edited ──────────────────
@@ -1362,12 +1387,21 @@ export default function PlanJobPage() {
               ? 'Changed the scope above? Click Regenerate for fresh numbers — quote/invoice files carry over automatically.'
               : planId ? 'Changes auto-save when you generate an estimate.' : 'Save your draft now — come back later, generate when ready.'}
           </div>
-          <button onClick={generate} disabled={loading || description.trim().length < 10}
-            className="flex items-center gap-2 text-sm font-bold px-5 py-2.5 rounded-xl text-white shadow-md disabled:opacity-50"
-            style={{ background: '#b8895a' }}>
-            {loading ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
-            {loading ? 'Analyzing your books + photos…' : estimate ? 'Regenerate Estimate' : 'Generate Estimate'}
-          </button>
+          <div className="flex items-center gap-2">
+            {!estimate && (
+              <button onClick={startManualEstimate} disabled={loading}
+                title="Build the Budget Breakdown by hand, line by line — no AI call"
+                className="flex items-center gap-2 text-sm font-bold px-5 py-2.5 rounded-xl border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-50">
+                <Pencil size={14} /> Build Manually
+              </button>
+            )}
+            <button onClick={generate} disabled={loading || description.trim().length < 10}
+              className="flex items-center gap-2 text-sm font-bold px-5 py-2.5 rounded-xl text-white shadow-md disabled:opacity-50"
+              style={{ background: '#b8895a' }}>
+              {loading ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+              {loading ? 'Analyzing your books + photos…' : estimate ? 'Regenerate Estimate' : 'Generate Estimate'}
+            </button>
+          </div>
         </div>
         {error && <div className="bg-red-50 border border-red-100 text-red-700 text-sm px-4 py-3 rounded-xl whitespace-pre-wrap break-words">{error}</div>}
       </div>
