@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { Sparkles, Loader2, ClipboardList, DollarSign, Clock, AlertTriangle, ListChecks, TrendingUp, History, Hammer, Upload, X, Image as ImageIcon, Film, FileText, Ruler, Save, FolderOpen, Plus, Trash2, Archive, Cloud, Folder, ChevronLeft, Search, Download, MapPin, Users2, Pencil, Check, RotateCcw, Wand2, CalendarDays, ExternalLink, FolderPlus, Link2, RefreshCw, Copy, ChevronDown, CheckCircle2, MessageSquare, ShoppingBag } from 'lucide-react'
+import { Sparkles, Loader2, ClipboardList, DollarSign, Clock, AlertTriangle, ListChecks, TrendingUp, History, Hammer, Upload, X, Image as ImageIcon, Film, FileText, Ruler, Save, FolderOpen, Plus, Trash2, Archive, Cloud, Folder, ChevronLeft, ChevronRight, Search, Download, MapPin, Users2, Pencil, Check, RotateCcw, Wand2, CalendarDays, ExternalLink, FolderPlus, Link2, RefreshCw, Copy, ChevronDown, CheckCircle2, MessageSquare, ShoppingBag } from 'lucide-react'
 import DesignStudio, { DesignData, FinishesTab } from '@/components/admin/DesignStudio'
 import ProjectSchedule from '@/components/admin/ProjectSchedule'
 import { computeFinishCost, finishSummary, fetchPrices } from '@/lib/finishes'
@@ -386,6 +386,29 @@ export default function PlanJobPage() {
     window.addEventListener('beforeunload', handler)
     return () => window.removeEventListener('beforeunload', handler)
   }, [isDirty])
+
+  // Arrow keys / Escape while the photo lightbox is open
+  useEffect(() => {
+    if (!previewing) return
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setPreviewing(null)
+      else if (e.key === 'ArrowLeft') stepPreview(-1)
+      else if (e.key === 'ArrowRight') stepPreview(1)
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [previewing, attachments])
+
+  // Step through only the image attachments (videos/docs aren't previewable
+  // the same way), wrapping around at either end.
+  function stepPreview(delta: number) {
+    const images = attachments.filter(a => isImage(a.type))
+    if (images.length === 0 || !previewing) return
+    const i = images.findIndex(a => a.path === previewing.path)
+    if (i === -1) return
+    setPreviewing(images[(i + delta + images.length) % images.length])
+  }
 
   async function loadPlansList() {
     try {
@@ -2237,12 +2260,32 @@ export default function PlanJobPage() {
 
       </>)}
 
-      {previewing && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4" onClick={() => setPreviewing(null)}>
-          <button className="absolute top-4 right-4 text-white bg-white/10 hover:bg-white/20 rounded-full p-2"><X size={20} /></button>
-          <img src={previewing.signed_url || ''} alt={previewing.name} className="max-w-full max-h-full rounded-2xl shadow-2xl" />
-        </div>
-      )}
+      {previewing && (() => {
+        const previewImages = attachments.filter(a => isImage(a.type))
+        const idx = previewImages.findIndex(a => a.path === previewing.path)
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4" onClick={() => setPreviewing(null)}>
+            <button onClick={(e) => { e.stopPropagation(); setPreviewing(null) }}
+              className="absolute top-4 right-4 text-white bg-white/10 hover:bg-white/20 rounded-full p-2"><X size={20} /></button>
+            {previewImages.length > 1 && (
+              <>
+                <button onClick={(e) => { e.stopPropagation(); stepPreview(-1) }}
+                  className="absolute left-4 top-1/2 -translate-y-1/2 text-white bg-white/10 hover:bg-white/20 rounded-full p-2.5">
+                  <ChevronLeft size={24} />
+                </button>
+                <button onClick={(e) => { e.stopPropagation(); stepPreview(1) }}
+                  className="absolute right-4 top-1/2 -translate-y-1/2 text-white bg-white/10 hover:bg-white/20 rounded-full p-2.5">
+                  <ChevronRight size={24} />
+                </button>
+                <div className="absolute bottom-4 left-1/2 -translate-x-1/2 text-white/80 text-xs font-semibold bg-white/10 px-3 py-1 rounded-full">
+                  {idx + 1} / {previewImages.length}
+                </div>
+              </>
+            )}
+            <img src={previewing.signed_url || ''} alt={previewing.name} className="max-w-full max-h-full rounded-2xl shadow-2xl" onClick={(e) => e.stopPropagation()} />
+          </div>
+        )
+      })()}
 
       <DesignStudio
         open={designStudioOpen}
