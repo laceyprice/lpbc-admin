@@ -22,9 +22,14 @@ const FULL_PAGES = [
   '/admin/schedule-requests', '/admin/taxes', '/admin/users',
 ]
 
+// Pages only the admin role may open (the sidebar hiding a link isn't enough —
+// a bookkeeper could still type the URL). The matching API is also admin-gated.
+const ADMIN_ONLY_PAGES = ['/admin/expenses']
+
 function canAccess(role: UserRole, path: string): boolean {
   if (!role) return false
   if (role === 'customer') return false   // customers live in /portal, not /admin
+  if (ADMIN_ONLY_PAGES.some(p => path === p || path.startsWith(p + '/'))) return role === 'admin'
   if (role === 'admin' || role === 'bookkeeper') return true
   // Invoicing users can only see dashboard, invoices, and CRM
   return INVOICING_PAGES.some(p => path === p || (p !== '/admin' && path.startsWith(p + '/')))

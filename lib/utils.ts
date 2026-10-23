@@ -66,6 +66,20 @@ export function generateDocNumber(type: 'invoice' | 'quote', existing: { invoice
   return `${prefix}-${year}-${next}`
 }
 
+// What a recurring cost works out to per month (one-time costs aren't recurring, so 0).
+export function monthlyEquivalent(amount: number, frequency: string): number {
+  const a = Number(amount) || 0
+  switch (frequency) {
+    case 'weekly': return (a * 52) / 12
+    case 'biweekly': return (a * 26) / 12
+    case 'monthly': return a
+    case 'quarterly': return a / 3
+    case 'semiannual': return a / 6
+    case 'annual': return a / 12
+    default: return 0
+  }
+}
+
 export function basicGrammarFix(text: string): string {
   if (!text) return text
   let fixed = text.replace(/(^\s*\w|[.!?]\s+\w)/g, (c) => c.toUpperCase())

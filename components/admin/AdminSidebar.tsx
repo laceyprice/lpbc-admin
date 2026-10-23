@@ -3,7 +3,7 @@ import { useState } from 'react'
 import Image from 'next/image'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { LayoutDashboard, Users, FileText, BookOpen, Calendar, ClipboardList, LogOut, Menu, X, Receipt, BarChart3, ListTree, UserCog, Sparkles, MapPin, ShieldCheck, Package, FileCheck, KeyRound, Hammer } from 'lucide-react'
+import { LayoutDashboard, Users, FileText, BookOpen, Calendar, ClipboardList, LogOut, Menu, X, Receipt, BarChart3, ListTree, UserCog, Sparkles, MapPin, ShieldCheck, Package, FileCheck, KeyRound, Hammer, Wallet } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/components/admin/AdminAuthGuard'
 
@@ -22,6 +22,7 @@ const nav = [
   { href: '/admin/reports', label: 'Reports', icon: BarChart3, roles: ['admin', 'bookkeeper'] },
   { href: '/admin/documents', label: 'Insurance & Other Docs', icon: ShieldCheck, roles: ['admin', 'bookkeeper'] },
   { href: '/admin/taxes', label: 'Business Tax Center', icon: Receipt, roles: ['admin', 'bookkeeper'] },
+  { href: '/admin/expenses', label: 'Expenses', icon: Wallet, roles: ['admin'] },
   { href: '/admin/vault', label: 'Account Vault', icon: KeyRound, roles: ['admin'] },
   { href: '/admin/users', label: 'User Management', icon: UserCog, roles: ['admin'] },
 ]
