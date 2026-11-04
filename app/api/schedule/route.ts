@@ -7,6 +7,16 @@ import { sendSMS } from '@/lib/twilio'
 export async function GET(req: NextRequest) {
   const supabase = createServerClient()
   const status = req.nextUrl.searchParams.get('status')
+
+  // ?count=true[&status=pending] → just the number (sidebar badge), not the rows.
+  if (req.nextUrl.searchParams.get('count') === 'true') {
+    let cq = supabase.from('schedule_requests').select('id', { count: 'exact', head: true })
+    if (status) cq = cq.eq('status', status)
+    const { count, error: cErr } = await cq
+    if (cErr) return NextResponse.json({ error: cErr.message }, { status: 500 })
+    return NextResponse.json({ count: count ?? 0 })
+  }
+
   let query = supabase.from('schedule_requests').select('*').order('created_at', { ascending: false })
   if (status) query = query.eq('status', status)
   const { data, error } = await query
@@ -124,6 +134,13 @@ export async function PATCH(req: NextRequest) {
 
   const { data, error } = await supabase.from('schedule_requests').update(updates).eq('id', id).select().single()
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+  // Marking a request done is silent — no email/SMS goes to the customer. Any
+  // appointment booked from it is closed too, so the reminder cron (which only
+  // looks at 'scheduled' appointments) stops texting them.
+  if (updates.status === 'completed') {
+    await supabase.from('appointments').update({ status: 'completed' }).eq('schedule_request_id', id).eq('status', 'scheduled')
+  }
   return NextResponse.json(data)
 }
 

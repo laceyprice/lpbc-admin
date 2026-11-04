@@ -25,7 +25,7 @@ interface ScheduleRequest {
   billing_address?: string
   billing_phone?: string
   billing_email?: string
-  status: 'pending' | 'scheduled' | 'declined'
+  status: 'pending' | 'scheduled' | 'declined' | 'completed'
 }
 
 const SERVICE_TYPES = ['Service', 'Draw']
@@ -36,9 +36,9 @@ export default function ScheduleRequestsPage() {
   const [loading, setLoading] = useState(true)
   const [expanded, setExpanded] = useState<string | null>(null)
   const [scheduling, setScheduling] = useState<ScheduleRequest | null>(null)
-  const [apptForm, setApptForm] = useState({ date: '', period: 'AM' as 'AM' | 'PM', service_type: '', notes: '' })
+  const [apptForm, setApptForm] = useState({ date: '', period: 'AM' as 'AM' | 'PM', service_type: '', notes: '', notify: true })
   const [saving, setSaving] = useState(false)
-  const [filter, setFilter] = useState<'all' | 'pending' | 'scheduled' | 'declined'>('pending')
+  const [filter, setFilter] = useState<'all' | 'pending' | 'scheduled' | 'completed' | 'declined'>('pending')
   const [declining, setDeclining] = useState<ScheduleRequest | null>(null)
   const [declineReason, setDeclineReason] = useState('')
   const [decliningLoading, setDecliningLoading] = useState(false)
@@ -58,6 +58,7 @@ export default function ScheduleRequestsPage() {
   async function updateStatus(id: string, status: string) {
     await fetch('/api/schedule', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, status }) })
     setRequests(p => p.map(r => r.id === id ? { ...r, status: status as any } : r))
+    window.dispatchEvent(new Event('schedule-requests-changed'))   // refresh the sidebar badge
   }
 
   async function scheduleAppointment() {
@@ -84,13 +85,14 @@ export default function ScheduleRequestsPage() {
           end_time: endTime,
           status: 'scheduled',
           schedule_request_id: scheduling.id,
+          notify: apptForm.notify,
         })
       })
       if (apptRes.ok) {
         await updateStatus(scheduling.id, 'scheduled')
         setScheduling(null)
-        setApptForm({ date: '', period: 'AM', service_type: '', notes: '' })
-        alert('✅ Appointment created! Google Calendar invite sent and confirmation email dispatched.')
+        setApptForm({ date: '', period: 'AM', service_type: '', notes: '', notify: true })
+        alert(apptForm.notify ? '✅ Appointment created and confirmation sent to the customer.' : '✅ Appointment created — the customer was NOT notified.')
       } else {
         alert('Failed to create appointment. Please try again.')
       }
@@ -138,6 +140,7 @@ export default function ScheduleRequestsPage() {
     try {
       await fetch(`/api/schedule?id=${id}`, { method: 'DELETE' })
       setRequests(p => p.filter(r => r.id !== id))
+      window.dispatchEvent(new Event('schedule-requests-changed'))
       if (expanded === id) setExpanded(null)
     } finally { setDeleting(null) }
   }
@@ -165,6 +168,7 @@ export default function ScheduleRequestsPage() {
     if (s === 'pending') return 'bg-yellow-100 text-yellow-700'
     if (s === 'scheduled') return 'bg-green-100 text-green-700'
     if (s === 'declined') return 'bg-red-100 text-red-600'
+    if (s === 'completed') return 'bg-gray-200 text-gray-700'
     return 'bg-gray-100 text-gray-600'
   }
 
@@ -196,10 +200,10 @@ export default function ScheduleRequestsPage() {
           )}
         </div>
         <div className="flex gap-1 bg-gray-100 rounded-xl p-1 w-fit">
-          {(['pending', 'scheduled', 'declined', 'all'] as const).map(f => (
+          {(['pending', 'scheduled', 'completed', 'declined', 'all'] as const).map(f => (
             <button key={f} onClick={() => setFilter(f)}
               className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all capitalize ${filter === f ? 'bg-white shadow-sm' : 'text-gray-500'}`}
-              style={{ color: filter === f ? '#b8895a' : undefined }}>{f}</button>
+              style={{ color: filter === f ? '#b8895a' : undefined }}>{f === 'completed' ? 'Done' : f}</button>
           ))}
         </div>
       </div>
@@ -293,7 +297,7 @@ export default function ScheduleRequestsPage() {
                   {/* Actions */}
                   {req.status === 'pending' && (
                     <div className="flex flex-wrap gap-3 pt-3 border-t border-gray-100">
-                      <button onClick={() => { setScheduling(req); setApptForm({ date: '', period: 'AM', service_type: req.service_type || '', notes: req.notes || '' }) }}
+                      <button onClick={() => { setScheduling(req); setApptForm({ date: '', period: 'AM', service_type: req.service_type || '', notes: req.notes || '', notify: true }) }}
                         className="flex items-center gap-2 text-white font-semibold px-4 py-2 rounded-xl text-sm" style={{ background: '#b8895a' }}>
                         <Calendar size={14} />Schedule Appointment
                       </button>
@@ -309,6 +313,11 @@ export default function ScheduleRequestsPage() {
                         className="flex items-center gap-2 border border-red-200 text-red-600 font-semibold px-4 py-2 rounded-xl text-sm hover:bg-red-50">
                         <X size={14} />Decline
                       </button>
+                      <button onClick={() => updateStatus(req.id, 'completed')}
+                        title="Closes this request. Nothing is sent to the customer."
+                        className="flex items-center gap-2 border border-gray-300 text-gray-700 font-semibold px-4 py-2 rounded-xl text-sm hover:bg-gray-50 sm:ml-auto">
+                        <Check size={14} />Mark Done <span className="text-[11px] font-normal text-gray-400">(no notification)</span>
+                      </button>
                     </div>
                   )}
                   {req.status === 'scheduled' && (
@@ -316,10 +325,28 @@ export default function ScheduleRequestsPage() {
                       <div className="flex items-center gap-2 text-sm text-green-700">
                         <Check size={14} />Appointment scheduled
                       </div>
+                      <button onClick={() => updateStatus(req.id, 'completed')}
+                        title="Closes this request and its appointment. Nothing is sent to the customer."
+                        className="flex items-center gap-1.5 border border-gray-300 text-gray-700 font-semibold text-sm px-3 py-1.5 rounded-lg hover:bg-gray-50 ml-auto mr-2">
+                        <Check size={13} />Mark Done <span className="text-[11px] font-normal text-gray-400">(no notification)</span>
+                      </button>
                       <button onClick={() => deleteRequest(req.id)}
                         className="flex items-center gap-1.5 text-red-500 hover:text-red-700 font-semibold text-sm px-3 py-1.5 rounded-lg hover:bg-red-50">
                         <Trash2 size={13} />Delete
                       </button>
+                    </div>
+                  )}
+                  {req.status === 'completed' && (
+                    <div className="flex items-center justify-between pt-3 border-t border-gray-100">
+                      <div className="flex items-center gap-2 text-sm text-gray-600"><Check size={14} />Marked done</div>
+                      <div className="flex items-center gap-2">
+                        <button onClick={() => updateStatus(req.id, 'pending')}
+                          className="text-sm font-semibold text-gray-500 hover:text-gray-800 px-3 py-1.5 rounded-lg hover:bg-gray-100">Reopen</button>
+                        <button onClick={() => deleteRequest(req.id)}
+                          className="flex items-center gap-1.5 text-red-500 hover:text-red-700 font-semibold text-sm px-3 py-1.5 rounded-lg hover:bg-red-50">
+                          <Trash2 size={13} />Delete
+                        </button>
+                      </div>
                     </div>
                   )}
                   {req.status === 'declined' && (
@@ -418,12 +445,16 @@ export default function ScheduleRequestsPage() {
                 <textarea value={apptForm.notes} onChange={e => setApptForm(f => ({ ...f, notes: e.target.value }))} rows={2}
                   className="w-full px-3 py-2.5 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:border-blue-400" />
               </div>
+              <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+                <input type="checkbox" checked={apptForm.notify} onChange={e => setApptForm(f => ({ ...f, notify: e.target.checked }))} />
+                Email / text the customer a confirmation
+              </label>
               <button onClick={scheduleAppointment} disabled={saving || !apptForm.date}
                 className="w-full text-white font-bold py-3 rounded-xl flex items-center justify-center gap-2 disabled:opacity-60" style={{ background: '#b8895a' }}>
                 {saving ? <Loader2 size={16} className="animate-spin" /> : <Calendar size={16} />}
                 {saving ? 'Creating...' : 'Create Appointment'}
               </button>
-              <p className="text-xs text-gray-400 text-center">Google Calendar invite + confirmation email will be sent automatically</p>
+              <p className="text-xs text-gray-400 text-center">{apptForm.notify ? 'The customer gets a confirmation email + text. It also goes on your Google Calendar.' : 'Nothing is sent to the customer. It still goes on your Google Calendar.'}</p>
             </div>
           </div>
         </div>

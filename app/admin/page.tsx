@@ -5,7 +5,7 @@ import { DollarSign, Receipt, FileText, Calendar, ClipboardList, TrendingUp } fr
 import { formatCurrency, formatDateShort } from '@/lib/utils'
 
 export default function AdminDashboard() {
-  const [data, setData] = useState<{ invoicedMonth: number; invoicedLastMonth: number; openAmt: number; paidMonth: number; paidLastMonth: number; paidYTD: number; pending: number; invoices: any[] } | null>(null)
+  const [data, setData] = useState<{ invoicedMonth: number; invoicedLastMonth: number; openAmt: number; paidMonth: number; paidLastMonth: number; paidYTD: number; pending: number; requests: any[]; invoices: any[] } | null>(null)
 
   useEffect(() => {
     Promise.all([fetch('/api/invoices'), fetch('/api/schedule?status=pending')]).then(async ([i, r]) => {
@@ -41,7 +41,7 @@ export default function AdminDashboard() {
         .reduce((s: number, x: any) => s + num(x.amount_due), 0)
       const invoicedMonth = invoicedIn(inThisMonth)
       const invoicedLastMonth = invoicedIn(inLastMonth)
-      setData({ invoicedMonth, invoicedLastMonth, openAmt, paidMonth, paidLastMonth, paidYTD, pending: requests.length, invoices: invoices.slice(0, 6) })
+      setData({ invoicedMonth, invoicedLastMonth, openAmt, paidMonth, paidLastMonth, paidYTD, pending: requests.length, requests: requests.slice(0, 6), invoices: invoices.slice(0, 6) })
     })
   }, [])
 
@@ -75,6 +75,31 @@ export default function AdminDashboard() {
           </Link>
         )) : [...Array(9)].map((_, i) => <div key={i} className="h-28 rounded-2xl bg-gray-200 animate-pulse" />)}
       </div>
+      {data && (
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden mb-8">
+          <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+            <h2 className="font-bold text-gray-900 flex items-center gap-2">
+              New Schedule Requests
+              {data.pending > 0 && <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">{data.pending}</span>}
+            </h2>
+            <Link href="/admin/schedule-requests" className="text-sm font-medium" style={{ color: '#b8895a' }}>View All</Link>
+          </div>
+          {data.requests.length === 0 ? <div className="py-10 text-center text-gray-400 text-sm">No new requests</div> : data.requests.map((r: any) => (
+            <Link key={r.id} href="/admin/schedule-requests"
+              className="flex items-center justify-between gap-4 px-6 py-4 border-b border-gray-50 hover:bg-gray-50 transition-colors">
+              <div className="min-w-0">
+                <div className="font-semibold text-gray-900 text-sm">{r.first_name} {r.last_name}{r.company_name ? <span className="text-gray-400 font-normal"> · {r.company_name}</span> : null}</div>
+                <div className="text-gray-500 text-xs truncate">{[r.service_type, r.jobsite_address].filter(Boolean).join(' · ')}</div>
+                {r.notes && <div className="text-gray-400 text-xs truncate mt-0.5">{r.notes}</div>}
+              </div>
+              <div className="text-right flex-shrink-0">
+                <div className="text-xs text-gray-500">{r.preferred_date ? `Wants ${formatDateShort(r.preferred_date)}` : 'No preferred date'}</div>
+                <div className="text-[11px] text-gray-400">Sent {formatDateShort(r.created_at)}</div>
+              </div>
+            </Link>
+          ))}
+        </div>
+      )}
       {data && (
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
           <div className="px-6 py-4 border-b border-gray-100 flex justify-between">

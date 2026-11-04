@@ -91,7 +91,12 @@ export async function POST(req: NextRequest) {
     }
   } catch (e) { console.error('Google Calendar sync failed:', e) }
 
-  // Send confirmation email + SMS
+  // Send confirmation email + SMS — unless this is being recorded silently
+  // (`notify: false`) or is already a completed job, where a "you're booked" text
+  // would just confuse the customer. (Google Calendar never emails anyone either.)
+  const silent = body.notify === false || data.status === 'completed' || data.status === 'cancelled'
+  if (silent) return NextResponse.json(data, { status: 201 })
+
   const appointmentDate = new Date(data.start_time).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
   const timeFrame = getTimeFrame(data.start_time)
 

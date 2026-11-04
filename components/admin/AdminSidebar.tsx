@@ -1,9 +1,9 @@
 'use client'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import Image from 'next/image'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { LayoutDashboard, Users, FileText, BookOpen, Calendar, ClipboardList, LogOut, Menu, X, Receipt, BarChart3, ListTree, UserCog, Sparkles, MapPin, ShieldCheck, Package, FileCheck, KeyRound, Hammer, Wallet } from 'lucide-react'
+import { LayoutDashboard, Users, FileText, BookOpen, Calendar, ClipboardList, LogOut, Menu, X, Receipt, BarChart3, ListTree, UserCog, Sparkles, MapPin, ShieldCheck, Package, FileCheck, KeyRound, Hammer, Wallet, PenLine } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/components/admin/AdminAuthGuard'
 
@@ -23,6 +23,7 @@ const nav = [
   { href: '/admin/documents', label: 'Insurance & Other Docs', icon: ShieldCheck, roles: ['admin', 'bookkeeper'] },
   { href: '/admin/taxes', label: 'Business Tax Center', icon: Receipt, roles: ['admin', 'bookkeeper'] },
   { href: '/admin/expenses', label: 'Expenses', icon: Wallet, roles: ['admin'] },
+  { href: '/admin/notepad', label: 'Notepad', icon: PenLine, roles: ['admin'] },
   { href: '/admin/vault', label: 'Account Vault', icon: KeyRound, roles: ['admin'] },
   { href: '/admin/users', label: 'User Management', icon: UserCog, roles: ['admin'] },
 ]
@@ -38,6 +39,19 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   }
 
   const visibleNav = nav.filter(n => !role || n.roles.includes(role))
+
+  // New (pending) schedule requests → count badge on that menu item. Refreshes on
+  // navigation, every minute, and instantly when the requests page changes one.
+  const [pendingRequests, setPendingRequests] = useState(0)
+  useEffect(() => {
+    let alive = true
+    const load = () => fetch('/api/schedule?status=pending&count=true', { cache: 'no-store' })
+      .then(r => r.json()).then(d => { if (alive && typeof d?.count === 'number') setPendingRequests(d.count) }).catch(() => {})
+    load()
+    const t = setInterval(load, 60000)
+    window.addEventListener('schedule-requests-changed', load)
+    return () => { alive = false; clearInterval(t); window.removeEventListener('schedule-requests-changed', load) }
+  }, [pathname])
 
   return (
     <div className="flex flex-col h-full" style={{ background: 'linear-gradient(180deg, #2f5a5e 0%, #b8895a 100%)' }}>
@@ -63,6 +77,11 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
               style={{ background: active ? 'rgba(255,255,255,0.2)' : 'transparent', color: active ? 'white' : 'rgba(255,255,255,0.65)' }}>
               <Icon size={17} className="flex-shrink-0" />
               {label}
+              {href === '/admin/schedule-requests' && pendingRequests > 0 && (
+                <span className="ml-auto min-w-[20px] h-5 px-1.5 rounded-full bg-amber-400 text-gray-900 text-[11px] font-extrabold flex items-center justify-center">
+                  {pendingRequests > 99 ? '99+' : pendingRequests}
+                </span>
+              )}
             </Link>
           )
         })}

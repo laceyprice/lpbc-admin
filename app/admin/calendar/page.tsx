@@ -1,6 +1,6 @@
 'use client'
 import { useEffect, useState, useRef } from 'react'
-import { ChevronLeft, ChevronRight, Plus, X, Loader2, Calendar, List, Grid } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Plus, X, Loader2, Calendar, List, Grid, CheckCircle2 } from 'lucide-react'
 import { formatCurrency, formatPhone } from '@/lib/utils'
 
 interface Appointment {
@@ -111,11 +111,20 @@ export default function CalendarPage() {
         delete payload.appt_date
         delete payload.appt_period
       }
+      if (editing) delete payload.notify   // create-only flag — not a column
       const body = editing ? { ...payload, id: editing.id } : payload
       const res = await fetch('/api/appointments', { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
       if (res.ok) { await load(); setCreating(false); setEditing(null); setForm({}) }
       else alert('Failed to save appointment')
     } finally { setSaving(false) }
+  }
+
+  // Close out a finished job. A plain status change — nothing is sent to the
+  // customer, and the reminder cron skips anything that isn't 'scheduled'.
+  async function markDone(id: string) {
+    const res = await fetch('/api/appointments', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, status: 'completed' }) })
+    if (res.ok) { await load(); setEditing(null); setForm({}) }
+    else alert('Could not mark this appointment done')
   }
 
   async function deleteAppt(id: string) {
@@ -405,6 +414,12 @@ export default function CalendarPage() {
                 <label className={labelCls}>Notes</label>
                 <textarea value={(form as any).notes || ''} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} rows={3} className={inputCls} placeholder="Additional notes..." />
               </div>
+              {!editing && (
+                <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+                  <input type="checkbox" checked={(form as any).notify !== false} onChange={e => setForm(f => ({ ...f, notify: e.target.checked } as any))} />
+                  Email / text the customer a confirmation
+                </label>
+              )}
               <div className="flex gap-3 pt-2">
                 <button onClick={save} disabled={saving} className="flex-1 text-white font-bold py-3 rounded-xl flex items-center justify-center gap-2 disabled:opacity-60" style={{ background: '#b8895a' }}>
                   {saving ? <Loader2 size={16} className="animate-spin" /> : null}{saving ? 'Saving...' : editing ? 'Save Changes' : 'Create Appointment'}
@@ -413,7 +428,15 @@ export default function CalendarPage() {
                   <button onClick={() => deleteAppt(editing.id)} className="px-4 py-3 rounded-xl border border-red-200 text-red-600 font-semibold hover:bg-red-50">Delete</button>
                 )}
               </div>
-              {!editing && <p className="text-xs text-gray-400 text-center">📅 Will sync to Google Calendar · 📧 Confirmation email will be sent · 💬 SMS reminders at 12h & 1h</p>}
+              {editing && !String(editing.id).startsWith('gcal_') && editing.status !== 'completed' && (
+                <button onClick={() => markDone(editing.id)}
+                  title="Marks the job completed. Nothing is sent to the customer."
+                  className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border-2 border-green-600 text-green-700 font-semibold text-sm hover:bg-green-50 transition-all">
+                  <CheckCircle2 size={14} />
+                  Mark Done <span className="text-xs font-normal text-green-600/70">(no notification)</span>
+                </button>
+              )}
+              {!editing && <p className="text-xs text-gray-400 text-center">{(form as any).notify !== false && (form as any).status !== 'completed' ? '📅 Will sync to Google Calendar · 📧 Confirmation email will be sent · 💬 SMS reminders at 12h & 1h' : '📅 Will sync to Google Calendar · Nothing is sent to the customer'}</p>}
             </div>
           </div>
         </div>

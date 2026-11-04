@@ -24,7 +24,7 @@ const FULL_PAGES = [
 
 // Pages only the admin role may open (the sidebar hiding a link isn't enough —
 // a bookkeeper could still type the URL). The matching API is also admin-gated.
-const ADMIN_ONLY_PAGES = ['/admin/expenses']
+const ADMIN_ONLY_PAGES = ['/admin/expenses', '/admin/notepad']
 
 function canAccess(role: UserRole, path: string): boolean {
   if (!role) return false
