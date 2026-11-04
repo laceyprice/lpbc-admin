@@ -1,7 +1,8 @@
 'use client'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { PenLine, Eraser, Undo2, Trash2, Loader2, Search, Copy, Edit3, Check, X, ScanText, Plus } from 'lucide-react'
+import { PenLine, Eraser, Undo2, Trash2, Loader2, Search, Copy, Edit3, Check, X, ScanText, Plus, Send } from 'lucide-react'
 import { adminFetch } from '@/lib/admin-fetch'
+import SendNoteModal from '@/components/admin/SendNoteModal'
 
 const BRAND = '#b8895a'
 const CANVAS_H = 320
@@ -188,6 +189,18 @@ export default function NotepadPage() {
     await load()
   }
 
+  // ── send a note to Todo / Calendar / Materials / Permits ───
+  const [sendEntry, setSendEntry] = useState<Entry | null>(null)
+  const [toast, setToast] = useState('')
+  async function onSent(label: string, removeFromPad: boolean) {
+    const en = sendEntry
+    setSendEntry(null)
+    if (en && removeFromPad) await adminFetch(`/api/notepad?id=${en.id}`, { method: 'DELETE' })
+    setToast(`Sent to ${label}${en && removeFromPad ? ' and removed from the pad' : ''}`)
+    setTimeout(() => setToast(''), 4000)
+    await load()
+  }
+
   const days = useMemo(() => {
     const m = new Map<string, Entry[]>()
     entries.forEach(e => {
@@ -281,6 +294,7 @@ export default function NotepadPage() {
                           <div className="text-sm text-gray-800 whitespace-pre-wrap break-words">{en.body}</div>
                         </div>
                         <div className="flex items-start gap-0.5 opacity-60 group-hover:opacity-100">
+                          <button onClick={() => setSendEntry(en)} className="px-2 py-1 mr-1 rounded-lg text-xs font-bold flex items-center gap-1 border hover:bg-gray-50" style={{ color: BRAND, borderColor: BRAND + '55' }} title="Send to Todo, Calendar, Materials or Permits"><Send size={12} /> Send to…</button>
                           <button onClick={() => navigator.clipboard?.writeText(en.body)} className="p-1.5 text-gray-400 hover:text-gray-700" title="Copy"><Copy size={14} /></button>
                           <button onClick={() => { setEditId(en.id); setEditText(en.body) }} className="p-1.5 text-gray-400 hover:text-blue-600" title="Edit"><Edit3 size={14} /></button>
                           <button onClick={() => remove(en.id)} className="p-1.5 text-gray-400 hover:text-red-600" title="Delete"><Trash2 size={14} /></button>
@@ -294,6 +308,9 @@ export default function NotepadPage() {
           ))}
         </div>
       )}
+
+      {sendEntry && <SendNoteModal text={sendEntry.body} brand={BRAND} onClose={() => setSendEntry(null)} onSent={onSent} />}
+      {toast && <div className="fixed bottom-14 left-1/2 -translate-x-1/2 z-50 bg-gray-900 text-white text-sm font-semibold px-4 py-2.5 rounded-xl shadow-lg">{toast}</div>}
     </div>
   )
 }
