@@ -2,12 +2,14 @@
 import { usePathname } from 'next/navigation'
 import AdminSidebar from '@/components/admin/AdminSidebar'
 import AdminAuthGuard from '@/components/admin/AdminAuthGuard'
+import BuildTag from '@/components/admin/BuildTag'
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
   const isLoginPage = pathname === '/admin/login'
 
   return (
+    <>
     <AdminAuthGuard>
       {isLoginPage ? (
         <>{children}</>
@@ -18,5 +20,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         </div>
       )}
     </AdminAuthGuard>
+    <BuildTag />
+    </>
   )
 }
