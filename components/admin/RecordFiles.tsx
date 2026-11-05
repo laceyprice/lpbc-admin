@@ -71,12 +71,7 @@ export default function RecordFiles({ entityType, entityId, brand }: { entityTyp
     await load()
   }
 
-  async function reconnect() {
-    try {
-      const r = await fetch('/api/email-scan?action=auth-url'); const d = await r.json()
-      if (d.authUrl) window.open(d.authUrl, '_blank', 'noopener,noreferrer')
-    } catch { /* ignore */ }
-  }
+  function reconnect() { window.open('/admin/google-connect', '_blank', 'noopener,noreferrer') }
 
   const btn = 'flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold border hover:bg-gray-50 disabled:opacity-50'
 
