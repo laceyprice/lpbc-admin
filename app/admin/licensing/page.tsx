@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import RecordFiles from '@/components/admin/RecordFiles'
+import RecordFiles, { uploadStaged, type StagedItem } from '@/components/admin/RecordFiles'
 import {
   Award, Plus, Search, Edit2, Trash2, X, Save, Loader2, Calendar,
   Building2, AlertTriangle, CheckCircle2, ExternalLink, Globe, FileCheck,
@@ -75,6 +75,7 @@ export default function LicensingPage() {
   const [editing, setEditing] = useState<License | null>(null)
   const [form, setForm] = useState<Partial<License>>({})
   const [saving, setSaving] = useState(false)
+  const [staged, setStaged] = useState<StagedItem[]>([])   // files queued while adding a new license
 
   useEffect(() => { load() }, [])
 
@@ -93,6 +94,7 @@ export default function LicensingPage() {
 
   function openAdd() {
     setEditing(null)
+    setStaged([])
     setForm({
       license_type: 'contractor',
       holder_name: 'L. Price Building Company',
@@ -106,6 +108,7 @@ export default function LicensingPage() {
 
   function openEdit(lic: License) {
     setEditing(lic)
+    setStaged([])
     setForm({ ...lic })
     setShowForm(true)
   }
@@ -126,11 +129,16 @@ export default function LicensingPage() {
           body: JSON.stringify({ id: editing.id, ...payload }),
         })
       } else {
-        await fetch('/api/licenses', {
+        const res = await fetch('/api/licenses', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
         })
+        const created = await res.json().catch(() => null)
+        if (res.ok && created?.id && staged.length > 0) {
+          const r = await uploadStaged('license', created.id, staged)
+          if (r.failed) alert(`The license was saved, but ${r.failed} file${r.failed === 1 ? '' : 's'} couldn't be attached. Open the license (edit) to add ${r.failed === 1 ? 'it' : 'them'} again.`)
+        }
       }
       await load()
       setShowForm(false)
@@ -370,9 +378,7 @@ export default function LicensingPage() {
                 <label htmlFor="fee_paid" className="text-sm text-gray-700">Fee paid</label>
               </div>
               <div className="col-span-2">
-                {editing
-                  ? <RecordFiles entityType="license" entityId={editing.id} brand="#b8895a" />
-                  : <p className="text-xs text-gray-400 bg-gray-50 rounded-xl px-3 py-2.5">Save the license first, then edit it to attach scans, photos or files from Google Drive.</p>}
+                <RecordFiles entityType="license" entityId={editing?.id ?? null} brand="#b8895a" staged={staged} onStagedChange={setStaged} />
               </div>
             </div>
             <div className="sticky bottom-0 bg-white flex justify-end gap-2 px-6 py-4 border-t border-gray-100">

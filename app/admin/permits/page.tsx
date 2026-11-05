@@ -1,7 +1,7 @@
 'use client'
 import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
-import RecordFiles from '@/components/admin/RecordFiles'
+import RecordFiles, { uploadStaged, type StagedItem } from '@/components/admin/RecordFiles'
 import {
   FileCheck, Plus, Search, RefreshCw, Mail, Sparkles, ChevronRight,
   Edit2, Trash2, X, Save, ExternalLink, Phone, Globe, MapPin,
@@ -118,6 +118,7 @@ function PermitModal({
   })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [staged, setStaged] = useState<StagedItem[]>([])   // files queued while adding a new permit
 
   const set = (k: string, v: any) => setForm((p: any) => ({ ...p, [k]: v }))
 
@@ -132,6 +133,10 @@ function PermitModal({
     })
     const data = await res.json()
     if (!res.ok) { setError(data.error || 'Save failed'); setSaving(false); return }
+    if (isNew && data?.id && staged.length > 0) {
+      const r = await uploadStaged('permit', data.id, staged)
+      if (r.failed) alert(`The permit was saved, but ${r.failed} file${r.failed === 1 ? '' : 's'} couldn't be attached. Open the permit to add ${r.failed === 1 ? 'it' : 'them'} again.`)
+    }
     onSave()
   }
 
@@ -254,6 +259,8 @@ function PermitModal({
             <label className={lbl}>Notes</label>
             <textarea className={inp} rows={3} value={form.notes || ''} onChange={e => set('notes', e.target.value)} />
           </div>
+
+          <RecordFiles entityType="permit" entityId={permit?.id ?? null} brand="#b8895a" staged={staged} onStagedChange={setStaged} />
         </div>
         <div className="flex justify-end gap-2 p-5 border-t">
           <button onClick={onClose} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg">Cancel</button>
