@@ -1,7 +1,8 @@
 'use client'
 import { useEffect, useMemo, useState } from 'react'
-import { Plus, Trash2, Edit3, Loader2, X, Eye, EyeOff, Copy, Check, Search, Wand2, KeyRound, Repeat, ExternalLink, Filter } from 'lucide-react'
+import { Plus, Trash2, Edit3, Loader2, X, Eye, EyeOff, Copy, Check, Search, Wand2, KeyRound, Repeat, ExternalLink, Filter, Upload } from 'lucide-react'
 import { adminFetch } from '@/lib/admin-fetch'
+import VaultImport from '@/components/admin/VaultImport'
 
 interface VaultAccount {
   id: string
@@ -35,6 +36,7 @@ const FREQ_LABELS: Record<string, string> = { weekly: 'Weekly', monthly: 'Monthl
 export default function VaultPage() {
   const [accounts, setAccounts] = useState<VaultAccount[]>([])
   const [suggestions, setSuggestions] = useState<Suggestion[]>([])
+  const [showImport, setShowImport] = useState(false)
   const [loading, setLoading] = useState(true)
   const [showInactive, setShowInactive] = useState(false)
   const [query, setQuery] = useState('')
@@ -150,6 +152,10 @@ export default function VaultPage() {
           <p className="text-gray-500 text-sm mt-0.5">Credentials, subscriptions, and recurring expenses</p>
         </div>
         <div className="flex items-center gap-2">
+          <button onClick={() => setShowImport(true)}
+            className="flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-xl border border-gray-200 hover:bg-gray-50">
+            <Upload size={13} /> Import spreadsheet
+          </button>
           <button onClick={() => { loadSuggestions() }}
             className="flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-xl border border-gray-200 hover:bg-gray-50">
             <Wand2 size={13} /> Suggest from Bank
@@ -161,6 +167,12 @@ export default function VaultPage() {
           </button>
         </div>
       </div>
+
+      {showImport && (
+        <VaultImport endpoint="/api/vault-accounts" brand="#b8895a" existing={accounts.map(a => ({ name: a.name, username: a.username }))} categories={CATEGORIES}
+          onClose={() => setShowImport(false)}
+          onDone={n => { setShowImport(false); load(); alert(`Imported ${n} entr${n === 1 ? 'y' : 'ies'} into the vault.`) }} />
+      )}
 
       {/* Stats */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">

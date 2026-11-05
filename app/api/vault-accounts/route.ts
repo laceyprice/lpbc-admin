@@ -3,6 +3,7 @@ export const dynamic = 'force-dynamic'
 import { createServerClient } from '@/lib/supabase'
 import { requireAdmin } from '@/lib/admin-auth'
 import { encryptField, decryptFields, isEncrypted } from '@/lib/vault-crypto'
+import { parseSpreadsheet } from '@/lib/vault-import'
 
 // ADMIN ONLY. password / passkey / notes are encrypted at rest (lib/vault-crypto.ts); they are
 // decrypted here for the admin page. POST ?action=encrypt-existing converts any legacy plain-text rows.
@@ -49,6 +50,43 @@ export async function POST(req: NextRequest) {
       if (Object.keys(patch).length) { await supabase.from('vault_accounts').update(patch).eq('id', r.id); converted++ }
     }
     return NextResponse.json({ converted })
+  }
+
+  // ── spreadsheet import: parse an uploaded .xlsx/.csv (nothing is stored), then import chosen rows ──
+  const importAction = req.nextUrl.searchParams.get('action')
+  if (importAction === 'parse') {
+    try {
+      const form = await req.formData()
+      const file = form.get('file') as File | null
+      if (!file) return NextResponse.json({ error: 'Choose a file first' }, { status: 400 })
+      if (file.size > 10 * 1024 * 1024) return NextResponse.json({ error: 'That file is over 10 MB' }, { status: 413 })
+      return NextResponse.json({ sheets: await parseSpreadsheet(Buffer.from(await file.arrayBuffer()), file.name) })
+    } catch (e: any) { return NextResponse.json({ error: e?.message || 'Could not read that file' }, { status: 400 }) }
+  }
+  if (importAction === 'import') {
+    try {
+      const { rows } = await req.json()
+      if (!Array.isArray(rows) || rows.length === 0) return NextResponse.json({ error: 'Nothing to import' }, { status: 400 })
+      if (rows.length > 2000) return NextResponse.json({ error: 'Import up to 2,000 entries at a time' }, { status: 400 })
+      const records: Record<string, any>[] = []
+      for (const r of rows) {
+        const name = String(r?.name || '').trim()
+        if (!name) continue
+        records.push({
+          category: String(r.category || 'Other').trim() || 'Other', name,
+          url: String(r.url || '').trim() || null, username: String(r.username || '').trim() || null,
+          password: await encryptField(String(r.password || '') || null), passkey: await encryptField(String(r.passkey || '') || null),
+          notes: await encryptField(String(r.notes || '') || null),
+          is_recurring: false,
+        })
+      }
+      const db = createServerClient()
+      for (let i = 0; i < records.length; i += 100) {
+        const { error } = await db.from('vault_accounts').insert(records.slice(i, i + 100))
+        if (error) return NextResponse.json({ error: error.message, imported: i }, { status: 500 })
+      }
+      return NextResponse.json({ imported: records.length })
+    } catch (e: any) { return NextResponse.json({ error: e?.message || 'Import failed' }, { status: 500 }) }
   }
 
   let body: any = await req.json()
