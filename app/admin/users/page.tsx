@@ -1,6 +1,7 @@
 'use client'
 import { useEffect, useState } from 'react'
 import { Plus, Trash2, Loader2, X, UserCog, Shield, FileText, BookOpen, User, ChevronDown } from 'lucide-react'
+import { adminFetch } from '@/lib/admin-fetch'
 
 interface UserRole {
   id: string
@@ -93,7 +94,7 @@ export default function UsersPage() {
   async function load() {
     setLoading(true)
     const [usersRes, acctRes, projRes] = await Promise.all([
-      fetch('/api/user-roles'),
+      adminFetch('/api/user-roles'),
       fetch('/api/financial-accounts'),
       fetch('/api/job-plans'),
     ])
@@ -111,7 +112,7 @@ export default function UsersPage() {
     setSaving(true)
     setError('')
     const fd = new FormData(e.currentTarget as HTMLFormElement)
-    const res = await fetch('/api/user-roles', {
+    const res = await adminFetch('/api/user-roles', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -136,7 +137,7 @@ export default function UsersPage() {
   }
 
   async function changeRole(id: string, role: string) {
-    await fetch('/api/user-roles', {
+    await adminFetch('/api/user-roles', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id, role }),
@@ -145,7 +146,7 @@ export default function UsersPage() {
   }
 
   async function changeAssignment(id: string, patch: Record<string, any>) {
-    await fetch('/api/user-roles', {
+    await adminFetch('/api/user-roles', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id, ...patch }),
@@ -155,7 +156,7 @@ export default function UsersPage() {
 
   async function deleteUser(id: string, email: string) {
     if (!confirm(`Delete user ${email}? This will remove their login and all access.`)) return
-    await fetch(`/api/user-roles?id=${id}`, { method: 'DELETE' })
+    await adminFetch(`/api/user-roles?id=${id}`, { method: 'DELETE' })
     await load()
   }
 

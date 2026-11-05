@@ -1,6 +1,7 @@
 'use client'
 import { useEffect, useMemo, useState } from 'react'
 import { Plus, Trash2, Edit3, Loader2, X, Eye, EyeOff, Copy, Check, Search, Wand2, KeyRound, Repeat, ExternalLink, Filter } from 'lucide-react'
+import { adminFetch } from '@/lib/admin-fetch'
 
 interface VaultAccount {
   id: string
@@ -44,11 +45,13 @@ export default function VaultPage() {
   const [copied, setCopied] = useState<string | null>(null)       // "<id>:password" / "<id>:username" key
 
   useEffect(() => { load() }, [showInactive])
+  // One-time, idempotent: encrypt any legacy plain-text entries.
+  useEffect(() => { adminFetch('/api/vault-accounts?action=encrypt-existing', { method: 'POST' }).catch(() => {}) }, [])
 
   async function load() {
     setLoading(true)
     try {
-      const res = await fetch(`/api/vault-accounts${showInactive ? '?includeInactive=true' : ''}`)
+      const res = await adminFetch(`/api/vault-accounts${showInactive ? '?includeInactive=true' : ''}`)
       const d = await res.json()
       setAccounts(Array.isArray(d) ? d : [])
     } catch {}
@@ -57,7 +60,7 @@ export default function VaultPage() {
 
   async function loadSuggestions() {
     try {
-      const res = await fetch('/api/vault-accounts?action=suggest')
+      const res = await adminFetch('/api/vault-accounts?action=suggest')
       const d = await res.json()
       setSuggestions(Array.isArray(d.suggestions) ? d.suggestions : [])
     } catch {}
@@ -65,7 +68,7 @@ export default function VaultPage() {
 
   async function save(form: Partial<VaultAccount>) {
     const method = form.id ? 'PATCH' : 'POST'
-    const res = await fetch('/api/vault-accounts', {
+    const res = await adminFetch('/api/vault-accounts', {
       method, headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(form),
     })
@@ -77,12 +80,12 @@ export default function VaultPage() {
 
   async function remove(id: string, name: string) {
     if (!confirm(`Delete "${name}" permanently?`)) return
-    await fetch(`/api/vault-accounts?id=${id}`, { method: 'DELETE' })
+    await adminFetch(`/api/vault-accounts?id=${id}`, { method: 'DELETE' })
     await load()
   }
 
   async function toggleActive(a: VaultAccount) {
-    await fetch('/api/vault-accounts', {
+    await adminFetch('/api/vault-accounts', {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id: a.id, is_active: !a.is_active }),
     })

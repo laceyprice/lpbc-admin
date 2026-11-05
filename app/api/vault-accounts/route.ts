@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 export const dynamic = 'force-dynamic'
 import { createServerClient } from '@/lib/supabase'
+import { requireAdmin } from '@/lib/admin-auth'
+import { encryptField, decryptFields, isEncrypted } from '@/lib/vault-crypto'
+
+// ADMIN ONLY. password / passkey / notes are encrypted at rest (lib/vault-crypto.ts); they are
+// decrypted here for the admin page. POST ?action=encrypt-existing converts any legacy plain-text rows.
+const SECRET = ['password', 'passkey', 'notes']
 
 // GET    /api/vault-accounts                  → list (?includeInactive=true to include archived)
 // GET    /api/vault-accounts?action=suggest   → suggest recurring vault entries from bank ledger
@@ -9,6 +15,7 @@ import { createServerClient } from '@/lib/supabase'
 // DELETE /api/vault-accounts?id=uuid          → hard delete
 
 export async function GET(req: NextRequest) {
+  const denied = await requireAdmin(req); if (denied) return denied
   const supabase = createServerClient()
   const action = req.nextUrl.searchParams.get('action')
 
@@ -25,12 +32,27 @@ export async function GET(req: NextRequest) {
   if (!includeInactive) query = query.eq('is_active', true)
   const { data, error } = await query
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json(data ?? [])
+  try { return NextResponse.json(await Promise.all((data ?? []).map((r: any) => decryptFields(r, SECRET)))) }
+  catch (e: any) { return NextResponse.json({ error: e.message || 'Could not decrypt' }, { status: 500 }) }
 }
 
 export async function POST(req: NextRequest) {
+  const denied = await requireAdmin(req); if (denied) return denied
   const supabase = createServerClient()
-  const body = await req.json()
+
+  if (req.nextUrl.searchParams.get('action') === 'encrypt-existing') {
+    const { data: rows } = await supabase.from('vault_accounts').select('id, password, passkey, notes')
+    let converted = 0
+    for (const r of rows ?? []) {
+      const patch: Record<string, any> = {}
+      for (const f of SECRET) if ((r as any)[f] && !isEncrypted((r as any)[f])) patch[f] = await encryptField((r as any)[f])
+      if (Object.keys(patch).length) { await supabase.from('vault_accounts').update(patch).eq('id', r.id); converted++ }
+    }
+    return NextResponse.json({ converted })
+  }
+
+  let body: any = await req.json()
+  for (const f of SECRET) if (f in body) body[f] = await encryptField(body[f])
   if (!body.name) return NextResponse.json({ error: 'name required' }, { status: 400 })
   const { data, error } = await supabase.from('vault_accounts').insert({
     category: body.category || 'Other',
@@ -47,10 +69,11 @@ export async function POST(req: NextRequest) {
     matched_payee: body.matched_payee || null,
   }).select().single()
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json(data, { status: 201 })
+  return NextResponse.json(await decryptFields(data, SECRET), { status: 201 })
 }
 
 export async function PATCH(req: NextRequest) {
+  const denied = await requireAdmin(req); if (denied) return denied
   const supabase = createServerClient()
   const body = await req.json()
   const { id, ...updates } = body
@@ -61,16 +84,18 @@ export async function PATCH(req: NextRequest) {
     if (updates[k] === '') updates[k] = null
   }
   if (updates.amount === '') updates.amount = null
+  for (const f of SECRET) if (f in updates) updates[f] = await encryptField(updates[f])
   const { data, error } = await supabase
     .from('vault_accounts')
     .update(updates)
     .eq('id', id)
     .select().single()
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json(data)
+  return NextResponse.json(await decryptFields(data, SECRET))
 }
 
 export async function DELETE(req: NextRequest) {
+  const denied = await requireAdmin(req); if (denied) return denied
   const supabase = createServerClient()
   const id = req.nextUrl.searchParams.get('id')
   if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 })

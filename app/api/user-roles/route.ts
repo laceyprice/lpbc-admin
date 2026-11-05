@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 export const dynamic = 'force-dynamic'
 import { createServerClient } from '@/lib/supabase'
+import { requireAdmin, requireRole } from '@/lib/admin-auth'
 import { sendUserWelcomeEmail } from '@/lib/resend'
 
 // Look up a project (job plan) title for the welcome email.
@@ -55,6 +56,7 @@ export async function GET() {
 
 // POST — create a new user in Supabase Auth + assign a role
 export async function POST(req: NextRequest) {
+  const denied = await requireAdmin(req); if (denied) return denied
   const supabase = createServerClient()
   const body = await req.json()
   const { email, password, display_name, role, assigned_account_id, assigned_project_id, assigned_account_ids, assigned_project_ids, send_welcome_email, welcome_message } = body
@@ -119,6 +121,10 @@ export async function PATCH(req: NextRequest) {
   const supabase = createServerClient()
   const body = await req.json()
   const { id, ...updates } = body
+  // Changing a role/active flag needs an admin; bookkeepers may only (un)assign projects/accounts.
+  const assignmentOnly = Object.keys(updates).every(k => k.startsWith('assigned_'))
+  const denied = assignmentOnly ? await requireRole(req, ['admin', 'bookkeeper']) : await requireAdmin(req)
+  if (denied) return denied
   if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 })
 
   // Keep the singular columns mirrored to the first id of any multi-assignment.
@@ -135,6 +141,7 @@ export async function PATCH(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
+  const denied = await requireAdmin(req); if (denied) return denied
   const supabase = createServerClient()
   const id = req.nextUrl.searchParams.get('id')
   if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 })

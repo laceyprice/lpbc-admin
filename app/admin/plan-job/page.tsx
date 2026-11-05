@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { Sparkles, Loader2, ClipboardList, DollarSign, Clock, AlertTriangle, ListChecks, TrendingUp, History, Hammer, Upload, X, Image as ImageIcon, Film, FileText, Ruler, Save, FolderOpen, Plus, Trash2, Archive, Cloud, Folder, ChevronLeft, ChevronRight, Search, Download, MapPin, Users2, Pencil, Check, RotateCcw, Wand2, CalendarDays, ExternalLink, FolderPlus, Link2, RefreshCw, Copy, ChevronDown, CheckCircle2, MessageSquare, ShoppingBag } from 'lucide-react'
+import { adminFetch } from '@/lib/admin-fetch'
 import DesignStudio, { DesignData, FinishesTab } from '@/components/admin/DesignStudio'
 import ProjectSchedule from '@/components/admin/ProjectSchedule'
 import { computeFinishCost, finishSummary, fetchPrices } from '@/lib/finishes'
@@ -298,7 +299,7 @@ export default function PlanJobPage() {
     setCustomerOptions(prev => prev.map(x => x.roleId === roleId ? { ...x, assignedProjectIds: next } : x))
     setSharingRole(roleId)
     try {
-      await fetch('/api/user-roles', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: roleId, assigned_project_ids: next }) })
+      await adminFetch('/api/user-roles', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: roleId, assigned_project_ids: next }) })
       await loadCustomers()
     } catch { await loadCustomers() }
     finally { setSharingRole(null) }

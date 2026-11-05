@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react'
 import Image from 'next/image'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { LayoutDashboard, Users, FileText, BookOpen, Calendar, ClipboardList, LogOut, Menu, X, Receipt, BarChart3, ListTree, UserCog, Sparkles, MapPin, ShieldCheck, Package, FileCheck, KeyRound, Hammer, Wallet, PenLine } from 'lucide-react'
+import { LayoutDashboard, Users, FileText, BookOpen, Calendar, ClipboardList, LogOut, Menu, X, Receipt, BarChart3, ListTree, UserCog, Sparkles, MapPin, ShieldCheck, Package, FileCheck, KeyRound, Hammer, Wallet, PenLine, Settings, ChevronDown, Link2 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/components/admin/AdminAuthGuard'
 
@@ -24,8 +24,13 @@ const nav = [
   { href: '/admin/taxes', label: 'Business Tax Center', icon: Receipt, roles: ['admin', 'bookkeeper'] },
   { href: '/admin/expenses', label: 'Expenses', icon: Wallet, roles: ['admin'] },
   { href: '/admin/notepad', label: 'Notepad', icon: PenLine, roles: ['admin'] },
-  { href: '/admin/vault', label: 'Account Vault', icon: KeyRound, roles: ['admin'] },
-  { href: '/admin/users', label: 'User Management', icon: UserCog, roles: ['admin'] },
+]
+
+// Admin-only "Settings" group: users, the password vault and the Google connection.
+const settingsNav = [
+  { href: '/admin/users', label: 'Users', icon: UserCog },
+  { href: '/admin/vault', label: 'Account Vault', icon: KeyRound },
+  { href: '/admin/google-connect', label: 'Google Connection', icon: Link2 },
 ]
 
 function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
@@ -39,6 +44,10 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   }
 
   const visibleNav = nav.filter(n => !role || n.roles.includes(role))
+  const showSettings = !role || role === 'admin'
+  const inSettings = settingsNav.some(c => pathname.startsWith(c.href))
+  const [settingsOpen, setSettingsOpen] = useState(inSettings)
+  useEffect(() => { if (inSettings) setSettingsOpen(true) }, [inSettings])
 
   // New (pending) schedule requests → count badge on that menu item. Refreshes on
   // navigation, every minute, and instantly when the requests page changes one.
@@ -85,6 +94,32 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
             </Link>
           )
         })}
+        {showSettings && (
+          <div className="pt-1">
+            <button onClick={() => setSettingsOpen(o => !o)}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all text-sm font-medium hover:text-white hover:bg-white/10`}
+              style={{ background: inSettings && !settingsOpen ? 'rgba(255,255,255,0.2)' : 'transparent', color: inSettings ? 'white' : 'rgba(255,255,255,0.65)' }}>
+              <Settings size={17} className="flex-shrink-0" />
+              Settings
+              <ChevronDown size={15} className={`ml-auto transition-transform ${settingsOpen ? 'rotate-180' : ''}`} />
+            </button>
+            {settingsOpen && (
+              <div className="mt-0.5 ml-4 pl-3 border-l border-white/15 space-y-0.5">
+                {settingsNav.map(({ href, label, icon: Icon }) => {
+                  const active = pathname.startsWith(href)
+                  return (
+                    <Link key={href} href={href} onClick={onNavigate}
+                      className={`flex items-center gap-2.5 px-3 py-2 rounded-lg transition-all text-[13px] font-medium ${active ? 'text-white' : 'hover:text-white hover:bg-white/10'}`}
+                      style={{ background: active ? 'rgba(255,255,255,0.2)' : 'transparent', color: active ? 'white' : 'rgba(255,255,255,0.65)' }}>
+                      <Icon size={15} className="flex-shrink-0" />
+                      {label}
+                    </Link>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        )}
       </nav>
       <div className="px-2 py-4 border-t border-white/10">
         <button onClick={logout}
