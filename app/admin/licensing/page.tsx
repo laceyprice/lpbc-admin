@@ -1,6 +1,7 @@
 'use client'
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
+import RecordFiles from '@/components/admin/RecordFiles'
 import {
   Award, Plus, Search, Edit2, Trash2, X, Save, Loader2, Calendar,
   Building2, AlertTriangle, CheckCircle2, ExternalLink, Globe, FileCheck,
@@ -367,6 +368,11 @@ export default function LicensingPage() {
               <div className="col-span-2 flex items-center gap-2">
                 <input type="checkbox" id="fee_paid" checked={form.fee_paid || false} onChange={e => setForm(p => ({ ...p, fee_paid: e.target.checked }))} />
                 <label htmlFor="fee_paid" className="text-sm text-gray-700">Fee paid</label>
+              </div>
+              <div className="col-span-2">
+                {editing
+                  ? <RecordFiles entityType="license" entityId={editing.id} brand="#b8895a" />
+                  : <p className="text-xs text-gray-400 bg-gray-50 rounded-xl px-3 py-2.5">Save the license first, then edit it to attach scans, photos or files from Google Drive.</p>}
               </div>
             </div>
             <div className="sticky bottom-0 bg-white flex justify-end gap-2 px-6 py-4 border-t border-gray-100">

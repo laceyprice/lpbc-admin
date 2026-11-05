@@ -1,6 +1,7 @@
 'use client'
 import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
+import RecordFiles from '@/components/admin/RecordFiles'
 import {
   FileCheck, Plus, Search, RefreshCw, Mail, Sparkles, ChevronRight,
   Edit2, Trash2, X, Save, ExternalLink, Phone, Globe, MapPin,
@@ -586,6 +587,7 @@ function PermitDetail({ permit, jurisdictions, onEdit, onDelete, onClose }: {
               <p className="text-sm text-gray-700 whitespace-pre-wrap bg-gray-50 rounded-lg p-3">{permit.notes}</p>
             </div>
           )}
+          <RecordFiles entityType="permit" entityId={permit.id} brand="#b8895a" />
         </div>
 
         <div className="flex justify-between p-5 border-t">

@@ -22,9 +22,13 @@ interface DrivePickerProps {
   defaultTarget?: ImportTarget
   defaultAccountId?: string | null
   accounts?: Array<{ id: string; name: string }>
+  // Attach mode: instead of the receipt/check/document import, hand each chosen file to this
+  // callback (used to attach Drive files to a license or permit). Throw to report a failure.
+  onPickFile?: (file: DriveFile) => Promise<void>
+  brand?: string
 }
 
-export default function DrivePicker({ open, onClose, onImported, defaultTarget = 'receipt', defaultAccountId = null, accounts = [] }: DrivePickerProps) {
+export default function DrivePicker({ open, onClose, onImported, defaultTarget = 'receipt', defaultAccountId = null, accounts = [], onPickFile, brand }: DrivePickerProps) {
   const [folderId, setFolderId] = useState<string>('root')
   const [folderName, setFolderName] = useState<string>('My Drive')
   const [stack, setStack] = useState<Array<{ id: string; name: string }>>([])
@@ -94,6 +98,7 @@ export default function DrivePicker({ open, onClose, onImported, defaultTarget =
       const file = files.find(f => f.id === id)
       if (!file) continue
       try {
+        if (onPickFile) { await onPickFile(file); imported++; continue }
         const res = await fetch('/api/google-drive?action=import', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -115,7 +120,7 @@ export default function DrivePicker({ open, onClose, onImported, defaultTarget =
     }
     setImporting(false)
     setSelected(new Set())
-    alert(`Imported ${imported} file${imported === 1 ? '' : 's'}${failed ? `, ${failed} failed` : ''}.`)
+    alert(`${onPickFile ? 'Attached' : 'Imported'} ${imported} file${imported === 1 ? '' : 's'}${failed ? `, ${failed} failed` : ''}.`)
     if (imported > 0) onClose()
   }
 
@@ -132,7 +137,7 @@ export default function DrivePicker({ open, onClose, onImported, defaultTarget =
         <div className="flex items-center justify-between px-5 py-4 border-b" style={{ background: '#2f5a5e', color: 'white', borderRadius: '1rem 1rem 0 0' }}>
           <div className="flex items-center gap-3">
             <Folder size={20} />
-            <h2 className="font-bold text-lg">Import from Google Drive</h2>
+            <h2 className="font-bold text-lg">{onPickFile ? 'Attach from Google Drive' : 'Import from Google Drive'}</h2>
           </div>
           <button onClick={onClose} className="hover:bg-white/10 rounded p-1"><X size={20} /></button>
         </div>
@@ -213,14 +218,14 @@ export default function DrivePicker({ open, onClose, onImported, defaultTarget =
 
         {/* Footer / import controls */}
         <div className="border-t bg-gray-50 px-5 py-3 flex flex-wrap items-center gap-3">
-          <label className="text-xs text-gray-600">Import as:</label>
-          <select value={target} onChange={e => setTarget(e.target.value as ImportTarget)} className="text-sm border rounded px-2 py-1">
+          {!onPickFile && <label className="text-xs text-gray-600">Import as:</label>}
+          {!onPickFile && <select value={target} onChange={e => setTarget(e.target.value as ImportTarget)} className="text-sm border rounded px-2 py-1">
             <option value="receipt">Receipt</option>
             <option value="check">Check</option>
             <option value="statement">Bank Statement</option>
             <option value="document">Document / COI</option>
-          </select>
-          {(target === 'receipt' || target === 'check') && accounts.length > 0 && (
+          </select>}
+          {!onPickFile && (target === 'receipt' || target === 'check') && accounts.length > 0 && (
             <select value={accountId || ''} onChange={e => setAccountId(e.target.value || null)} className="text-sm border rounded px-2 py-1">
               <option value="">— Unassigned account —</option>
               {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
@@ -234,7 +239,7 @@ export default function DrivePicker({ open, onClose, onImported, defaultTarget =
             className="px-4 py-2 rounded text-white font-medium text-sm disabled:opacity-40"
             style={{ background: '#b8895a' }}
           >
-            {importing ? <><Loader2 className="animate-spin inline mr-1" size={14} /> Importing…</> : <><Download size={14} className="inline mr-1" /> Import {selected.size > 0 ? selected.size : ''}</>}
+            {importing ? <><Loader2 className="animate-spin inline mr-1" size={14} /> Working…</> : <><Download size={14} className="inline mr-1" /> {onPickFile ? 'Attach' : 'Import'} {selected.size > 0 ? selected.size : ''}</>}
           </button>
         </div>
       </div>

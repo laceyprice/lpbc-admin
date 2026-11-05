@@ -22,3 +22,20 @@ export async function requireAdmin(req: NextRequest): Promise<NextResponse | nul
   if (role !== 'admin') return NextResponse.json({ error: 'Admin only' }, { status: 403 })
   return null
 }
+
+// Like requireAdmin, but lets the listed roles through (e.g. ['admin', 'bookkeeper'] for
+// licensing/permit documents, which the bookkeeper also manages). Customers and
+// invoicing-only users are refused.
+export async function requireRole(req: NextRequest, allowed: string[]): Promise<NextResponse | null> {
+  const token = req.headers.get('authorization')?.replace(/^Bearer\s+/i, '')
+  if (!token) return NextResponse.json({ error: 'Not signed in' }, { status: 401 })
+
+  const supabase = createServerClient()
+  const { data, error } = await supabase.auth.getUser(token)
+  if (error || !data?.user) return NextResponse.json({ error: 'Invalid or expired session' }, { status: 401 })
+
+  const { data: roleRow } = await supabase.from('user_roles').select('role').eq('user_id', data.user.id).maybeSingle()
+  const role = roleRow?.role || 'admin'
+  if (!allowed.includes(role)) return NextResponse.json({ error: 'Not allowed' }, { status: 403 })
+  return null
+}
