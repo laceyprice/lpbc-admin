@@ -55,14 +55,12 @@ export default function AdminDashboard() {
 
   const cards = data ? [
     { label: 'Outstanding Invoices', value: formatCurrency(data.openAmt), icon: FileText, color: '#d97706', href: '/admin/invoices' },
+    { label: data.overdueCount ? `Overdue (${data.overdueCount} invoice${data.overdueCount === 1 ? '' : 's'})` : 'Overdue', value: formatCurrency(data.overdueAmt), icon: AlertCircle, color: data.overdueCount ? '#dc2626' : '#0f766e', href: role === 'invoicing' ? '/admin/invoices' : '/admin/collections' },
     { label: 'Invoiced This Month', value: formatCurrency(data.invoicedMonth), icon: Receipt, color: '#b8895a', href: '/admin/invoices' },
     { label: 'Invoiced Last Month', value: formatCurrency(data.invoicedLastMonth), icon: Receipt, color: '#a97846', href: '/admin/invoices' },
     { label: 'Collected This Month', value: formatCurrency(data.paidMonth), icon: DollarSign, color: '#16a34a', href: '/admin/invoices' },
     { label: 'Collected Last Month', value: formatCurrency(data.paidLastMonth), icon: DollarSign, color: '#0d9488', href: '/admin/invoices' },
     { label: 'Collected YTD', value: formatCurrency(data.paidYTD), icon: TrendingUp, color: '#059669', href: '/admin/invoices' },
-    { label: 'Pending Requests', value: data.pending.toString(), icon: ClipboardList, color: '#7c3aed', href: '/admin/schedule-requests' },
-    { label: 'Calendar', value: 'View →', icon: Calendar, color: '#0891b2', href: '/admin/calendar' },
-    { label: data.overdueCount ? `Overdue (${data.overdueCount} invoice${data.overdueCount === 1 ? '' : 's'})` : 'Overdue', value: formatCurrency(data.overdueAmt), icon: AlertCircle, color: data.overdueCount ? '#dc2626' : '#0f766e', href: role === 'invoicing' ? '/admin/invoices' : '/admin/collections' },
   ] : []
 
   return (
@@ -79,8 +77,10 @@ export default function AdminDashboard() {
           </button>
         )}
       </div>
+      <h2 className="text-[11px] font-bold uppercase tracking-wider text-gray-400 mb-2">Today</h2>
       <TodayPanel brand="#b8895a" showEvents={role !== 'invoicing'} />
-      <div className="grid grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
+      <h2 className="text-[11px] font-bold uppercase tracking-wider text-gray-400 mb-2 mt-2">Money</h2>
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
         {data ? cards.map(({ label, value, icon: Icon, color, href }) => (
           <Link key={label} href={href} className="rounded-2xl p-5 text-white shadow-md hover:shadow-lg hover:-translate-y-0.5 transition-all"
             style={{ background: color }}>
@@ -88,10 +88,12 @@ export default function AdminDashboard() {
             <div className="text-2xl font-extrabold">{value}</div>
             <div className="text-sm mt-0.5 opacity-80">{label}</div>
           </Link>
-        )) : [...Array(9)].map((_, i) => <div key={i} className="h-28 rounded-2xl bg-gray-200 animate-pulse" />)}
+        )) : [...Array(7)].map((_, i) => <div key={i} className="h-28 rounded-2xl bg-gray-200 animate-pulse" />)}
       </div>
+      <h2 className="text-[11px] font-bold uppercase tracking-wider text-gray-400 mb-2">Needs attention</h2>
+      <div className="grid lg:grid-cols-2 gap-4 items-start">
       {data && (
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden mb-8">
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
           <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
             <h2 className="font-bold text-gray-900 flex items-center gap-2">
               New Schedule Requests
@@ -136,6 +138,7 @@ export default function AdminDashboard() {
           ))}
         </div>
       )}
+      </div>
     </div>
   )
 }
