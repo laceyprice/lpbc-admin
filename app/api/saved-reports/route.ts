@@ -39,7 +39,9 @@ export async function POST(req: NextRequest) {
   // Fetch the report data from the existing reports API
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
   const params = new URLSearchParams({ type: report_type, from, to, year: String(year || new Date(from).getFullYear()) })
-  const res = await fetch(`${appUrl}/api/reports?${params}`)
+  // Server-to-server call into our own (now locked) API: pass the caller's token along.
+  const authz = req.headers.get('authorization')
+  const res = await fetch(`${appUrl}/api/reports?${params}`, { headers: authz ? { Authorization: authz } : {} })
   if (!res.ok) return NextResponse.json({ error: 'Failed to generate report' }, { status: 500 })
   const report_data = await res.json()
   if (report_data.error) return NextResponse.json({ error: report_data.error }, { status: 500 })

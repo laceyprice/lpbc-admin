@@ -11,12 +11,17 @@ function getTimeFrame(startTime: string): string {
   return 'Afternoon (PM Working Hours)'
 }
 
+// GET /api/appointments                       → everything (calendar page: -2 / +4 months of Google events)
+// GET /api/appointments?from=ISO&to=ISO       → just that window (dashboard "today" list) — much lighter
 export async function GET(req: NextRequest) {
   const supabase = createServerClient()
-  const { data, error } = await supabase
-    .from('appointments')
-    .select('*')
-    .order('start_time', { ascending: true })
+  const from = req.nextUrl.searchParams.get('from')
+  const to = req.nextUrl.searchParams.get('to')
+  const validDate = (s: string | null) => !!s && !isNaN(new Date(s).getTime())
+  const ranged = validDate(from) && validDate(to)
+  let q = supabase.from('appointments').select('*')
+  if (ranged) q = q.gte('start_time', from!).lt('start_time', to!)
+  const { data, error } = await q.order('start_time', { ascending: true })
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   const appts = data || []
 
@@ -24,8 +29,8 @@ export async function GET(req: NextRequest) {
   // that aren't already app appointments (dedupe by the linked Google event id).
   try {
     const now = new Date()
-    const timeMin = new Date(now.getFullYear(), now.getMonth() - 2, 1).toISOString()
-    const timeMax = new Date(now.getFullYear(), now.getMonth() + 4, 0).toISOString()
+    const timeMin = ranged ? new Date(from!).toISOString() : new Date(now.getFullYear(), now.getMonth() - 2, 1).toISOString()
+    const timeMax = ranged ? new Date(to!).toISOString() : new Date(now.getFullYear(), now.getMonth() + 4, 0).toISOString()
     const linked = new Set(appts.map((a: any) => a.google_calendar_event_id).filter(Boolean))
     const gEvents = await listGoogleCalendarEvents(timeMin, timeMax)
     const googleOnly = gEvents

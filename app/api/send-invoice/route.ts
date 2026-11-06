@@ -115,6 +115,7 @@ export async function POST(req: NextRequest) {
       customerName: invoice.customer_name,
       invoiceNumber: invoice.invoice_number,
       invoiceType: invoice.invoice_type || 'invoice',
+      publicToken: invoice.public_token,
       amountDue: invoice.amount_due,
       dueDate: invoice.due_date,
       serviceDescription: invoice.service_description,

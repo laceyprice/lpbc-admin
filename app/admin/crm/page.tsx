@@ -85,8 +85,8 @@ export default function CRMPage() {
   const inputCls = 'w-full px-3 py-2.5 rounded-xl border border-gray-200 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:border-blue-400'
 
   return (
-    <div className="p-6 md:p-8 pt-16 md:pt-8 h-full">
-      <div className="flex items-center justify-between mb-4">
+    <div className="p-4 md:p-8 pt-16 md:pt-8 h-full">
+      <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
         <div><h1 className="text-2xl font-extrabold text-gray-900">CRM</h1><p className="text-gray-500 text-sm">{tab === 'contacts' ? `${contacts.length} contacts` : 'Email inbox'}</p></div>
         {tab === 'contacts' && (
           <div className="flex gap-3">
@@ -118,8 +118,8 @@ export default function CRMPage() {
         <Search size={15} className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" />
         <input value={search} onChange={e => setSearch(e.target.value)} onKeyDown={e => e.key==='Enter' && fetch(search)} placeholder="Search by name, email, phone..." className="w-full pl-11 pr-4 py-3 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:border-blue-400" />
       </div>
-      <div className="flex gap-5 h-[calc(100vh-240px)]">
-        <div className={`flex flex-col overflow-hidden rounded-2xl bg-white shadow-sm border border-gray-100 ${selected ? 'w-2/5' : 'w-full'}`}>
+      <div className="flex gap-5 h-[calc(100dvh-270px)] md:h-[calc(100vh-240px)]">
+        <div className={`flex-col overflow-hidden rounded-2xl bg-white shadow-sm border border-gray-100 ${selected ? 'hidden md:flex md:w-2/5' : 'flex w-full'}`}>
           <div className="overflow-y-auto flex-1">
             {loading ? <div className="flex items-center justify-center h-32"><Loader2 size={24} className="animate-spin" style={{ color:'#b8895a' }} /></div>
               : filtered.length === 0 ? <div className="flex flex-col items-center justify-center h-32 text-gray-400"><User size={32} className="opacity-30 mb-2" /><p className="text-sm">No contacts</p></div>
@@ -144,7 +144,8 @@ export default function CRMPage() {
         </div>
         {selected && (
           <div className="flex-1 bg-white rounded-2xl shadow-sm border border-gray-100 overflow-y-auto">
-            <div className="p-6">
+            <div className="p-4 md:p-6">
+              <button onClick={() => setSelected(null)} className="md:hidden mb-3 text-sm font-semibold text-blue-700">← All contacts</button>
               <div className="flex items-start justify-between mb-6">
                 <div className="flex items-center gap-4">
                   <div className="w-14 h-14 rounded-2xl flex items-center justify-center text-white font-extrabold text-lg" style={{ background:'linear-gradient(135deg,#c9a870,#b8895a)' }}>{selected.first_name[0]}{selected.last_name[0]}</div>
@@ -178,14 +179,14 @@ export default function CRMPage() {
               <h2 className="text-lg font-bold text-gray-900">{editing ? 'Edit Contact' : 'Add Contact'}</h2>
               <button onClick={() => setShowForm(false)}><X size={18} className="text-gray-400" /></button>
             </div>
-            <div className="p-6 grid grid-cols-2 gap-4">
+            <div className="p-4 sm:p-6 grid grid-cols-1 sm:grid-cols-2 gap-4">
               {[{l:'First Name*',k:'first_name'},{l:'Last Name*',k:'last_name'},{l:'Email',k:'email',t:'email'},{l:'Phone',k:'phone',t:'tel'},{l:'Address',k:'address',full:true},{l:'City',k:'city'},{l:'State',k:'state'},{l:'ZIP',k:'zip'},{l:'Company Name',k:'company_name',full:true}].map(({l,k,t='text',full}) => (
-                <div key={k} className={full ? 'col-span-2' : ''}>
+                <div key={k} className={full ? 'sm:col-span-2' : ''}>
                   <label className="block text-sm font-semibold text-gray-700 mb-1">{l}</label>
                   <input type={t} value={(form as any)[k]||''} onChange={e => setForm(p => ({...p,[k]:e.target.value}))} className={inputCls} />
                 </div>
               ))}
-              <div className="col-span-2">
+              <div className="sm:col-span-2">
                 <label className="block text-sm font-semibold text-gray-700 mb-1">Notes</label>
                 <textarea value={form.notes||''} onChange={e => setForm(p => ({...p,notes:e.target.value}))} rows={3} className={`${inputCls} resize-none`} />
               </div>

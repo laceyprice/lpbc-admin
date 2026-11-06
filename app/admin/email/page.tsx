@@ -291,7 +291,7 @@ export function EmailInbox({ embedded = false }: { embedded?: boolean } = {}) {
   const fmtBytes = (b: number) => b < 1024 ? `${b}B` : b < 1024 * 1024 ? `${(b / 1024).toFixed(1)}KB` : `${(b / 1024 / 1024).toFixed(1)}MB`
 
   return (
-    <div className={embedded ? 'flex flex-col h-[calc(100vh-180px)]' : 'p-6 md:p-8 pt-16 md:pt-8 h-screen flex flex-col'}>
+    <div className={embedded ? 'flex flex-col h-[calc(100dvh-215px)] md:h-[calc(100vh-180px)]' : 'p-4 md:p-8 pt-16 md:pt-8 h-[100dvh] md:h-screen flex flex-col'}>
       {!embedded && (
         <div className="flex items-center justify-between mb-4">
           <h1 className="text-2xl font-extrabold text-gray-900">Email</h1>
@@ -343,19 +343,19 @@ export function EmailInbox({ embedded = false }: { embedded?: boolean } = {}) {
         </div>
       )}
 
-      <div className="flex-1 grid grid-cols-12 gap-4 overflow-hidden">
+      <div className="flex-1 flex flex-col md:grid md:grid-cols-12 gap-3 md:gap-4 overflow-hidden min-h-0">
         {/* Folders */}
-        <div className="col-span-2 bg-white rounded-2xl border border-gray-100 p-2 overflow-y-auto">
+        <div className={`md:col-span-2 bg-white rounded-2xl border border-gray-100 p-2 flex md:block gap-1 overflow-x-auto md:overflow-x-visible md:overflow-y-auto flex-shrink-0 ${selected || loadingMsg ? 'hidden md:block' : ''}`}>
           {FOLDERS.map(({ key, label, icon: Icon }) => (
             <button key={key} onClick={() => { setFolder(key); setSelected(null) }}
-              className={`w-full flex items-center gap-2 px-3 py-2.5 rounded-xl text-sm font-semibold ${folder === key ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-50'}`}>
+              className={`md:w-full flex items-center gap-2 px-3 py-2.5 rounded-xl text-sm font-semibold whitespace-nowrap flex-shrink-0 ${folder === key ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-50'}`}>
               <Icon size={15} />{label}
             </button>
           ))}
         </div>
 
         {/* Message list */}
-        <div className="col-span-4 bg-white rounded-2xl border border-gray-100 flex flex-col overflow-hidden">
+        <div className={`md:col-span-4 bg-white rounded-2xl border border-gray-100 flex-col overflow-hidden flex-1 min-h-0 ${selected || loadingMsg ? 'hidden md:flex' : 'flex'}`}>
           <div className="p-3 border-b border-gray-100">
             <div className="relative">
               <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
@@ -384,7 +384,10 @@ export function EmailInbox({ embedded = false }: { embedded?: boolean } = {}) {
         </div>
 
         {/* Reader pane */}
-        <div className="col-span-6 bg-white rounded-2xl border border-gray-100 flex flex-col overflow-hidden">
+        <div className={`md:col-span-6 bg-white rounded-2xl border border-gray-100 flex-col overflow-hidden flex-1 min-h-0 ${selected || loadingMsg ? 'flex' : 'hidden md:flex'}`}>
+          {(selected || loadingMsg) && (
+            <button onClick={() => setSelected(null)} className="md:hidden flex items-center gap-1 px-4 py-2.5 text-sm font-semibold text-blue-700 border-b border-gray-100 text-left">← Back to {folder === 'all' ? 'All Mail' : folder}</button>
+          )}
           {loadingMsg ? <div className="flex-1 flex justify-center items-center"><Loader2 size={28} className="animate-spin text-gray-400" /></div>
             : !selected ? <div className="flex-1 flex flex-col justify-center items-center text-gray-400">
               <MailOpen size={48} className="mb-3 opacity-30" />
@@ -421,9 +424,9 @@ export function EmailInbox({ embedded = false }: { embedded?: boolean } = {}) {
                     {selected.cc && <div className="text-sm text-gray-700"><span className="font-semibold">Cc:</span> {selected.cc}</div>}
                     <div className="text-xs text-gray-500 mt-1">{selected.date}</div>
                   </div>
-                  <div className="flex-1 overflow-y-auto p-5">
+                  <div className="flex-1 overflow-y-auto overflow-x-auto p-4 md:p-5">
                     {selected.html ? (
-                      <div className="prose prose-sm max-w-none" dangerouslySetInnerHTML={{ __html: selected.html }} />
+                      <div className="prose prose-sm max-w-none [&_img]:max-w-full [&_img]:h-auto [&_table]:max-w-full" dangerouslySetInnerHTML={{ __html: selected.html }} />
                     ) : (
                       <pre className="whitespace-pre-wrap text-sm text-gray-700 font-sans">{selected.text}</pre>
                     )}
@@ -511,9 +514,9 @@ export function EmailInbox({ embedded = false }: { embedded?: boolean } = {}) {
                 className="px-5 py-4 text-sm focus:outline-none min-h-[260px]"
                 style={{ lineHeight: '1.6' }} />
             </div>
-            <div className="flex items-center justify-between px-5 py-3 border-t border-gray-100">
-              <div className="text-xs text-gray-400">From: Lacey@LaceyNPrice.com</div>
-              <div className="flex gap-2">
+            <div className="flex items-center justify-between px-4 sm:px-5 py-3 border-t border-gray-100 gap-2">
+              <div className="hidden sm:block text-xs text-gray-400">From: Lacey@LaceyNPrice.com</div>
+              <div className="flex gap-2 w-full sm:w-auto justify-end">
                 <button onClick={() => setShowCompose(false)} className="px-4 py-2 rounded-xl text-sm font-semibold text-gray-600 hover:bg-gray-100">Cancel</button>
                 <button onClick={saveDraft} disabled={sending}
                   className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold text-gray-700 bg-gray-100 hover:bg-gray-200 disabled:opacity-50">

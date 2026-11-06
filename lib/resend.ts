@@ -44,8 +44,8 @@ function invoiceHtml(content: string) {
   </div>`
 }
 
-export async function sendInvoiceEmail({ to, customerName, invoiceNumber, invoiceType, amountDue, dueDate, serviceDescription, jobAddress, jobsiteCity, companyName, paymentUrl, isPaid, cc }: {
-  to: string; customerName: string; invoiceNumber: string; invoiceType?: string
+export async function sendInvoiceEmail({ to, customerName, invoiceNumber, publicToken, invoiceType, amountDue, dueDate, serviceDescription, jobAddress, jobsiteCity, companyName, paymentUrl, isPaid, cc }: {
+  to: string; customerName: string; invoiceNumber: string; publicToken?: string | null; invoiceType?: string
   amountDue: number; dueDate?: string; serviceDescription?: string; jobAddress?: string
   jobsiteCity?: string; companyName?: string; paymentUrl?: string; isPaid?: boolean
   cc?: string | string[] | null
@@ -66,7 +66,8 @@ export async function sendInvoiceEmail({ to, customerName, invoiceNumber, invoic
       : 'Attached is an invoice for completed services. Please let us know if you have any questions or if we can do anything else to serve you.'
 
   const fullAddress = [jobAddress, jobsiteCity].filter(Boolean).join(', ')
-  const pdfUrl = `${APP}/api/invoice-pdf?id=${encodeURIComponent(invoiceNumber)}`
+  const tokenQs = publicToken ? `&t=${encodeURIComponent(publicToken)}` : ''
+  const pdfUrl = `${APP}/api/invoice-pdf?id=${encodeURIComponent(invoiceNumber)}${tokenQs}`
 
   // Amount row: green PAID badge when paid, brand-colored Amount Due when unpaid
   const amountRow = isPaid
@@ -98,7 +99,7 @@ export async function sendInvoiceEmail({ to, customerName, invoiceNumber, invoic
       ` : ''}
 
       ${isQuote && !isPaid ? `
-      <div style="text-align:center;margin:24px 0"><a href="${APP}/api/approve-quote?id=${encodeURIComponent(invoiceNumber)}" style="background:#16a34a;color:white;padding:14px 32px;border-radius:8px;text-decoration:none;font-size:16px;font-weight:bold;display:inline-block">Approve Quote</a></div>
+      <div style="text-align:center;margin:24px 0"><a href="${APP}/api/approve-quote?id=${encodeURIComponent(invoiceNumber)}${tokenQs}" style="background:#16a34a;color:white;padding:14px 32px;border-radius:8px;text-decoration:none;font-size:16px;font-weight:bold;display:inline-block">Approve Quote</a></div>
       ` : ''}
 
       ${!isQuote && !isPaid && paymentUrl ? `

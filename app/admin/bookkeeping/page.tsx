@@ -1663,7 +1663,7 @@ function BookkeepingPage() {
               </span>
             )}
           </div>
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div className="bg-green-50 border border-green-100 rounded-2xl p-4"><div className="flex items-center gap-2 mb-2"><TrendingUp size={15} className="text-green-600" /><span className="text-xs font-bold text-green-700 uppercase tracking-wider">Income</span></div><div className="text-2xl font-extrabold text-green-700">{formatCurrency(income)}</div></div>
             <div className="bg-red-50 border border-red-100 rounded-2xl p-4"><div className="flex items-center gap-2 mb-2"><TrendingDown size={15} className="text-red-600" /><span className="text-xs font-bold text-red-700 uppercase tracking-wider">Expenses</span></div><div className="text-2xl font-extrabold text-red-700">{formatCurrency(expenses)}</div></div>
             <div className={`${net>=0?'bg-blue-50 border-blue-100':'bg-orange-50 border-orange-100'} border rounded-2xl p-4`}><div className="flex items-center gap-2 mb-2"><DollarSign size={15} className={net>=0?'text-blue-600':'text-orange-600'} /><span className={`text-xs font-bold uppercase tracking-wider ${net>=0?'text-blue-700':'text-orange-700'}`}>Net</span></div><div className={`text-2xl font-extrabold ${net>=0?'text-blue-700':'text-orange-700'}`}>{net < 0 ? '-' : ''}{formatCurrency(Math.abs(net))}</div></div>

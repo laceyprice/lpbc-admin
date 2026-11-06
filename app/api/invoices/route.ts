@@ -67,7 +67,11 @@ export async function GET(req: NextRequest) {
   const supabase = createServerClient()
   const status = req.nextUrl.searchParams.get('status')
   const type = req.nextUrl.searchParams.get('type')
-  let query = supabase.from('invoices').select('*').order('created_at', { ascending: false })
+  // ?view=summary → only the columns the dashboard totals need (much smaller than select('*'))
+  const cols = req.nextUrl.searchParams.get('view') === 'summary'
+    ? 'id,invoice_number,invoice_type,invoice_status,customer_name,amount_due,amount_paid,created_at,due_date,paid_at,service_date'
+    : '*'
+  let query = supabase.from('invoices').select(cols).order('created_at', { ascending: false })
   if (status) query = query.eq('invoice_status', status)
   if (type) query = query.eq('invoice_type', type)
   const { data, error } = await query

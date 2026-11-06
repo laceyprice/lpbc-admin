@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useState, useRef } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { Plus, Search, Send, CheckCircle, FileText, Loader2, X, Save, Edit3, Trash2, Upload, Camera, Receipt, FileImage, BarChart2, TrendingUp, DollarSign, Clock, AlertCircle, ExternalLink, RotateCcw } from 'lucide-react'
+import { Plus, Search, Send, CheckCircle, FileText, Loader2, X, Save, Edit3, Trash2, Upload, Camera, Receipt, FileImage, BarChart2, TrendingUp, DollarSign, Clock, AlertCircle, ExternalLink, RotateCcw, Star } from 'lucide-react'
 import { formatCurrency, formatDateShort, formatPhone, generateDocNumber } from '@/lib/utils'
 import { SERVICES } from '@/lib/constants'
 
@@ -15,11 +15,19 @@ interface InvoiceAttachment {
 }
 
 interface Contact { id: string; first_name: string; last_name: string; email: string; phone: string; address: string }
-interface Invoice { id: string; invoice_number: string; invoice_type: string; customer_name: string; customer_email: string; customer_phone: string; job_address: string; service_date: string; service_type: string; service_description: string; amount_due: number; amount_paid: number; invoice_status: string; payment_type: string; stripe_payment_link: string; contact_id: string; created_at: string; paid_at: string; sent_at?: string; last_sent_at?: string }
+interface Invoice { id: string; invoice_number: string; invoice_type: string; customer_name: string; customer_email: string; customer_phone: string; job_address: string; service_date: string; service_type: string; service_description: string; amount_due: number; amount_paid: number; invoice_status: string; payment_type: string; stripe_payment_link: string; contact_id: string; created_at: string; paid_at: string; public_token?: string; sent_at?: string; last_sent_at?: string }
 
 const SC: Record<string, string> = { draft:'bg-gray-100 text-gray-600', sent:'bg-blue-100 text-blue-700', paid:'bg-green-100 text-green-700', overdue:'bg-red-100 text-red-700', approved:'bg-emerald-100 text-emerald-700' }
 
 export default function InvoicesPage() {
+  async function askReview(inv: any) {
+    if (!confirm(`Ask ${inv.customer_name} for a Google review? They'll get a text (or an email if there's no phone).`)) return
+    try {
+      const r = await fetch('/api/notify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: 'review', invoice_id: inv.id }) })
+      const d = await r.json().catch(() => ({}))
+      alert(r.ok ? `Review request sent by ${d.via}.` : (d.error || 'Could not send'))
+    } catch { alert('Could not send') }
+  }
   const [invoices, setInvoices] = useState<Invoice[]>([])
   const [allInvoices, setAllInvoices] = useState<Invoice[]>([]) // unfiltered — for header totals
   const [contacts, setContacts] = useState<Contact[]>([])
@@ -468,7 +476,10 @@ export default function InvoicesPage() {
                           </button>
                         )}
                         <button onClick={() => { setForm({...inv}); loadAttachments(inv.id); setShowForm(true) }} className="p-1.5 rounded-lg bg-gray-50 text-gray-600 hover:bg-gray-100 transition-colors"><FileText size={13} /></button>
-                        <a href={`/api/invoice-pdf?id=${inv.invoice_number}`} target="_blank" rel="noreferrer" title="View PDF"
+                        {inv.invoice_status === 'paid' && inv.invoice_type !== 'quote' && (
+                          <button onClick={() => askReview(inv)} title="Ask for a Google review" className="p-1.5 rounded-lg bg-yellow-50 text-yellow-600 hover:bg-yellow-100 transition-colors"><Star size={13} /></button>
+                        )}
+                        <a href={`/api/invoice-pdf?id=${inv.invoice_number}${inv.public_token ? `&t=${inv.public_token}` : ''}`} target="_blank" rel="noreferrer" title="View PDF"
                           className="p-1.5 rounded-lg bg-orange-50 text-orange-600 hover:bg-orange-100 transition-colors">
                           <ExternalLink size={13} />
                         </a>
@@ -577,7 +588,7 @@ export default function InvoicesPage() {
                 )}
               </div>
 
-              <a href={`/api/invoice-pdf?id=${selected.invoice_number}`} target="_blank" rel="noreferrer"
+              <a href={`/api/invoice-pdf?id=${selected.invoice_number}${selected.public_token ? `&t=${selected.public_token}` : ''}`} target="_blank" rel="noreferrer"
                 className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl font-semibold border-2 border-orange-200 text-orange-600 hover:bg-orange-50 transition-colors">
                 <ExternalLink size={14} />View / Print PDF
               </a>

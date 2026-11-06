@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react'
 import Image from 'next/image'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { LayoutDashboard, Users, FileText, BookOpen, Calendar, ClipboardList, LogOut, Menu, X, Receipt, BarChart3, ListTree, UserCog, Sparkles, MapPin, ShieldCheck, Package, FileCheck, KeyRound, Hammer, Wallet, PenLine, Settings, ChevronDown, Link2 } from 'lucide-react'
+import { LayoutDashboard, Users, FileText, BookOpen, Calendar, ClipboardList, LogOut, Menu, X, Receipt, BarChart3, ListTree, UserCog, Sparkles, MapPin, ShieldCheck, Package, FileCheck, KeyRound, Hammer, Wallet, PenLine, Settings, ChevronDown, Link2, Briefcase, Repeat, Car, ClipboardCheck, Banknote, TrendingUp as ProfitIcon, SlidersHorizontal } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/components/admin/AdminAuthGuard'
 
@@ -26,9 +26,20 @@ const nav = [
   { href: '/admin/notepad', label: 'Notepad', icon: PenLine, roles: ['admin'] },
 ]
 
+// "Operations" group (admin + bookkeeper): money-in/money-out tools and field records.
+const opsNav = [
+  { href: '/admin/collections', label: 'Collections', icon: Banknote },
+  { href: '/admin/job-profit', label: 'Job Profit', icon: ProfitIcon },
+  { href: '/admin/agreements', label: 'Service Agreements', icon: Repeat },
+  { href: '/admin/checklists', label: 'Safety Checklists', icon: ClipboardCheck },
+  { href: '/admin/subcontractors', label: 'Subcontractors', icon: Hammer },
+  { href: '/admin/mileage', label: 'Mileage', icon: Car },
+]
+
 // Admin-only "Settings" group: users, the password vault and the Google connection.
 const settingsNav = [
   { href: '/admin/users', label: 'Users', icon: UserCog },
+  { href: '/admin/business-settings', label: 'Business Settings', icon: SlidersHorizontal },
   { href: '/admin/vault', label: 'Account Vault', icon: KeyRound },
   { href: '/admin/google-connect', label: 'Google Connection', icon: Link2 },
 ]
@@ -48,6 +59,10 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const inSettings = settingsNav.some(c => pathname.startsWith(c.href))
   const [settingsOpen, setSettingsOpen] = useState(inSettings)
   useEffect(() => { if (inSettings) setSettingsOpen(true) }, [inSettings])
+  const showOps = !role || role === 'admin' || role === 'bookkeeper'
+  const inOps = opsNav.some(c => pathname.startsWith(c.href))
+  const [opsOpen, setOpsOpen] = useState(inOps)
+  useEffect(() => { if (inOps) setOpsOpen(true) }, [inOps])
 
   // New (pending) schedule requests → count badge on that menu item. Refreshes on
   // navigation, every minute, and instantly when the requests page changes one.
@@ -94,6 +109,32 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
             </Link>
           )
         })}
+        {showOps && (
+          <div className="pt-1">
+            <button onClick={() => setOpsOpen(o => !o)}
+              className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all text-sm font-medium hover:text-white hover:bg-white/10"
+              style={{ background: inOps && !opsOpen ? 'rgba(255,255,255,0.2)' : 'transparent', color: inOps ? 'white' : 'rgba(255,255,255,0.65)' }}>
+              <Briefcase size={17} className="flex-shrink-0" />
+              Operations
+              <ChevronDown size={15} className={`ml-auto transition-transform ${opsOpen ? 'rotate-180' : ''}`} />
+            </button>
+            {opsOpen && (
+              <div className="mt-0.5 ml-4 pl-3 border-l border-white/15 space-y-0.5">
+                {opsNav.map(({ href, label, icon: Icon }) => {
+                  const active = pathname.startsWith(href)
+                  return (
+                    <Link key={href} href={href} onClick={onNavigate}
+                      className={`flex items-center gap-2.5 px-3 py-2 rounded-lg transition-all text-[13px] font-medium ${active ? 'text-white' : 'hover:text-white hover:bg-white/10'}`}
+                      style={{ background: active ? 'rgba(255,255,255,0.2)' : 'transparent', color: active ? 'white' : 'rgba(255,255,255,0.65)' }}>
+                      <Icon size={15} className="flex-shrink-0" />
+                      {label}
+                    </Link>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        )}
         {showSettings && (
           <div className="pt-1">
             <button onClick={() => setSettingsOpen(o => !o)}

@@ -183,7 +183,7 @@ export async function POST(req: NextRequest) {
     const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
     fetch(`${appUrl}/api/parse-receipt`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...(req.headers.get('authorization') ? { Authorization: req.headers.get('authorization')! } : {}) },
       body: JSON.stringify({ image_id: row.id }),
     }).catch(() => { /* non-blocking — UI polls separately */ })
 

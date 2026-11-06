@@ -507,7 +507,7 @@ export default function WorksitesPage() {
               ].filter(Boolean).sort((a: string, b: string) => b.localeCompare(a))
               const lastActivity = allDates[0] || null
               return (
-                <div className="grid grid-cols-4 gap-3 mb-5">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
                   <div className="bg-white rounded-2xl border border-gray-100 p-4 shadow-sm">
                     <div className="text-2xl font-extrabold" style={{ color: '#b8895a' }}>{totalInvoices}</div>
                     <div className="text-xs text-gray-500 mt-0.5">Invoices</div>

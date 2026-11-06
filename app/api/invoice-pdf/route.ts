@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 export const dynamic = 'force-dynamic'
 import { createServerClient } from '@/lib/supabase'
+import { canViewPublic } from '@/lib/public-link'
 
 // Handle CORS preflight
 export async function OPTIONS() {
@@ -28,7 +29,7 @@ export async function GET(req: NextRequest) {
     .eq('invoice_number', invoiceNumber)
     .single()
 
-  if (error || !invoice) {
+  if (error || !invoice || !canViewPublic(invoice, searchParams.get('t'))) {
     return NextResponse.json({ error: 'Invoice not found' }, { status: 404 })
   }
 

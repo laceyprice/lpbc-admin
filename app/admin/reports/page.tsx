@@ -762,7 +762,7 @@ function PnLReport({ data }: { data: any }) {
   return (
     <div className="space-y-6">
       {/* Summary Cards */}
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <SummaryCard icon={TrendingUp} label="Revenue" value={data.totalRevenue} color="green" />
         <SummaryCard icon={TrendingDown} label="Expenses" value={data.totalExpenses} color="red" />
         <SummaryCard icon={DollarSign} label="Distributions" value={data.totalDistributions} color="orange" />
@@ -808,7 +808,7 @@ function PnLReport({ data }: { data: any }) {
 function BalanceSheetReport({ data }: { data: any }) {
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <SummaryCard icon={DollarSign} label="Total Assets" value={data.totalAssets} color="blue" />
         <SummaryCard icon={Scale} label="Total Liabilities" value={data.totalLiabilities} color="red" />
         <SummaryCard icon={DollarSign} label="Total Equity" value={data.totalEquity + data.netIncome} color="green" />
@@ -837,7 +837,7 @@ function BalanceSheetReport({ data }: { data: any }) {
 function CashFlowReport({ data }: { data: any }) {
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <SummaryCard icon={TrendingUp} label="Total Inflows" value={data.totalInflows} color="green" />
         <SummaryCard icon={TrendingDown} label="Total Outflows" value={data.totalOutflows} color="red" />
         <SummaryCard icon={DollarSign} label="Net Cash Flow" value={data.netCashFlow} color={data.netCashFlow >= 0 ? 'blue' : 'red'} />
@@ -926,7 +926,7 @@ function ReconciliationReport({ data, onRefresh }: { data: any; onRefresh: () =>
         <StatCard label="Unreconciled" value={data.unreconciledCount} warn={data.unreconciledCount > 0} />
       </div>
 
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <SummaryCard icon={DollarSign} label="Bank Total" value={data.bankTotal} color="blue" />
         <SummaryCard icon={DollarSign} label="Accounting Total" value={data.accountingTotal} color="blue" />
         <SummaryCard icon={ArrowRightLeft} label="Difference" value={data.difference} color={Math.abs(data.difference) < 0.01 ? 'green' : 'red'} />

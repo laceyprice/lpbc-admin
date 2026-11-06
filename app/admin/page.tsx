@@ -1,14 +1,18 @@
 'use client'
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { DollarSign, Receipt, FileText, Calendar, ClipboardList, TrendingUp } from 'lucide-react'
+import { DollarSign, Receipt, FileText, Calendar, ClipboardList, TrendingUp, Plus, AlertCircle } from 'lucide-react'
 import { formatCurrency, formatDateShort } from '@/lib/utils'
+import TodayPanel from '@/components/admin/TodayPanel'
+import { balance, daysPastDue } from '@/lib/collections'
+import { useAuth } from '@/components/admin/AdminAuthGuard'
 
 export default function AdminDashboard() {
-  const [data, setData] = useState<{ invoicedMonth: number; invoicedLastMonth: number; openAmt: number; paidMonth: number; paidLastMonth: number; paidYTD: number; pending: number; requests: any[]; invoices: any[] } | null>(null)
+  const { role } = useAuth()
+  const [data, setData] = useState<{ invoicedMonth: number; invoicedLastMonth: number; openAmt: number; paidMonth: number; paidLastMonth: number; paidYTD: number; overdueAmt: number; overdueCount: number; pending: number; requests: any[]; invoices: any[] } | null>(null)
 
   useEffect(() => {
-    Promise.all([fetch('/api/invoices'), fetch('/api/schedule?status=pending')]).then(async ([i, r]) => {
+    Promise.all([fetch('/api/invoices?view=summary'), fetch('/api/schedule?status=pending')]).then(async ([i, r]) => {
       const invoicesRaw = await i.json()
       const requestsRaw = await r.json()
       const invoices = Array.isArray(invoicesRaw) ? invoicesRaw : []
@@ -41,7 +45,9 @@ export default function AdminDashboard() {
         .reduce((s: number, x: any) => s + num(x.amount_due), 0)
       const invoicedMonth = invoicedIn(inThisMonth)
       const invoicedLastMonth = invoicedIn(inLastMonth)
-      setData({ invoicedMonth, invoicedLastMonth, openAmt, paidMonth, paidLastMonth, paidYTD, pending: requests.length, requests: requests.slice(0, 6), invoices: invoices.slice(0, 6) })
+      const late = invoices.filter((x: any) => balance(x) > 0 && daysPastDue(x) > 0)
+      const overdueAmt = late.reduce((s: number, x: any) => s + balance(x), 0), overdueCount = late.length
+      setData({ overdueAmt, overdueCount, invoicedMonth, invoicedLastMonth, openAmt, paidMonth, paidLastMonth, paidYTD, pending: requests.length, requests: requests.slice(0, 6), invoices: invoices.slice(0, 6) })
     })
   }, [])
 
@@ -56,15 +62,24 @@ export default function AdminDashboard() {
     { label: 'Collected YTD', value: formatCurrency(data.paidYTD), icon: TrendingUp, color: '#059669', href: '/admin/invoices' },
     { label: 'Pending Requests', value: data.pending.toString(), icon: ClipboardList, color: '#7c3aed', href: '/admin/schedule-requests' },
     { label: 'Calendar', value: 'View →', icon: Calendar, color: '#0891b2', href: '/admin/calendar' },
-    { label: 'Bookkeeping', value: 'View →', icon: TrendingUp, color: '#0f766e', href: '/admin/bookkeeping' },
+    { label: data.overdueCount ? `Overdue (${data.overdueCount} invoice${data.overdueCount === 1 ? '' : 's'})` : 'Overdue', value: formatCurrency(data.overdueAmt), icon: AlertCircle, color: data.overdueCount ? '#dc2626' : '#0f766e', href: role === 'invoicing' ? '/admin/invoices' : '/admin/collections' },
   ] : []
 
   return (
     <div className="p-6 md:p-8 pt-16 md:pt-8">
-      <div className="mb-8">
-        <h1 className="text-2xl font-extrabold text-gray-900">Dashboard</h1>
-        <p className="text-gray-500 mt-1">Welcome back to L. Price Building Company admin portal.</p>
+      <div className="mb-6 flex items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-extrabold text-gray-900">Dashboard</h1>
+          <p className="text-gray-500 mt-1">{new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}</p>
+        </div>
+        {role !== 'invoicing' && (
+          <button onClick={() => window.dispatchEvent(new Event('open-quick-add'))}
+            className="flex items-center gap-2 text-white text-sm font-bold px-4 py-2.5 rounded-xl shadow-sm flex-shrink-0" style={{ background: '#b8895a' }}>
+            <Plus size={16} /> Quick add
+          </button>
+        )}
       </div>
+      <TodayPanel brand="#b8895a" showEvents={role !== 'invoicing'} />
       <div className="grid grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
         {data ? cards.map(({ label, value, icon: Icon, color, href }) => (
           <Link key={label} href={href} className="rounded-2xl p-5 text-white shadow-md hover:shadow-lg hover:-translate-y-0.5 transition-all"

@@ -2,6 +2,7 @@
 import { useEffect, useState, createContext, useContext } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
+import { installAdminFetch } from '@/lib/admin-fetch'
 import { Loader2 } from 'lucide-react'
 
 type UserRole = 'admin' | 'bookkeeper' | 'invoicing' | 'customer' | null
@@ -10,6 +11,9 @@ interface AuthCtx {
   role: UserRole
   email: string | null
 }
+
+// Runs as soon as this chunk loads — before any admin page renders or fetches.
+installAdminFetch()
 
 const AuthContext = createContext<AuthCtx>({ role: null, email: null })
 export const useAuth = () => useContext(AuthContext)
@@ -24,7 +28,7 @@ const FULL_PAGES = [
 
 // Pages only the admin role may open (the sidebar hiding a link isn't enough —
 // a bookkeeper could still type the URL). The matching API is also admin-gated.
-const ADMIN_ONLY_PAGES = ['/admin/expenses', '/admin/notepad', '/admin/google-connect', '/admin/vault', '/admin/users']
+const ADMIN_ONLY_PAGES = ['/admin/expenses', '/admin/notepad', '/admin/google-connect', '/admin/vault', '/admin/users', '/admin/business-settings']
 
 function canAccess(role: UserRole, path: string): boolean {
   if (!role) return false
