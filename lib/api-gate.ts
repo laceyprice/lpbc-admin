@@ -46,6 +46,8 @@ export function decide(i: GateInput): GateResult {
   if (['/api/my-projects', '/api/project-messages', '/api/my-calendar', '/api/link-preview'].some(p => startsWithPath(path, p))) return { level: 'user' }
 
   // ── Staff ───────────────────────────────────────────────────────────────
+  // Writing an invoice off (or restoring it) is a financial decision — not for the invoicing-only role.
+  if (path === '/api/collections' && m === 'POST' && (query.action === 'write_off' || query.action === 'restore')) return { level: 'staff', allowedRoles: ['admin', 'bookkeeper'] }
   // The Todo page lists teammates (read-only) for every staff role; changing roles stays admin-only (route checks).
   if (path === '/api/user-roles' && m === 'GET') return { level: 'staff', allowedRoles: ['admin', 'bookkeeper', 'invoicing'] }
   if (INVOICING_BLOCKED.some(p => startsWithPath(path, p))) return { level: 'staff', allowedRoles: ['admin', 'bookkeeper'] }

@@ -42,7 +42,7 @@ export async function GET(req: NextRequest) {
   for (const r of c.data || []) costs.set(r.invoice_id, (costs.get(r.invoice_id) || 0) + num(r.amount))
 
   const jobs = (inv.data || []).map((i: any) => {
-    const revenue = num(i.amount_due)
+    const revenue = i.invoice_status === 'uncollectible' ? num(i.amount_paid) : num(i.amount_due)   // written off → only what was actually collected counts
     const l = labor.get(i.id) || { hours: 0, cost: 0 }
     const other = costs.get(i.id) || 0
     const profit = revenue - l.cost - other

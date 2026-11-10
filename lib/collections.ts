@@ -25,10 +25,10 @@ export function bucketFor(days: number): Bucket {
   return 'd90_plus'
 }
 
-/** Unpaid balance of an issued invoice; 0 for quotes, drafts, cancelled and paid. */
+/** Unpaid balance of an issued invoice; 0 for quotes, drafts, cancelled, paid and written-off (uncollectible). */
 export function balance(inv: { invoice_type?: string | null; invoice_status?: string | null; amount_due?: any; amount_paid?: any }): number {
   if (inv.invoice_type === 'quote') return 0
-  if (['paid', 'cancelled', 'draft'].includes(String(inv.invoice_status))) return 0
+  if (['paid', 'cancelled', 'draft', 'uncollectible', 'void'].includes(String(inv.invoice_status))) return 0
   return Math.max(0, (Number(inv.amount_due) || 0) - (Number(inv.amount_paid) || 0))
 }
 

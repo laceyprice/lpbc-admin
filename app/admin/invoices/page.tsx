@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useState, useRef } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { Plus, Search, Send, CheckCircle, FileText, Loader2, X, Save, Edit3, Trash2, Upload, Camera, Receipt, FileImage, BarChart2, TrendingUp, DollarSign, Clock, AlertCircle, ExternalLink, RotateCcw, Star } from 'lucide-react'
+import { Plus, Search, Send, CheckCircle, FileText, Loader2, X, Save, Edit3, Trash2, Upload, Camera, Receipt, FileImage, BarChart2, TrendingUp, DollarSign, Clock, AlertCircle, ExternalLink, RotateCcw, Star, Ban } from 'lucide-react'
 import { formatCurrency, formatDateShort, formatPhone, generateDocNumber } from '@/lib/utils'
 import { SERVICES } from '@/lib/constants'
 
@@ -17,7 +17,7 @@ interface InvoiceAttachment {
 interface Contact { id: string; first_name: string; last_name: string; email: string; phone: string; address: string }
 interface Invoice { id: string; invoice_number: string; invoice_type: string; customer_name: string; customer_email: string; customer_phone: string; job_address: string; service_date: string; service_type: string; service_description: string; amount_due: number; amount_paid: number; invoice_status: string; payment_type: string; stripe_payment_link: string; contact_id: string; created_at: string; paid_at: string; public_token?: string; sent_at?: string; last_sent_at?: string }
 
-const SC: Record<string, string> = { draft:'bg-gray-100 text-gray-600', sent:'bg-blue-100 text-blue-700', paid:'bg-green-100 text-green-700', overdue:'bg-red-100 text-red-700', approved:'bg-emerald-100 text-emerald-700' }
+const SC: Record<string, string> = { draft:'bg-gray-100 text-gray-600', sent:'bg-blue-100 text-blue-700', paid:'bg-green-100 text-green-700', overdue:'bg-red-100 text-red-700', approved:'bg-emerald-100 text-emerald-700', uncollectible:'bg-orange-100 text-orange-800' }
 
 export default function InvoicesPage() {
   async function askReview(inv: any) {
@@ -201,6 +201,25 @@ export default function InvoicesPage() {
     await loadInvoices(); setSelected(null)
   }
 
+  async function writeOff(inv: Invoice) {
+    const owed = Math.max(0, (inv.amount_due || 0) - (inv.amount_paid || 0))
+    const reason = prompt(`Write off invoice #${inv.invoice_number} (${inv.customer_name}, $${owed.toFixed(2)}) as uncollectible?\n\nIt stops counting as money owed to you. You can undo this later.\nOptional note — why:`, '')
+    if (reason === null) return
+    const res = await fetch('/api/collections?action=write_off', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ invoice_ids:[inv.id], reason }) })
+    const d = await res.json().catch(() => ({}))
+    if (!res.ok) { alert(d.error || 'Could not write it off'); return }
+    if (d.skipped?.length) alert(d.skipped.join('\n'))
+    await loadInvoices(); setSelected(null)
+  }
+
+  async function reopenWriteOff(inv: Invoice) {
+    if (!confirm(`Undo the write-off on invoice #${inv.invoice_number}? It goes back on the list of money owed.`)) return
+    const res = await fetch('/api/collections?action=restore', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ invoice_ids:[inv.id] }) })
+    const d = await res.json().catch(() => ({}))
+    if (!res.ok) { alert(d.error || 'Could not undo it'); return }
+    await loadInvoices(); setSelected(null)
+  }
+
   async function unmarkPaid(inv: Invoice) {
     const revertTo = (inv.last_sent_at || inv.sent_at) ? 'sent' : 'draft'
     if (!confirm(`Unmark invoice #${inv.invoice_number} as paid? This clears the recorded payment and reverts it to "${revertTo}".`)) return
@@ -330,7 +349,7 @@ export default function InvoicesPage() {
     .filter(i => {
       const matchesFilter =
         filter === 'all' ? true :
-        filter === 'unpaid' ? (i.invoice_status !== 'paid' && i.invoice_status !== 'draft') :
+        filter === 'unpaid' ? (i.invoice_status !== 'paid' && i.invoice_status !== 'draft' && i.invoice_status !== 'uncollectible') :
         i.invoice_status === filter
       const matchesSearch = !search || `${i.invoice_number} ${i.customer_name} ${i.job_address}`.toLowerCase().includes(search.toLowerCase())
       return matchesFilter && matchesSearch
@@ -351,7 +370,7 @@ export default function InvoicesPage() {
   // Quotes are excluded since they aren't "billed" until converted to invoices.
   const headerSet = allInvoices.filter(i => i.invoice_type !== 'quote')
   const totalBilled = headerSet.reduce((s, i) => s + (i.amount_due||0), 0)
-  const totalDue = headerSet.filter(i => !['paid', 'cancelled', 'draft'].includes(i.invoice_status)).reduce((s, i) => s + Math.max(0, (i.amount_due||0) - (i.amount_paid||0)), 0)
+  const totalDue = headerSet.filter(i => !['paid', 'cancelled', 'draft', 'uncollectible'].includes(i.invoice_status)).reduce((s, i) => s + Math.max(0, (i.amount_due||0) - (i.amount_paid||0)), 0)
   const totalPaid = headerSet.reduce((s, i) => s + (i.amount_paid||0), 0)
 
   const inputCls = 'w-full px-3 py-2.5 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:border-blue-400'
@@ -392,7 +411,7 @@ export default function InvoicesPage() {
           ))}
         </div>
         <div className="flex bg-gray-100 rounded-xl p-1 gap-1">
-          {['all','draft','unpaid'].map(s => (
+          {['all','draft','unpaid','uncollectible'].map(s => (
             <button key={s} onClick={() => setFilter(s)}
               className={`px-3 py-1.5 rounded-lg text-xs font-semibold capitalize transition-all ${filter===s ? 'bg-white shadow-sm' : 'text-gray-500'}`}
               style={{ color: filter===s ? '#b8895a' : undefined }}>{s}</button>
@@ -463,6 +482,12 @@ export default function InvoicesPage() {
                             <Send size={13} />
                           </button>
                         )}
+                        {inv.invoice_type !== 'quote' && !['paid', 'draft', 'cancelled', 'uncollectible'].includes(inv.invoice_status) && (
+                          <button onClick={() => writeOff(inv)} title="Write off as uncollectible" className="p-1.5 rounded-lg bg-orange-50 text-orange-600 hover:bg-orange-100 transition-colors"><Ban size={13} /></button>
+                        )}
+                        {inv.invoice_status === 'uncollectible' && (
+                          <button onClick={() => reopenWriteOff(inv)} title="Undo write-off" className="p-1.5 rounded-lg bg-gray-50 text-gray-600 hover:bg-gray-100 transition-colors"><RotateCcw size={13} /></button>
+                        )}
                         {inv.invoice_status !== 'paid' && inv.invoice_type !== 'quote' && (
                           <button onClick={() => markPaid(inv)} title="Mark paid"
                             className="p-1.5 rounded-lg bg-green-50 text-green-600 hover:bg-green-100 transition-colors">
@@ -530,6 +555,12 @@ export default function InvoicesPage() {
                 )}
                 {!selected.sent_at && !selected.last_sent_at && selected.invoice_status !== 'sent' && selected.invoice_type !== 'quote' && (
                   <button onClick={() => markSent(selected)} className="flex-1 flex items-center justify-center gap-2 text-white py-2.5 rounded-xl font-semibold" style={{ background:'#2563eb' }}><Send size={14} />Mark as Sent</button>
+                )}
+                {selected.invoice_type !== 'quote' && !['paid', 'draft', 'cancelled', 'uncollectible'].includes(selected.invoice_status) && (
+                  <button onClick={() => writeOff(selected)} className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl font-semibold border border-orange-200 text-orange-700 hover:bg-orange-50"><Ban size={14} />Write Off</button>
+                )}
+                {selected.invoice_status === 'uncollectible' && (
+                  <button onClick={() => reopenWriteOff(selected)} className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl font-semibold border border-gray-200 text-gray-700 hover:bg-gray-50"><RotateCcw size={14} />Undo Write-Off</button>
                 )}
                 {selected.invoice_status === 'paid' && (
                   <button onClick={() => unmarkPaid(selected)} className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl font-semibold border border-amber-200 text-amber-700 hover:bg-amber-50"><RotateCcw size={14} />Unmark Paid</button>
@@ -609,7 +640,7 @@ export default function InvoicesPage() {
         // --- Invoice stats ---
         const totalBilled = all.reduce((s, i) => s + (i.amount_due || 0), 0)
         const totalCollected = all.reduce((s, i) => s + (i.amount_paid || 0), 0)
-        const totalOutstanding = all.filter(i => !['paid', 'cancelled', 'draft'].includes(i.invoice_status)).reduce((s, i) => s + Math.max(0, (i.amount_due || 0) - (i.amount_paid || 0)), 0)
+        const totalOutstanding = all.filter(i => !['paid', 'cancelled', 'draft', 'uncollectible'].includes(i.invoice_status)).reduce((s, i) => s + Math.max(0, (i.amount_due || 0) - (i.amount_paid || 0)), 0)
         const paidCount = all.filter(i => i.invoice_status === 'paid').length
         const overdueCount = all.filter(i => i.invoice_status === 'overdue').length
         const sentCount = all.filter(i => i.invoice_status === 'sent').length

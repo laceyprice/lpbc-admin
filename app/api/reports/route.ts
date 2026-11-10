@@ -109,7 +109,7 @@ async function getBalanceSheet(supabase: any, year: number, asOf: string | null,
     supabase.from('invoices')
       .select('id, amount_due, amount_paid, invoice_status, invoice_type, customer_name, invoice_number')
       .neq('invoice_type', 'quote')
-      .not('invoice_status', 'in', '(paid,cancelled,void,draft)')
+      .not('invoice_status', 'in', '(paid,cancelled,void,draft,uncollectible)')
       .gt('amount_due', 0),
   ])
 

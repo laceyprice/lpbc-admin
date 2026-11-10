@@ -30,7 +30,7 @@ export default function AdminDashboard() {
       // Outstanding = unpaid BALANCE (amount_due − amount_paid) on issued, unpaid
       // invoices. Excludes quotes, drafts (not issued), cancelled and paid.
       const openAmt = invoices
-        .filter((x: any) => isInvoice(x) && !['paid', 'cancelled', 'draft'].includes(x.invoice_status))
+        .filter((x: any) => isInvoice(x) && !['paid', 'cancelled', 'draft', 'uncollectible'].includes(x.invoice_status))
         .reduce((s: number, x: any) => s + Math.max(0, num(x.amount_due) - num(x.amount_paid)), 0)
       // Collected = amount actually collected on invoices paid within the period.
       const collectedIn = (matcher: (d: any) => boolean) => invoices
