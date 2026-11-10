@@ -1,5 +1,5 @@
 'use client'
-import { Fragment, useEffect, useState } from 'react'
+import { Fragment, useEffect, useRef, useState } from 'react'
 import { Loader2, TrendingUp, TrendingDown, DollarSign, Scale, ArrowRightLeft, Download, AlertTriangle, FileBarChart2, FileText, Trash2, Link2, X, CheckCircle2 } from 'lucide-react'
 import { formatCurrency, formatDateShort } from '@/lib/utils'
 import { getLocked, setLocked, getSharedRange, setSharedRange, subscribeSharedRange } from '@/lib/shared-date'
@@ -63,7 +63,15 @@ export default function ReportsPage() {
     fetch('/api/financial-accounts').then(r => r.json()).then(d => setFinancialAccounts(Array.isArray(d) ? d : []))
   }, [])
 
-  useEffect(() => { if (tab !== 'generate') load() }, [tab, from, to, selectedAccountId])
+  // When "View" opens a saved report we show its stored snapshot instead of re-querying live data.
+  const snapshotKey = useRef<string | null>(null)
+  useEffect(() => {
+    if (tab === 'generate') return
+    const key = `${tab}|${from}|${to}|${selectedAccountId || ''}`
+    if (snapshotKey.current === key) return
+    snapshotKey.current = null
+    load()
+  }, [tab, from, to, selectedAccountId])
   useEffect(() => { if (tab === 'generate') loadSavedReports() }, [tab])
 
   async function loadSavedReports() {
@@ -89,6 +97,7 @@ export default function ReportsPage() {
           year: genYear,
           period_from: periodFrom,
           period_to: periodTo,
+          account_id: selectedAccountId,
           period_label: genPeriod === 'month' ? `${genMonth} ${genYear}`
             : genPeriod === 'quarter' ? `Q${genQuarter} ${genYear}`
             : genPeriod === 'ytd' ? `YTD ${today.getFullYear()}`
@@ -110,7 +119,11 @@ export default function ReportsPage() {
 
   function viewSavedReport(report: any) {
     // Switch to the appropriate tab and load the saved data into view
+    const acct = report.report_data?.account_id || null
+    snapshotKey.current = `${report.report_type}|${report.period_from}|${report.period_to}|${acct || ''}`
     setData(report.report_data)
+    setLoading(false)
+    setSelectedAccountId(acct)
     setFrom(report.period_from)
     setTo(report.period_to)
     setTab(report.report_type as Tab)
@@ -122,7 +135,9 @@ export default function ReportsPage() {
       const params = new URLSearchParams({ type: tab, from, to, year: from.substring(0, 4) })
       if (selectedAccountId) params.append('account_id', selectedAccountId)
       const res = await fetch(`/api/reports?${params}`)
-      setData(await res.json())
+      const d = await res.json()
+      if (d && !d.error) { d.account_id = selectedAccountId; d.account_name = financialAccounts.find(a => a.id === selectedAccountId)?.name || 'All Accounts' }
+      setData(d)
     } catch { if (!silent) setData(null) }
     if (!silent) setLoading(false)
   }
@@ -201,7 +216,7 @@ export default function ReportsPage() {
     doc.setFontSize(10)
     doc.setFont('helvetica', 'normal')
     doc.setTextColor(100, 100, 100)
-    doc.text(`Period: ${reportFrom} to ${reportTo}`, 40, headerH + 46)
+    doc.text(`Period: ${reportFrom} to ${reportTo}${reportData?.account_name ? ` · ${reportData.account_name}` : ''}`, 40, headerH + 46)
     doc.text(`Generated: ${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}`, 40, headerH + 60)
 
     let curY = headerH + 80
@@ -404,7 +419,7 @@ export default function ReportsPage() {
     r.font = { bold: true, size: 16, color: { argb: 'FF2F5A5E' } }
     r = ws.addRow([REPORT_LABELS[reportTab]])
     r.font = { bold: true, size: 13 }
-    r = ws.addRow([`Period: ${reportFrom} to ${reportTo}`])
+    r = ws.addRow([`Period: ${reportFrom} to ${reportTo}${reportData?.account_name ? ` · ${reportData.account_name}` : ''}`])
     r.font = { italic: true, color: { argb: 'FF666666' } }
     ws.addRow([])
 
@@ -465,7 +480,7 @@ export default function ReportsPage() {
     const children: any[] = [
       new Paragraph({ text: 'L. Price Building Company', heading: HeadingLevel.TITLE }),
       new Paragraph({ text: REPORT_LABELS[reportTab], heading: HeadingLevel.HEADING_1 }),
-      new Paragraph({ text: `Period: ${reportFrom} to ${reportTo}` }),
+      new Paragraph({ text: `Period: ${reportFrom} to ${reportTo}${reportData?.account_name ? ` · ${reportData.account_name}` : ''}` }),
       new Paragraph({ text: '' }),
     ]
 

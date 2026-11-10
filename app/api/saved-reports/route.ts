@@ -19,6 +19,7 @@ export async function POST(req: NextRequest) {
   const supabase = createServerClient()
   const body = await req.json()
   const { report_type, month, year, period_from, period_to, period_label } = body
+  const account_id: string | null = body.account_id || null
   if (!report_type) {
     return NextResponse.json({ error: 'report_type required' }, { status: 400 })
   }
@@ -39,12 +40,21 @@ export async function POST(req: NextRequest) {
   // Fetch the report data from the existing reports API
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
   const params = new URLSearchParams({ type: report_type, from, to, year: String(year || new Date(from).getFullYear()) })
+  let account_name: string | null = null
+  if (account_id) {
+    params.append('account_id', account_id)
+    const { data: fa } = await supabase.from('financial_accounts').select('name').eq('id', account_id).maybeSingle()
+    account_name = fa?.name || null
+  }
   // Server-to-server call into our own (now locked) API: pass the caller's token along.
   const authz = req.headers.get('authorization')
   const res = await fetch(`${appUrl}/api/reports?${params}`, { headers: authz ? { Authorization: authz } : {} })
   if (!res.ok) return NextResponse.json({ error: 'Failed to generate report' }, { status: 500 })
   const report_data = await res.json()
   if (report_data.error) return NextResponse.json({ error: report_data.error }, { status: 500 })
+  // Remember which account this snapshot covers (no schema change: it rides inside the saved data).
+  report_data.account_id = account_id
+  report_data.account_name = account_name || 'All Accounts'
 
   const label_map: Record<string, string> = {
     'pnl': 'Profit & Loss',
@@ -57,9 +67,9 @@ export async function POST(req: NextRequest) {
     .from('saved_reports')
     .insert({
       report_type,
-      report_label: period_label
+      report_label: (period_label
         ? `${label_map[report_type] || report_type} · ${period_label}`
-        : label_map[report_type] || report_type,
+        : label_map[report_type] || report_type) + (account_name ? ` · ${account_name}` : ''),
       month: month || null,
       year: year || new Date(from).getFullYear(),
       period_from: from,
