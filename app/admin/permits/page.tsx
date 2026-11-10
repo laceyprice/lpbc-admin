@@ -96,6 +96,20 @@ function StatusBadge({ status }: { status: string }) {
   )
 }
 
+// Colored status pill that is also a dropdown: pick a new status right from the list.
+function StatusSelect({ status, onChange }: { status: string; onChange: (s: string) => void }) {
+  const cfg = STATUS_CONFIG[status] || { label: status, color: '#6b7280', bg: '#f3f4f6', icon: AlertCircle }
+  return (
+    <select value={status} aria-label="Change status" title="Change status"
+      onClick={e => e.stopPropagation()} onChange={e => { e.stopPropagation(); onChange(e.target.value) }}
+      className="rounded-full text-xs font-semibold pl-2.5 pr-1 py-1 border-0 cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-300 max-w-[11rem]"
+      style={{ color: cfg.color, background: cfg.bg }}>
+      {STATUSES.map(s => <option key={s} value={s} style={{ color: '#111827', background: '#ffffff' }}>{STATUS_CONFIG[s]?.label || s}</option>)}
+      {!STATUS_CONFIG[status] && <option value={status} style={{ color: '#111827', background: '#ffffff' }}>{status}</option>}
+    </select>
+  )
+}
+
 function fmtDate(d: string | null) {
   if (!d) return '—'
   return new Date(d + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
@@ -471,9 +485,10 @@ function JurisdictionModal({
 // ══════════════════════════════════════════════════════════════
 // PERMIT DETAIL PANEL
 // ══════════════════════════════════════════════════════════════
-function PermitDetail({ permit, jurisdictions, onEdit, onDelete, onClose }: {
+function PermitDetail({ permit, jurisdictions, onEdit, onDelete, onClose, onStatusChange }: {
   permit: Permit
   jurisdictions: Jurisdiction[]
+  onStatusChange: (status: string) => void
   onEdit: () => void
   onDelete: () => void
   onClose: () => void
@@ -501,7 +516,7 @@ function PermitDetail({ permit, jurisdictions, onEdit, onDelete, onClose }: {
         <div className="p-5 space-y-5">
           {/* Status + Type */}
           <div className="flex flex-wrap items-center gap-2">
-            <StatusBadge status={permit.status} />
+            <StatusSelect status={permit.status} onChange={onStatusChange} />
             <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full font-semibold uppercase">{permit.permit_type}</span>
             <span className="text-xs bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full font-semibold">
               {permit.source === 'invoice' ? '📄 From Invoice' : permit.source === 'email' ? '📧 From Email' : '✋ Manual'}
@@ -748,6 +763,23 @@ export default function PermitsPage() {
 
   useEffect(() => { load() }, [load])
 
+  async function changeStatus(permit: Permit, status: string) {
+    if (status === permit.status) return
+    const previous = permit.status
+    const apply = (st: string) => {
+      setPermits(list => list.map(x => (x.id === permit.id ? { ...x, status: st } : x)))
+      setViewPermit(v => (v && v.id === permit.id ? { ...v, status: st } : v))
+    }
+    apply(status)
+    try {
+      const res = await fetch('/api/permits', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: permit.id, status }) })
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Could not save')
+    } catch (e: any) {
+      apply(previous)
+      alert(`Couldn't change the status: ${e.message}`)
+    }
+  }
+
   async function syncInvoices() {
     setSyncing(true)
     setSyncMsg('')
@@ -904,7 +936,7 @@ export default function PermitsPage() {
                           </span>
                         </div>
                         <div className="grid gap-2">
-                          {items.map(p => <PermitRow key={p.id} permit={p} onClick={() => setViewPermit(p)} />)}
+                          {items.map(p => <PermitRow key={p.id} permit={p} onClick={() => setViewPermit(p)} onStatusChange={st => changeStatus(p, st)} />)}
                         </div>
                       </div>
                     )
@@ -912,7 +944,7 @@ export default function PermitsPage() {
                 </div>
               ) : (
                 <div className="grid gap-2">
-                  {permits.map(p => <PermitRow key={p.id} permit={p} onClick={() => setViewPermit(p)} />)}
+                  {permits.map(p => <PermitRow key={p.id} permit={p} onClick={() => setViewPermit(p)} onStatusChange={st => changeStatus(p, st)} />)}
                 </div>
               )}
             </>
@@ -939,6 +971,7 @@ export default function PermitsPage() {
         <PermitDetail
           permit={viewPermit}
           jurisdictions={jurisdictions}
+          onStatusChange={st => changeStatus(viewPermit, st)}
           onEdit={() => { setEditPermit(viewPermit); setShowPermitModal(true); setViewPermit(null) }}
           onDelete={() => deletePermit(viewPermit.id)}
           onClose={() => setViewPermit(null)}
@@ -949,7 +982,7 @@ export default function PermitsPage() {
 }
 
 // ── Permit Row Component ───────────────────────────────────────
-function PermitRow({ permit, onClick }: { permit: Permit; onClick: () => void }) {
+function PermitRow({ permit, onClick, onStatusChange }: { permit: Permit; onClick: () => void; onStatusChange: (status: string) => void }) {
   const today = new Date()
   const expiry = permit.expiry_date ? new Date(permit.expiry_date + 'T00:00:00') : null
   const daysToExpiry = expiry ? Math.ceil((expiry.getTime() - today.getTime()) / (1000 * 60 * 60 * 24)) : null
@@ -965,7 +998,7 @@ function PermitRow({ permit, onClick }: { permit: Permit; onClick: () => void })
             <span className="font-semibold text-gray-900 text-sm truncate">
               {permit.permit_number ? `#${permit.permit_number}` : '(No number)'}
             </span>
-            <StatusBadge status={permit.status} />
+            <StatusSelect status={permit.status} onChange={onStatusChange} />
             {(isExpiringSoon || isExpired) && (
               <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold ${isExpired ? 'bg-red-100 text-red-600' : 'bg-amber-100 text-amber-600'}`}>
                 <AlertTriangle size={9} />
