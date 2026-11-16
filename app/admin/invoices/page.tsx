@@ -4,6 +4,7 @@ import { useSearchParams } from 'next/navigation'
 import { Plus, Search, Send, CheckCircle, FileText, Loader2, X, Save, Edit3, Trash2, Upload, Camera, Receipt, FileImage, BarChart2, TrendingUp, DollarSign, Clock, AlertCircle, ExternalLink, RotateCcw, Star, Ban } from 'lucide-react'
 import { formatCurrency, formatDateShort, formatPhone, generateDocNumber } from '@/lib/utils'
 import { SERVICES } from '@/lib/constants'
+import GooglePhotosButton from '@/components/admin/GooglePhotosButton'
 
 interface InvoiceAttachment {
   name: string
@@ -594,6 +595,7 @@ export default function InvoicesPage() {
                     <input ref={attachFileRef} type="file" accept="image/*,.pdf" className="hidden" disabled={attachUploading}
                       onChange={e => { const f = e.target.files?.[0]; if (f) uploadAttachment(f, selected.id) }} />
                   </label>
+                  <GooglePhotosButton disabled={attachUploading} onFiles={async files => { for (const f of files) await uploadAttachment(f, selected.id) }} />
                 </div>
 
                 {/* Uploaded files list */}

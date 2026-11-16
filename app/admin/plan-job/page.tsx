@@ -6,6 +6,7 @@ import { adminFetch } from '@/lib/admin-fetch'
 import DesignStudio, { DesignData, FinishesTab } from '@/components/admin/DesignStudio'
 import ProjectSchedule from '@/components/admin/ProjectSchedule'
 import { computeFinishCost, finishSummary, fetchPrices } from '@/lib/finishes'
+import GooglePhotosButton from '@/components/admin/GooglePhotosButton'
 
 interface BudgetLine {
   category: string
@@ -1414,6 +1415,7 @@ export default function PlanJobPage() {
             <input ref={fileRef} type="file" multiple accept="image/*,video/*,application/pdf" className="hidden"
               onChange={e => e.target.files && handleFiles(e.target.files)} />
           </div>
+          <div className="mt-2"><GooglePhotosButton disabled={uploading} onFiles={files => handleFiles(files)} /></div>
 
           {uploading && (
             <div className="mt-2 text-xs text-blue-600 flex items-center gap-1"><Loader2 size={11} className="animate-spin" /> Uploading…</div>

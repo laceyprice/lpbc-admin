@@ -46,6 +46,60 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ sessionId: d.id, pickerUri: d.pickerUri })
   }
 
+  // ── Used by the shared <GooglePhotosButton>: list picks, then the browser pulls each file
+  //    through `file` and hands it to that page's normal upload.
+  // POST ?action=items { sessionId }                  → { pending: true } | { items: [{ id, baseUrl, mimeType, filename }] }
+  // POST ?action=file  { baseUrl, mimeType, filename } → the image bytes
+  // POST ?action=done  { sessionId }                  → deletes the picker session
+  if (action === 'items') {
+    const body = await req.json().catch(() => ({}))
+    const sid = String(body.sessionId || '')
+    if (!/^[\w-]+$/.test(sid)) return NextResponse.json({ error: 'sessionId required' }, { status: 400 })
+    const s = await fetch(`https://photospicker.googleapis.com/v1/sessions/${sid}`, { headers: H })
+    const sd = await s.json().catch(() => ({}))
+    if (!s.ok) return NextResponse.json({ error: sd?.error?.message || 'Google Photos session expired' }, { status: 502 })
+    if (!sd.mediaItemsSet) return NextResponse.json({ pending: true })
+    const items: { id: string; baseUrl: string; mimeType: string; filename: string }[] = []
+    let pageToken: string | undefined
+    do {
+      const url = new URL('https://photospicker.googleapis.com/v1/mediaItems')
+      url.searchParams.set('sessionId', sid)
+      url.searchParams.set('pageSize', '50')
+      if (pageToken) url.searchParams.set('pageToken', pageToken)
+      const m = await fetch(url.toString(), { headers: H })
+      const md = await m.json().catch(() => ({}))
+      if (!m.ok) return NextResponse.json({ error: md?.error?.message || 'Could not list the picked photos' }, { status: 502 })
+      for (const it of md.mediaItems || []) {
+        const f = it.mediaFile || {}
+        if (!f.baseUrl || !String(f.mimeType || '').startsWith('image/')) continue   // photos only
+        items.push({ id: it.id, baseUrl: f.baseUrl, mimeType: f.mimeType, filename: f.filename || `photo_${it.id}.jpg` })
+        if (items.length >= MAX_IMPORT) break
+      }
+      pageToken = md.nextPageToken
+    } while (pageToken && items.length < MAX_IMPORT)
+    return NextResponse.json({ items })
+  }
+
+  if (action === 'file') {
+    const body = await req.json().catch(() => ({}))
+    const baseUrl = String(body.baseUrl || '')
+    // Picked items always live on Google's photo CDN — refuse anything else so this can't fetch arbitrary URLs.
+    let okHost = false
+    try { const u = new URL(baseUrl); okHost = u.protocol === 'https:' && u.hostname.endsWith('.googleusercontent.com') } catch {}
+    if (!okHost) return NextResponse.json({ error: 'Not a Google Photos link' }, { status: 400 })
+    // =w4096-h4096 → full-quality JPEG (also converts iPhone HEIC)
+    const dl = await fetch(`${baseUrl}=w4096-h4096`, { headers: H })
+    if (!dl.ok) return NextResponse.json({ error: `Google Photos download failed (${dl.status})` }, { status: 502 })
+    return new NextResponse(await dl.arrayBuffer(), { headers: { 'Content-Type': dl.headers.get('content-type') || 'image/jpeg', 'Cache-Control': 'no-store' } })
+  }
+
+  if (action === 'done') {
+    const body = await req.json().catch(() => ({}))
+    const sid = String(body.sessionId || '')
+    if (/^[\w-]+$/.test(sid)) { try { await fetch(`https://photospicker.googleapis.com/v1/sessions/${sid}`, { method: 'DELETE', headers: H }) } catch {} }
+    return NextResponse.json({ ok: true })
+  }
+
   if (action === 'import') {
     const body = await req.json().catch(() => ({}))
     const sessionId = body.sessionId

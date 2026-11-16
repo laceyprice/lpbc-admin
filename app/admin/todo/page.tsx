@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Sparkles, Loader2, RefreshCw, CheckCircle2, Circle, ArrowRight, AlertCircle, Calendar, CalendarPlus, FileText, BookOpen, Users, Plus, X, Trash2, Check, Pencil, Paperclip, Image as ImageIcon } from 'lucide-react'
+import GooglePhotosButton from '@/components/admin/GooglePhotosButton'
 
 interface Attachment { path: string; name: string; type: string; size: number; url?: string | null }
 const isImageAtt = (a: Attachment) => /^image\//i.test(a.type) || /\.(jpe?g|png|webp|gif|heic)$/i.test(a.name)
@@ -141,7 +142,7 @@ export default function TodoPage() {
   }
   function closeModal() { setShowAdd(false); setEditingId(null); setFormAttachments([]); setAddForm(EMPTY_FORM) }
 
-  async function uploadAttachment(files: FileList | null) {
+  async function uploadAttachment(files: FileList | File[] | null) {
     if (!files || !files.length) return
     setUploadingAtt(true)
     try {
@@ -766,6 +767,7 @@ export default function TodoPage() {
                   <input type="file" multiple accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.txt,.heic" className="hidden"
                     onChange={e => { uploadAttachment(e.target.files); e.target.value = '' }} />
                 </label>
+                <div className="mt-2"><GooglePhotosButton disabled={uploadingAtt} onFiles={files => uploadAttachment(files)} /></div>
               </div>
             </div>
             <div className="flex justify-end gap-2 px-5 py-3 border-t border-gray-100 sticky bottom-0 bg-white">

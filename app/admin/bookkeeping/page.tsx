@@ -6,6 +6,7 @@ import { formatCurrency, formatDateShort } from '@/lib/utils'
 import Script from 'next/script'
 import DrivePicker from '@/components/admin/DrivePicker'
 import { getLocked, setLocked, getSharedRange, setSharedRange, subscribeSharedRange } from '@/lib/shared-date'
+import GooglePhotosButton from '@/components/admin/GooglePhotosButton'
 
 const ACCT_TYPES = ['asset', 'liability', 'equity', 'revenue', 'expense', 'distribution']
 
@@ -1722,6 +1723,9 @@ function BookkeepingPage() {
                 <span className="text-sm font-semibold text-gray-600">Import from Google Drive</span>
                 <span className="text-xs text-gray-400">Browse & pick files</span>
               </button>
+              <GooglePhotosButton disabled={docUploading} iconSize={24} wrapClassName="flex-1 flex flex-col"
+                className="w-full flex-1 flex flex-col items-center justify-center gap-2 border-2 border-dashed border-gray-300 rounded-xl px-4 py-8 text-sm font-semibold text-gray-600 hover:bg-gray-50 hover:border-blue-300 transition-all disabled:opacity-60"
+                onFiles={files => uploadDocument(files)} />
             </div>
           </div>
           <DrivePicker

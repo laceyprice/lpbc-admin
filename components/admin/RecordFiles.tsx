@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Paperclip, Upload, Camera, Trash2, Loader2, FileText, Image as ImageIcon, ExternalLink, HardDrive, X } from 'lucide-react'
 import { adminFetch } from '@/lib/admin-fetch'
 import DrivePicker from '@/components/admin/DrivePicker'
+import GooglePhotosButton from '@/components/admin/GooglePhotosButton'
 
 // Documents & photos for one license or permit: upload from the device (or take a
 // photo), pull a file in from Google Drive, and — when Google is authorized for
@@ -79,7 +80,7 @@ export default function RecordFiles({ entityType, entityId, brand, staged = [], 
   }, [entityType, entityId])
   useEffect(() => { if (entityId) { setLoading(true); load() } }, [load, entityId])
 
-  async function upload(list: FileList | null) {
+  async function upload(list: FileList | File[] | null) {
     if (!list || list.length === 0) return
     const chosen = Array.from(list)
     const clear = () => { if (pick.current) pick.current.value = ''; if (cam.current) cam.current.value = '' }
@@ -140,6 +141,7 @@ export default function RecordFiles({ entityType, entityId, brand, staged = [], 
         <button type="button" disabled={busy} onClick={() => setShowDrive(true)} className={btn} style={{ color: brand, borderColor: brand + '55' }}>
           <HardDrive size={13} /> Search Google Drive
         </button>
+        <GooglePhotosButton disabled={busy} onFiles={files => upload(files)} className={btn} style={{ color: brand, borderColor: brand + '55' }} />
         <input ref={pick} type="file" multiple accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx,.heic" className="hidden" onChange={e => upload(e.target.files)} />
         <input ref={cam} type="file" accept="image/*" capture="environment" className="hidden" onChange={e => upload(e.target.files)} />
       </div>

@@ -2,6 +2,7 @@
 import { useEffect, useState, useRef } from 'react'
 import { MapPin, Plus, Search, X, Loader2, Camera, Image as ImageIcon, ChevronRight, Trash2, Edit3, ClipboardList, Calendar, FileText, Home, Building2, Key, ChevronLeft, Upload, CheckCircle2, AlertCircle, Receipt, DollarSign, Link2, Users, FileCheck, Clock, ExternalLink, Sparkles } from 'lucide-react'
 import { formatDateShort } from '@/lib/utils'
+import GooglePhotosButton from '@/components/admin/GooglePhotosButton'
 
 const SERVICE_TYPES = ['Service', 'Draw']
 
@@ -766,6 +767,7 @@ export default function WorksitesPage() {
                                     {uploadingPhoto?<Loader2 size={10} className="animate-spin"/>:<Upload size={10}/>} Upload
                                     <input type="file" accept="image/*,.pdf,.doc,.docx" className="hidden" disabled={uploadingPhoto} onChange={e=>{const f=e.target.files?.[0];if(f)uploadPhoto(f,v.id)}} />
                                   </label>
+                                  <GooglePhotosButton disabled={uploadingPhoto} iconSize={10} label="Google Photos" className="flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded-lg border border-gray-200 hover:bg-gray-50 disabled:opacity-50" onFiles={async files=>{for(const f of files) await uploadPhoto(f,v.id)}} />
                                   <button onClick={()=>deleteVisit(v.id)} className="text-gray-300 hover:text-red-500 ml-auto"><Trash2 size={13}/></button>
                                 </div>
                               </div>
@@ -1028,6 +1030,7 @@ export default function WorksitesPage() {
                     {uploadingPhoto?<Loader2 size={14} className="animate-spin"/>:<Upload size={14}/>} Upload
                     <input type="file" accept="image/*,.pdf,.doc,.docx" className="hidden" disabled={uploadingPhoto} onChange={e=>{const f=e.target.files?.[0];if(f)uploadPhoto(f,null)}} />
                   </label>
+                  <GooglePhotosButton disabled={uploadingPhoto} iconSize={14} className="flex items-center gap-2 px-3 py-2 rounded-xl border-2 text-sm font-bold hover:bg-blue-50 disabled:opacity-50" style={{ borderColor:'#185FA5', color:'#185FA5' }} onFiles={async files=>{for(const f of files) await uploadPhoto(f,null)}} />
                 </div>
                 {selected.photos?.length === 0 ? (
                   <div className="text-center py-16 text-gray-400">
