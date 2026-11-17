@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 export const dynamic = 'force-dynamic'
 import { createServerClient } from '@/lib/supabase'
+import { getGoogleRefreshToken, createGoogleOAuthState } from '@/lib/google-token'
 import { webSafeImage } from '@/lib/heic'
 
 const BUCKET = 'bookkeeping-images'
@@ -27,7 +28,7 @@ export async function GET(req: NextRequest) {
     const authUrl = oauth2Client.generateAuthUrl({
       access_type: 'offline',
       prompt: 'consent',
-      state: 'gmail-reauth',
+      state: await createGoogleOAuthState(),   // lets the callback save the token automatically
       scope: [
         'https://www.googleapis.com/auth/calendar',
         'https://www.googleapis.com/auth/gmail.readonly',
@@ -68,7 +69,7 @@ export async function POST(req: NextRequest) {
   const daysBack: number = body.days_back ?? 30
   const dryRun: boolean = body.dry_run ?? false
 
-  if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_REFRESH_TOKEN) {
+  if (!process.env.GOOGLE_CLIENT_ID || !(await getGoogleRefreshToken())) {
     return NextResponse.json({
       error: 'Google OAuth not configured',
       needsAuth: true,
@@ -82,7 +83,7 @@ export async function POST(req: NextRequest) {
       process.env.GOOGLE_CLIENT_ID,
       process.env.GOOGLE_CLIENT_SECRET,
     )
-    auth.setCredentials({ refresh_token: process.env.GOOGLE_REFRESH_TOKEN })
+    auth.setCredentials({ refresh_token: (await getGoogleRefreshToken()) })
 
     const gmail = google.gmail({ version: 'v1', auth })
 

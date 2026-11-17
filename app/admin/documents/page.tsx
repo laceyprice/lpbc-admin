@@ -484,8 +484,7 @@ export default function DocumentsPage() {
                 <p className="text-xs text-amber-700 mb-3">{scanError}</p>
                 <p className="text-xs text-amber-700 mb-3">
                   Your current Google token only has Calendar access. Click below to re-authorize —
-                  Google will redirect back and show your new refresh token.
-                  Copy it and update <code className="bg-amber-100 px-1 rounded font-mono">GOOGLE_REFRESH_TOKEN</code> in your Flux config, then redeploy.
+                  The new connection is saved automatically once you approve — no Flux change or redeploy.
                 </p>
                 {authUrl && (
                   <a href={authUrl} target="_blank" rel="noopener noreferrer"

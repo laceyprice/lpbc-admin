@@ -4,6 +4,7 @@ export const maxDuration = 120
 import { createServerClient } from '@/lib/supabase'
 import { signedUrlFor } from '@/lib/signed-url'
 import { webSafeImage } from '@/lib/heic'
+import { getGoogleRefreshToken } from '@/lib/google-token'
 
 const JOB_PLANNING_BUCKET = 'job-planning'
 const MAX_IMPORT = 30
@@ -13,11 +14,11 @@ const MAX_IMPORT = 30
 // the user picks photos in Google's own UI, then we read the selected items.
 async function getAccessToken(): Promise<string> {
   const { google } = await import('googleapis')
-  if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET || !process.env.GOOGLE_REFRESH_TOKEN) {
+  if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET || !(await getGoogleRefreshToken())) {
     throw new Error('Google OAuth not configured')
   }
   const o = new google.auth.OAuth2(process.env.GOOGLE_CLIENT_ID, process.env.GOOGLE_CLIENT_SECRET)
-  o.setCredentials({ refresh_token: process.env.GOOGLE_REFRESH_TOKEN })
+  o.setCredentials({ refresh_token: (await getGoogleRefreshToken()) })
   const { token } = await o.getAccessToken()
   if (!token) throw new Error('Could not get a Google access token')
   return token as string

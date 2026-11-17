@@ -4,10 +4,11 @@ import { createServerClient } from '@/lib/supabase'
 import { createCheckoutSession } from '@/lib/stripe'
 import { sendInvoiceEmail } from '@/lib/resend'
 import { google } from 'googleapis'
+import { getGoogleRefreshToken } from '@/lib/google-token'
 
 // Copy sent email to Gmail Sent folder via Google API
 async function copyToGmailSent(invoice: any, paymentUrl: string) {
-  if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_REFRESH_TOKEN) {
+  if (!process.env.GOOGLE_CLIENT_ID || !(await getGoogleRefreshToken())) {
     console.log('Gmail: skipping — missing credentials')
     return
   }
@@ -16,7 +17,7 @@ async function copyToGmailSent(invoice: any, paymentUrl: string) {
       process.env.GOOGLE_CLIENT_ID,
       process.env.GOOGLE_CLIENT_SECRET,
     )
-    auth.setCredentials({ refresh_token: process.env.GOOGLE_REFRESH_TOKEN })
+    auth.setCredentials({ refresh_token: (await getGoogleRefreshToken()) })
     const gmail = google.gmail({ version: 'v1', auth })
 
     const isQuote = invoice.invoice_type === 'quote'

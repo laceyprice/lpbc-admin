@@ -1,17 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { getGoogleRefreshToken } from '@/lib/google-token'
 export const dynamic = 'force-dynamic'
 
 // Reuses the same Google OAuth refresh token that powers google-drive
 async function getDocsClient() {
   const { google } = await import('googleapis')
-  if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET || !process.env.GOOGLE_REFRESH_TOKEN) {
+  if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET || !(await getGoogleRefreshToken())) {
     throw new Error('Google OAuth not configured — set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REFRESH_TOKEN')
   }
   const auth = new google.auth.OAuth2(
     process.env.GOOGLE_CLIENT_ID,
     process.env.GOOGLE_CLIENT_SECRET
   )
-  auth.setCredentials({ refresh_token: process.env.GOOGLE_REFRESH_TOKEN })
+  auth.setCredentials({ refresh_token: (await getGoogleRefreshToken()) })
   return google.docs({ version: 'v1', auth })
 }
 

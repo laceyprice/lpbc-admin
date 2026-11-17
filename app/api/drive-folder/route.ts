@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { getGoogleRefreshToken } from '@/lib/google-token'
 export const dynamic = 'force-dynamic'
 
 // Shared Drive client factory
 async function getDrive() {
-  if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_REFRESH_TOKEN) {
+  if (!process.env.GOOGLE_CLIENT_ID || !(await getGoogleRefreshToken())) {
     throw Object.assign(new Error('Google credentials not configured — set GOOGLE_CLIENT_ID and GOOGLE_REFRESH_TOKEN'), { needsAuth: true })
   }
   const { google } = await import('googleapis')
@@ -11,7 +12,7 @@ async function getDrive() {
     process.env.GOOGLE_CLIENT_ID,
     process.env.GOOGLE_CLIENT_SECRET,
   )
-  auth.setCredentials({ refresh_token: process.env.GOOGLE_REFRESH_TOKEN })
+  auth.setCredentials({ refresh_token: (await getGoogleRefreshToken()) })
   return google.drive({ version: 'v3', auth })
 }
 

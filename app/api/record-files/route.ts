@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 export const dynamic = 'force-dynamic'
 import { createServerClient } from '@/lib/supabase'
 import { requireRole } from '@/lib/admin-auth'
+import { getGoogleRefreshToken } from '@/lib/google-token'
 
 // Documents & images attached to licenses and permits. admin + bookkeeper only.
 //
@@ -22,10 +23,10 @@ const TYPES = ['license', 'permit']
 const safeName = (n: string) => (n || 'file').replace(/[^\w.\- ]+/g, '_').slice(0, 120)
 
 async function getDrive() {
-  if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET || !process.env.GOOGLE_REFRESH_TOKEN) throw new Error('Google isn\'t connected')
+  if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET || !(await getGoogleRefreshToken())) throw new Error('Google isn\'t connected')
   const { google } = await import('googleapis')
   const auth = new google.auth.OAuth2(process.env.GOOGLE_CLIENT_ID, process.env.GOOGLE_CLIENT_SECRET)
-  auth.setCredentials({ refresh_token: process.env.GOOGLE_REFRESH_TOKEN })
+  auth.setCredentials({ refresh_token: (await getGoogleRefreshToken()) })
   return google.drive({ version: 'v3', auth })
 }
 

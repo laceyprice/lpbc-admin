@@ -4,6 +4,7 @@ export const maxDuration = 120
 import { createServerClient } from '@/lib/supabase'
 import { signedUrlFor } from '@/lib/signed-url'
 import { webSafeImage } from '@/lib/heic'
+import { getGoogleRefreshToken } from '@/lib/google-token'
 
 const BUCKET = 'bookkeeping-images'
 const JOB_PLANNING_BUCKET = 'job-planning'
@@ -11,14 +12,14 @@ const JOB_PLANNING_BUCKET = 'job-planning'
 // Build a Google Drive client using stored refresh token
 async function getDriveClient() {
   const { google } = await import('googleapis')
-  if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET || !process.env.GOOGLE_REFRESH_TOKEN) {
+  if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET || !(await getGoogleRefreshToken())) {
     throw new Error('Google OAuth not configured')
   }
   const oauth2Client = new google.auth.OAuth2(
     process.env.GOOGLE_CLIENT_ID,
     process.env.GOOGLE_CLIENT_SECRET
   )
-  oauth2Client.setCredentials({ refresh_token: process.env.GOOGLE_REFRESH_TOKEN })
+  oauth2Client.setCredentials({ refresh_token: (await getGoogleRefreshToken()) })
   return google.drive({ version: 'v3', auth: oauth2Client })
 }
 

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { getGoogleRefreshToken } from '@/lib/google-token'
 export const dynamic = 'force-dynamic'
 
 // Gmail-backed inbox API for Lacey@LaceyNPrice.com
@@ -15,7 +16,7 @@ export const dynamic = 'force-dynamic'
 // Re-auth via /api/email-scan?action=auth-url after expanding scopes in that route.
 
 async function getGmail() {
-  if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_REFRESH_TOKEN) {
+  if (!process.env.GOOGLE_CLIENT_ID || !(await getGoogleRefreshToken())) {
     throw new Error('Gmail not configured — missing GOOGLE_CLIENT_ID or GOOGLE_REFRESH_TOKEN')
   }
   const { google } = await import('googleapis')
@@ -23,7 +24,7 @@ async function getGmail() {
     process.env.GOOGLE_CLIENT_ID,
     process.env.GOOGLE_CLIENT_SECRET,
   )
-  auth.setCredentials({ refresh_token: process.env.GOOGLE_REFRESH_TOKEN })
+  auth.setCredentials({ refresh_token: (await getGoogleRefreshToken()) })
   return google.gmail({ version: 'v1', auth })
 }
 

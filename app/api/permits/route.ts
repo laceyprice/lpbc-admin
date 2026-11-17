@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 export const dynamic = 'force-dynamic'
 import { createServerClient } from '@/lib/supabase'
+import { getGoogleRefreshToken } from '@/lib/google-token'
 
 // GET  /api/permits                          → list all permits
 // GET  /api/permits?status=issued            → filter by status
@@ -184,14 +185,14 @@ async function syncFromInvoices(supabase: any) {
 // ══════════════════════════════════════════════════════════════
 
 async function scanPermitEmails(supabase: any, req: NextRequest) {
-  if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_REFRESH_TOKEN) {
+  if (!process.env.GOOGLE_CLIENT_ID || !(await getGoogleRefreshToken())) {
     return NextResponse.json({ error: 'Gmail not configured', needsAuth: true }, { status: 403 })
   }
 
   try {
     const { google } = await import('googleapis')
     const auth = new google.auth.OAuth2(process.env.GOOGLE_CLIENT_ID, process.env.GOOGLE_CLIENT_SECRET)
-    auth.setCredentials({ refresh_token: process.env.GOOGLE_REFRESH_TOKEN })
+    auth.setCredentials({ refresh_token: (await getGoogleRefreshToken()) })
     const gmail = google.gmail({ version: 'v1', auth })
 
     const q = [

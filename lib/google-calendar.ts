@@ -1,19 +1,20 @@
+import { getGoogleRefreshToken } from '@/lib/google-token'
 // Google Calendar integration
 // Requires: googleapis (in package.json)
 
-const GCAL_ID = () => process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_REFRESH_TOKEN
+const GCAL_ID = async () => process.env.GOOGLE_CLIENT_ID && (await getGoogleRefreshToken())
 const CAL = () => process.env.GOOGLE_CALENDAR_ID || 'Lacey@LaceyNPrice.com'
 async function gcal() {
   const { google } = await import('googleapis')
   const auth = new google.auth.OAuth2(process.env.GOOGLE_CLIENT_ID, process.env.GOOGLE_CLIENT_SECRET)
-  auth.setCredentials({ refresh_token: process.env.GOOGLE_REFRESH_TOKEN })
+  auth.setCredentials({ refresh_token: (await getGoogleRefreshToken()) })
   return google.calendar({ version: 'v3', auth })
 }
 
 // Pull events from the office Google Calendar for a window (2-way sync: events
 // created in Google show up in the app calendar). Returns normalized rows.
 export async function listGoogleCalendarEvents(timeMin: string, timeMax: string) {
-  if (!GCAL_ID()) return []
+  if (!(await GCAL_ID())) return []
   try {
     const calendar = await gcal()
     const res = await calendar.events.list({ calendarId: CAL(), timeMin, timeMax, singleEvents: true, orderBy: 'startTime', maxResults: 500 })
@@ -34,7 +35,7 @@ export async function listGoogleCalendarEvents(timeMin: string, timeMax: string)
 export async function patchGoogleCalendarEvent(eventId: string, fields: {
   summary?: string; location?: string; description?: string; startTime?: string; endTime?: string
 }): Promise<boolean> {
-  if (!GCAL_ID()) return false
+  if (!(await GCAL_ID())) return false
   try {
     const calendar = await gcal()
     const requestBody: any = {}
@@ -50,7 +51,7 @@ export async function patchGoogleCalendarEvent(eventId: string, fields: {
 }
 
 export async function deleteGoogleCalendarEvent(eventId: string): Promise<boolean> {
-  if (!GCAL_ID()) return false
+  if (!(await GCAL_ID())) return false
   try {
     const calendar = await gcal()
     await calendar.events.delete({ calendarId: CAL(), eventId })
@@ -64,7 +65,7 @@ export async function addEventToGoogleCalendar(appointment: {
   customerName?: string; customerPhone?: string
   serviceType?: string; notes?: string; eventId?: string
 }) {
-  if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_REFRESH_TOKEN) {
+  if (!process.env.GOOGLE_CLIENT_ID || !(await getGoogleRefreshToken())) {
     console.warn('Google Calendar not configured')
     return null
   }
@@ -74,7 +75,7 @@ export async function addEventToGoogleCalendar(appointment: {
       process.env.GOOGLE_CLIENT_ID,
       process.env.GOOGLE_CLIENT_SECRET,
     )
-    auth.setCredentials({ refresh_token: process.env.GOOGLE_REFRESH_TOKEN })
+    auth.setCredentials({ refresh_token: (await getGoogleRefreshToken()) })
     const calendar = google.calendar({ version: 'v3', auth })
     const calendarId = process.env.GOOGLE_CALENDAR_ID || 'Lacey@LaceyNPrice.com'
 
