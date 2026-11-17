@@ -639,6 +639,8 @@ export default function PlanJobPage() {
       const d = await res.json()
       if (!res.ok) { setError(d.error || 'Upload failed'); setUploading(false); return }
       setAttachments(prev => [...prev, ...(d.uploaded || [])])
+      // Save the plan so the new files are still there after a refresh (same as Drive imports).
+      if ((d.uploaded || []).length) markDirty()
     } catch (e: any) {
       setError(e?.message || 'Upload failed')
     }
@@ -649,6 +651,7 @@ export default function PlanJobPage() {
   async function removeAttachment(att: Attachment) {
     await fetch(`/api/job-planning?path=${encodeURIComponent(att.path)}`, { method: 'DELETE' })
     setAttachments(prev => prev.filter(a => a.path !== att.path))
+    markDirty()
   }
 
   // ── Drive Folder helpers ──────────────────────────────────────────────────
