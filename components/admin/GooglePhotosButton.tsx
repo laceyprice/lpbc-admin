@@ -5,9 +5,11 @@ import { Loader2, Images, X } from 'lucide-react'
 // "Google Photos" button: opens Google's own photo picker in a new tab, waits for the
 // selection, pulls each picked photo through /api/google-photos and hands them to
 // `onFiles` as ordinary File objects — so it plugs into any existing upload handler.
-export default function GooglePhotosButton({ onFiles, multiple = true, disabled, className, style, label = 'Google Photos', iconSize = 13, wrapClassName }: {
+export default function GooglePhotosButton({ onFiles, multiple = true, allowVideo = false, disabled, className, style, label = 'Google Photos', iconSize = 13, wrapClassName }: {
   onFiles: (files: File[]) => void | Promise<void>
   multiple?: boolean
+  /** also bring in videos (only where the upload accepts them) */
+  allowVideo?: boolean
   disabled?: boolean
   className?: string
   style?: React.CSSProperties
@@ -44,7 +46,7 @@ export default function GooglePhotosButton({ onFiles, multiple = true, disabled,
       const url = `${d.pickerUri}/autoclose`   // Google closes its tab once you press Done
       if (tab) tab.location.href = url
       else window.open(url, '_blank')
-      setMsg({ kind: 'info', text: 'Pick photos in the Google Photos tab and press Done…' })
+      setMsg({ kind: 'info', text: `Pick ${allowVideo ? 'photos or videos' : 'photos'} in the Google Photos tab and press Done…` })
 
       // Wait for the selection (up to 10 minutes).
       const deadline = Date.now() + 10 * 60_000
@@ -53,28 +55,28 @@ export default function GooglePhotosButton({ onFiles, multiple = true, disabled,
         if (cancelled.current) return
         if (Date.now() > deadline) throw new Error('Timed out waiting for your Google Photos selection')
         await new Promise(res => setTimeout(res, 3000))
-        const pr = await post('items', { sessionId })
+        const pr = await post('items', { sessionId, allowVideo })
         const pd = await pr.json().catch(() => ({}))
         if (!pr.ok) throw new Error(pd.error || 'Google Photos error')
         if (!pd.pending) items = pd.items || []
       }
       if (cancelled.current) return
-      if (!items.length) { setMsg({ kind: 'err', text: 'No photos were picked.' }); return }
+      if (!items.length) { setMsg({ kind: 'err', text: allowVideo ? 'Nothing was picked.' : 'No photos were picked (videos can’t be added here).' }); return }
 
       const files: File[] = []
       for (let i = 0; i < items.length; i++) {
         if (cancelled.current) return
-        setMsg({ kind: 'info', text: `Bringing in photo ${i + 1} of ${items.length}…` })
+        setMsg({ kind: 'info', text: `Bringing in ${items[i].mimeType.startsWith('video/') ? 'video' : 'photo'} ${i + 1} of ${items.length}…` })
         const it = items[i]
         const fr = await post('file', it)
         if (!fr.ok) continue
         const blob = await fr.blob()
-        const type = blob.type || 'image/jpeg'
+        const type = blob.type || it.mimeType || 'image/jpeg'
         // Downloads come back as JPEG even for iPhone HEIC originals — fix the extension to match.
         const name = type === 'image/jpeg' ? it.filename.replace(/\.(heic|heif|png|webp|gif)$/i, '').replace(/(\.jpe?g)?$/i, '.jpg') : it.filename
         files.push(new File([blob], name, { type }))
       }
-      if (!files.length) throw new Error('Could not download the picked photos')
+      if (!files.length) throw new Error('Could not download the picked items')
       setMsg(null)
       await onFiles(files)
     } catch (e: any) {

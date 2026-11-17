@@ -1415,7 +1415,7 @@ export default function PlanJobPage() {
             <input ref={fileRef} type="file" multiple accept="image/*,video/*,application/pdf" className="hidden"
               onChange={e => e.target.files && handleFiles(e.target.files)} />
           </div>
-          <div className="mt-2"><GooglePhotosButton disabled={uploading} onFiles={files => handleFiles(files)} /></div>
+          <div className="mt-2"><GooglePhotosButton allowVideo disabled={uploading} onFiles={files => handleFiles(files)} /></div>
 
           {uploading && (
             <div className="mt-2 text-xs text-blue-600 flex items-center gap-1"><Loader2 size={11} className="animate-spin" /> Uploading…</div>

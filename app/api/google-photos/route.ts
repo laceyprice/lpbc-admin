@@ -59,6 +59,7 @@ export async function POST(req: NextRequest) {
     const body = await req.json().catch(() => ({}))
     const sid = String(body.sessionId || '')
     if (!/^[\w-]+$/.test(sid)) return NextResponse.json({ error: 'sessionId required' }, { status: 400 })
+    const allowVideo = body.allowVideo === true
     const s = await fetch(`https://photospicker.googleapis.com/v1/sessions/${sid}`, { headers: H })
     const sd = await s.json().catch(() => ({}))
     if (!s.ok) return NextResponse.json({ error: sd?.error?.message || 'Google Photos session expired' }, { status: 502 })
@@ -75,7 +76,7 @@ export async function POST(req: NextRequest) {
       if (!m.ok) return NextResponse.json({ error: md?.error?.message || 'Could not list the picked photos' }, { status: 502 })
       for (const it of md.mediaItems || []) {
         const f = it.mediaFile || {}
-        if (!f.baseUrl || !String(f.mimeType || '').startsWith('image/')) continue   // photos only
+        if (!f.baseUrl || !(String(f.mimeType || '').startsWith('image/') || (allowVideo && String(f.mimeType || '').startsWith('video/')))) continue   // photos only
         items.push({ id: it.id, baseUrl: f.baseUrl, mimeType: f.mimeType, filename: f.filename || `photo_${it.id}.jpg` })
         if (items.length >= MAX_IMPORT) break
       }
@@ -92,9 +93,11 @@ export async function POST(req: NextRequest) {
     try { const u = new URL(baseUrl); okHost = u.protocol === 'https:' && u.hostname.endsWith('.googleusercontent.com') } catch {}
     if (!okHost) return NextResponse.json({ error: 'Not a Google Photos link' }, { status: 400 })
     // =w4096-h4096 → full-quality JPEG (also converts iPhone HEIC)
-    const dl = await fetch(`${baseUrl}=w4096-h4096`, { headers: H })
+    // Videos: =dv → the original video file. Photos: =w4096-h4096 → full-quality JPEG.
+    const isVideo = String(body.mimeType || '').startsWith('video/')
+    const dl = await fetch(`${baseUrl}${isVideo ? '=dv' : '=w4096-h4096'}`, { headers: H })
     if (!dl.ok) return NextResponse.json({ error: `Google Photos download failed (${dl.status})` }, { status: 502 })
-    return new NextResponse(await dl.arrayBuffer(), { headers: { 'Content-Type': dl.headers.get('content-type') || 'image/jpeg', 'Cache-Control': 'no-store' } })
+    return new NextResponse(dl.body, { headers: { 'Content-Type': dl.headers.get('content-type') || (isVideo ? 'video/mp4' : 'image/jpeg'), 'Cache-Control': 'no-store' } })
   }
 
   if (action === 'done') {
