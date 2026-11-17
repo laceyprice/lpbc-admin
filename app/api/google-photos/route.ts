@@ -26,6 +26,9 @@ async function getAccessToken(): Promise<string> {
 
 // POST /api/google-photos?action=create-session            → { sessionId, pickerUri }
 // POST /api/google-photos?action=import  { sessionId, session_id } → { pending } | { uploaded }
+// A 403 from Google is either a missing scope (reconnect) or the Picker API being off in Cloud Console.
+const why = (m: string) => /scope/i.test(m) ? { needsAuth: true } : /has not been used|is disabled|SERVICE_DISABLED/i.test(m) ? { error: 'The Google Photos Picker API is turned off for this app’s Google Cloud project. Enable it at console.cloud.google.com → APIs & Services → Library → “Photos Picker API”, wait a minute, then try again.' } : {}
+
 export async function POST(req: NextRequest) {
   const action = req.nextUrl.searchParams.get('action')
   let token: string
@@ -42,7 +45,7 @@ export async function POST(req: NextRequest) {
     if (!res.ok) {
       const msg = d?.error?.message || 'Could not start the Google Photos picker'
       // 403 usually means the Photos scope wasn't granted yet
-      return NextResponse.json({ error: msg, needsAuth: res.status === 403 }, { status: res.status === 403 ? 403 : 500 })
+      return NextResponse.json({ error: msg, ...why(msg) }, { status: res.status === 403 ? 403 : 500 })
     }
     return NextResponse.json({ sessionId: d.id, pickerUri: d.pickerUri })
   }
