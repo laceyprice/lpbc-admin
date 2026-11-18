@@ -1,6 +1,7 @@
 'use client'
 import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { Calendar, CheckSquare, Square, MapPin, Phone, Plus, Loader2, AlertCircle, ShieldAlert, Truck } from 'lucide-react'
 
 // Dashboard "Today" strip: today's calendar events (app + Google) and the running
@@ -18,6 +19,7 @@ export default function TodayPanel({ brand = '#b8895a', showEvents = true }: { b
   const [failed, setFailed] = useState(false)
   const [busyId, setBusyId] = useState('')
   const [toast, setToast] = useState('')
+  const router = useRouter()
 
   const load = useCallback(async () => {
     const start = new Date(); start.setHours(0, 0, 0, 0)
@@ -80,15 +82,15 @@ export default function TodayPanel({ brand = '#b8895a', showEvents = true }: { b
       <button onClick={() => complete(t.id)} disabled={busyId === t.id} aria-label="Mark done" className="mt-0.5 text-gray-300 hover:text-green-600 flex-shrink-0">
         {busyId === t.id ? <Loader2 size={18} className="animate-spin" /> : <Square size={18} />}
       </button>
-      <div className="min-w-0 flex-1">
-        <div className="text-sm font-semibold text-gray-900 break-words">{t.title}</div>
+      <Link href={`/admin/todo?open=${t.id}`} className="min-w-0 flex-1 group" title="Open this to-do">
+        <div className="text-sm font-semibold text-gray-900 break-words group-hover:text-blue-700 group-hover:underline">{t.title}</div>
         <div className="flex flex-wrap items-center gap-x-2 text-[11px] text-gray-400 mt-0.5">
           <span className={`inline-block w-1.5 h-1.5 rounded-full ${PRIORITY_DOT[t.priority] || PRIORITY_DOT.medium}`} />
           {late && <span className="font-bold text-red-600">Overdue · {new Date(String(t.due_date).slice(0, 10) + 'T12:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>}
           {!late && t.due_date && <span>Due today</span>}
           {t.assigned_to_name && <span>→ {t.assigned_to_name}</span>}
         </div>
-      </div>
+      </Link>
     </div>
   )
 
@@ -105,14 +107,17 @@ export default function TodayPanel({ brand = '#b8895a', showEvents = true }: { b
           {events === null ? <div className="py-10 flex justify-center"><Loader2 size={18} className="animate-spin text-gray-300" /></div>
             : events.length === 0 ? <div className="py-9 text-center text-gray-400 text-sm">Nothing on the calendar today</div>
             : events.map((e: any) => (
-              <div key={e.id} className="flex gap-3 px-5 py-3 border-b border-gray-50 last:border-0">
+              <div key={e.id} role="link" tabIndex={0} title="Open on the calendar"
+                onClick={() => router.push(`/admin/calendar?open=${encodeURIComponent(e.id)}`)}
+                onKeyDown={k => { if (k.key === 'Enter') router.push(`/admin/calendar?open=${encodeURIComponent(e.id)}`) }}
+                className="flex gap-3 px-5 py-3 border-b border-gray-50 last:border-0 cursor-pointer hover:bg-gray-50 group">
                 <div className="w-16 flex-shrink-0 text-xs font-bold pt-0.5" style={{ color: brand }}>
                   {e._all_day ? 'All day' : <>{fmtTime(e.start_time)}<div className="font-medium text-gray-400">{e.end_time && fmtTime(e.end_time)}</div></>}
                 </div>
                 <div className="min-w-0 flex-1">
-                  <div className="text-sm font-semibold text-gray-900 break-words line-clamp-2">{e.customer_name || e.title}</div>
+                  <div className="text-sm font-semibold text-gray-900 break-words line-clamp-2 group-hover:text-blue-700">{e.customer_name || e.title}</div>
                   {e.service_type && <div className="text-xs text-gray-500">{e.service_type}</div>}
-                  <div className="flex flex-wrap gap-x-4 gap-y-1 mt-1">
+                  <div className="flex flex-wrap gap-x-4 gap-y-1 mt-1" onClick={ev => ev.stopPropagation()}>
                     {e.service_address && <a href={`https://maps.google.com/?q=${encodeURIComponent(e.service_address)}`} target="_blank" rel="noopener noreferrer" className="text-xs text-gray-500 hover:text-blue-700 flex items-center gap-1"><MapPin size={12} /> {e.service_address}</a>}
                     {e.customer_phone && <a href={`tel:${e.customer_phone}`} className="text-xs text-gray-500 hover:text-blue-700 flex items-center gap-1"><Phone size={12} /> {e.customer_phone}</a>}
                     {e.customer_phone && e._source !== 'google' && <button onClick={() => onMyWay(e)} disabled={busyId === 'otw' + e.id} className="text-xs font-semibold flex items-center gap-1 hover:underline disabled:opacity-50" style={{ color: brand }}><Truck size={12} /> On my way</button>}

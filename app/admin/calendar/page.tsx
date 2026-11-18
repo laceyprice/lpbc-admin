@@ -60,6 +60,16 @@ export default function CalendarPage() {
 
   useEffect(() => { load(); loadContacts() }, [])
 
+  // ?open=<id> (from the dashboard) → go to that event's week and open it
+  const [openHandled, setOpenHandled] = useState(false)
+  useEffect(() => {
+    if (openHandled || loading) return
+    setOpenHandled(true)
+    const id = new URLSearchParams(window.location.search).get('open')
+    const a = id && appointments.find(x => x.id === id)
+    if (a) { setCurrent(new Date(a.start_time)); openAppt(a) }
+  }, [loading, appointments, openHandled])
+
   async function load() {
     setLoading(true)
     const res = await fetch('/api/appointments')

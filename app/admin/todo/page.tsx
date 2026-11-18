@@ -113,6 +113,16 @@ export default function TodoPage() {
 
   useEffect(() => { loadMyTodos(); loadTeam() }, [])
 
+  // ?open=<id> (from the dashboard) → open that todo once the list has loaded
+  const [openHandled, setOpenHandled] = useState(false)
+  useEffect(() => {
+    if (openHandled || !myTodos.length) return
+    const id = new URLSearchParams(window.location.search).get('open')
+    setOpenHandled(true)
+    const t = id && myTodos.find(x => x.id === id)
+    if (t) { if (t.status === 'done') setStatusFilter('all'); openEdit(t) }
+  }, [myTodos, openHandled])
+
   async function addAITodoToList(t: Todo) {
     const res = await fetch('/api/todos', {
       method: 'POST',

@@ -47,6 +47,18 @@ export default function ScheduleRequestsPage() {
 
   useEffect(() => { load() }, [])
 
+  // ?open=<id> (from the dashboard) → show and expand that request
+  const [openHandled, setOpenHandled] = useState(false)
+  useEffect(() => {
+    if (openHandled || loading) return
+    setOpenHandled(true)
+    const id = new URLSearchParams(window.location.search).get('open')
+    const r = id && requests.find(x => x.id === id)
+    if (!r) return
+    setFilter('all'); setSearch(''); setExpanded(r.id)
+    setTimeout(() => document.getElementById('req-' + r.id)?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 150)
+  }, [loading, requests, openHandled])
+
   async function load() {
     setLoading(true)
     const res = await fetch('/api/schedule')
@@ -218,7 +230,7 @@ export default function ScheduleRequestsPage() {
       ) : (
         <div className="space-y-3">
           {filtered.map(req => (
-            <div key={req.id} className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+            <div key={req.id} id={'req-' + req.id} className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
               {/* Header Row */}
               <div className="px-5 py-4 flex items-center justify-between cursor-pointer hover:bg-gray-50 transition-colors"
                 onClick={() => setExpanded(expanded === req.id ? null : req.id)}>

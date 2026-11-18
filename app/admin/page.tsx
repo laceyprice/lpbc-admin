@@ -102,7 +102,7 @@ export default function AdminDashboard() {
             <Link href="/admin/schedule-requests" className="text-sm font-medium" style={{ color: '#b8895a' }}>View All</Link>
           </div>
           {data.requests.length === 0 ? <div className="py-10 text-center text-gray-400 text-sm">No new requests</div> : data.requests.map((r: any) => (
-            <Link key={r.id} href="/admin/schedule-requests"
+            <Link key={r.id} href={`/admin/schedule-requests?open=${r.id}`}
               className="flex items-center justify-between gap-4 px-6 py-4 border-b border-gray-50 hover:bg-gray-50 transition-colors">
               <div className="min-w-0">
                 <div className="font-semibold text-gray-900 text-sm">{r.first_name} {r.last_name}{r.company_name ? <span className="text-gray-400 font-normal"> · {r.company_name}</span> : null}</div>
