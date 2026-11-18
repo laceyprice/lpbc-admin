@@ -84,6 +84,13 @@ export default function CalendarPage() {
     setContacts(Array.isArray(d) ? d : [])
   }
 
+  // Open an existing appointment in the edit form (used by ?open=<id> from the dashboard).
+  function openAppt(a: Appointment) {
+    setEditing(a)
+    const sd = new Date(a.start_time); const pad2 = (n: number) => String(n).padStart(2, "0")
+    setForm({ ...a, appt_date: `${sd.getFullYear()}-${pad2(sd.getMonth() + 1)}-${pad2(sd.getDate())}`, appt_period: sd.getHours() < 12 ? "AM" : "PM" } as any)
+  }
+
   function openCreate(defaultStart?: string) {
     const d = defaultStart ? new Date(defaultStart) : new Date()
     const pad = (n: number) => String(n).padStart(2, '0')
