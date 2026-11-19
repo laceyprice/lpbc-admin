@@ -28,10 +28,24 @@ async function upsertContactFromInvoice(supabase: any, src: any, knownContactId?
   if (email) contactData.email = email
   if (phone) contactData.phone = phone
   if (src.job_address) contactData.address = src.job_address
+  if (src.jobsite_city) contactData.city = src.jobsite_city
   if (src.company_name) contactData.company_name = src.company_name
 
   if (contactId) await supabase.from('contacts').update(contactData).eq('id', contactId)
   else await supabase.from('contacts').insert({ ...contactData, source: 'invoice' })
+}
+
+// Look up the city we already have on file for a street address (saved worksite first, then contact).
+async function cityForAddress(supabase: any, address?: string | null): Promise<string | null> {
+  const raw = (address || '').trim()
+  if (!raw) return null
+  try {
+    const { data: ws } = await supabase.from('worksites').select('city').ilike('address', raw).not('city', 'is', null).limit(1)
+    if (ws && ws[0]?.city) return ws[0].city
+    const { data: ct } = await supabase.from('contacts').select('city').ilike('address', raw).not('city', 'is', null).limit(1)
+    if (ct && ct[0]?.city) return ct[0].city
+  } catch {}
+  return null
 }
 
 // Auto-upsert a worksite when an invoice has a job_address.
@@ -45,7 +59,10 @@ async function ensureWorksite(supabase: any, opts: { job_address?: string | null
       .select('id')
       .ilike('address', raw)
       .maybeSingle()
-    if (existing?.id) return existing.id
+    if (existing?.id) {
+      if (opts.jobsite_city) await supabase.from('worksites').update({ city: opts.jobsite_city }).eq('id', existing.id).is('city', null)
+      return existing.id
+    }
     const { data: created } = await supabase
       .from('worksites')
       .insert({
@@ -88,6 +105,8 @@ export async function POST(req: NextRequest) {
 
   // Generate invoice number
   const invoice_number = body.invoice_number || generateInvoiceNumber()
+
+  if (!body.jobsite_city && body.job_address) body.jobsite_city = await cityForAddress(supabase, body.job_address)
 
   const { data, error } = await supabase.from('invoices').insert({
     invoice_number,
@@ -144,6 +163,8 @@ export async function PATCH(req: NextRequest) {
   if (updates.service_description) {
     updates.service_description = basicGrammarFix(updates.service_description)
   }
+
+  if (updates.job_address && !updates.jobsite_city) updates.jobsite_city = (await cityForAddress(supabase, updates.job_address)) || updates.jobsite_city
 
   const { data, error } = await supabase
     .from('invoices')

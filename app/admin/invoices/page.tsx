@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useMemo, useState, useRef } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { Plus, Search, Send, CheckCircle, FileText, Loader2, X, Save, Edit3, Trash2, Upload, Camera, Receipt, FileImage, BarChart2, TrendingUp, DollarSign, Clock, AlertCircle, ExternalLink, RotateCcw, Star, Ban } from 'lucide-react'
 import { formatCurrency, formatDateShort, formatPhone, generateDocNumber } from '@/lib/utils'
@@ -15,7 +15,7 @@ interface InvoiceAttachment {
   size?: number | null
 }
 
-interface Contact { id: string; first_name: string; last_name: string; email: string; phone: string; address: string }
+interface Contact { id: string; first_name: string; last_name: string; email: string; phone: string; address: string; city?: string }
 interface Invoice { id: string; invoice_number: string; invoice_type: string; customer_name: string; customer_email: string; customer_phone: string; job_address: string; service_date: string; service_type: string; service_description: string; amount_due: number; amount_paid: number; invoice_status: string; payment_type: string; stripe_payment_link: string; contact_id: string; created_at: string; paid_at: string; public_token?: string; sent_at?: string; last_sent_at?: string }
 
 const SC: Record<string, string> = { draft:'bg-gray-100 text-gray-600', sent:'bg-blue-100 text-blue-700', paid:'bg-green-100 text-green-700', overdue:'bg-red-100 text-red-700', approved:'bg-emerald-100 text-emerald-700', uncollectible:'bg-orange-100 text-orange-800' }
@@ -56,6 +56,10 @@ export default function InvoicesPage() {
   const searchParams = useSearchParams()
 
   useEffect(() => { loadInvoices(); loadContacts() }, [typeFilter])
+  const [worksiteList, setWorksiteList] = useState<{ address: string; city?: string }[]>([])
+  useEffect(() => {
+    fetch('/api/worksites').then(r => r.json()).then(d => setWorksiteList(Array.isArray(d) ? d : [])).catch(() => {})
+  }, [])
 
   // Handle prefill from schedule requests
   useEffect(() => {
@@ -117,9 +121,32 @@ export default function InvoicesPage() {
     const res = await fetch('/api/contacts'); const d = await res.json(); setContacts(Array.isArray(d) ? d : [])
   }
 
+  // Every street address we already know (saved worksites, contacts, past invoices/quotes) with its city.
+  const addrBook = useMemo(() => {
+    const m = new Map<string, { address: string; city: string }>()
+    const add = (address?: string | null, city?: string | null) => {
+      const a = (address || '').trim(); if (!a) return
+      const k = a.toLowerCase(); const cur = m.get(k)
+      if (!cur || (!cur.city && city)) m.set(k, { address: cur?.address || a, city: (city || cur?.city || '').trim() })
+    }
+    worksiteList.forEach(w => add(w.address, w.city))
+    contacts.forEach(c => add(c.address, c.city))
+    allInvoices.forEach(i => add(i.job_address, (i as any).jobsite_city))
+    return m
+  }, [worksiteList, contacts, allInvoices])
+  const cityFor = (address?: string | null) => addrBook.get((address || '').trim().toLowerCase())?.city || ''
+
+  // Opening a form with an address but no city (prefill, edit, picked customer): fill it in from what we know.
+  useEffect(() => {
+    if (!showForm) return
+    const a = (form as any).job_address, c = (form as any).jobsite_city
+    if (a && !c) { const known = cityFor(a); if (known) setForm(p => ({ ...p, jobsite_city: known } as any)) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showForm, (form as any).job_address, (form as any).jobsite_city, addrBook])
+
   function autofill(id: string) {
     const c = contacts.find(x => x.id === id); if (!c) return
-    setForm(p => ({ ...p, contact_id:c.id, customer_name:`${c.first_name} ${c.last_name}`, customer_email:c.email, customer_phone:c.phone, job_address:c.address, company_name:(c as any).company_name || '' }))
+    setForm(p => ({ ...p, contact_id:c.id, customer_name:`${c.first_name} ${c.last_name}`, customer_email:c.email, customer_phone:c.phone, job_address:c.address, jobsite_city: c.city || cityFor(c.address) || '', company_name:(c as any).company_name || '' } as any))
   }
 
   function validateForm(): string {
@@ -913,7 +940,17 @@ export default function InvoicesPage() {
                 ].map(({l,k,t='text',r=true}) => (
                   <div key={k}>
                     <label className="block text-sm font-semibold text-gray-700 mb-1">{l}</label>
-                    <input type={t} step={t==='number'?'0.01':undefined} value={(form as any)[k]||''} onChange={e => setForm(p => ({...p,[k]:t==='number'?parseFloat(e.target.value)||0:e.target.value}))} className={inputCls} required={r} />
+                    <input type={t} step={t==='number'?'0.01':undefined} value={(form as any)[k]||''}
+                      list={k==='job_address' ? 'known-addresses' : undefined} autoComplete={k==='job_address' ? 'off' : undefined}
+                      onChange={e => {
+                        const v = e.target.value
+                        if (k === 'job_address') {
+                          // Picking/typing a saved address brings its city along (unless you typed a different city yourself).
+                          const known = cityFor(v), prevKnown = cityFor((form as any).job_address)
+                          setForm(p => ({ ...p, job_address: v, ...(known && (!(p as any).jobsite_city || (p as any).jobsite_city === prevKnown) ? { jobsite_city: known } : {}) } as any))
+                        } else setForm(p => ({...p,[k]:t==='number'?parseFloat(v)||0:v}))
+                      }} className={inputCls} required={r} />
+                    {k==='job_address' && <datalist id="known-addresses">{Array.from(addrBook.values()).map(a => <option key={a.address} value={a.address} label={a.city || undefined} />)}</datalist>}
                   </div>
                 ))}
                 {form.invoice_type !== 'quote' && (<>
