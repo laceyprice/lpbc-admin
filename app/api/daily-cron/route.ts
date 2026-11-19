@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 export const dynamic = 'force-dynamic'
+export const maxDuration = 300
 import { createServerClient } from '@/lib/supabase'
 import { BUSINESS } from '@/lib/business'
 import { emailCustomer, simpleEmail } from '@/lib/notify'
@@ -140,6 +141,16 @@ export async function GET(req: NextRequest) {
     }
     summary.lead_todos = made
   } catch (e: any) { summary.leads_error = e.message }
+
+  // 7️⃣ Leads Generator (LPBC cabinets): new county permits → contractor in the CRM → marketing email queued
+  //    (sent only when auto-send is on and the template is approved). Refreshes the DBPR contractor list on the 1st.
+  if ((BUSINESS as { leadsGenerator?: boolean }).leadsGenerator) {
+    try {
+      const { runLeadsDaily, importDbpr } = await import('@/lib/leads')
+      summary.leads = JSON.stringify(await runLeadsDaily())
+      if (new Date().getDate() === 1) summary.leads_dbpr = JSON.stringify(await importDbpr())
+    } catch (e: any) { summary.leads_error = e.message }
+  }
 
   return NextResponse.json({ ok: true, ...summary })
 }

@@ -22,12 +22,20 @@ export async function GET() {
   // Also delete where first_name is null or empty
   await supabase.from('contacts').delete().or('first_name.is.null,first_name.eq.')
 
-  const { data, error } = await supabase
-    .from('contacts')
-    .select('*')
-    .order('created_at', { ascending: false })
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json(data)
+  // Page through 1,000 rows at a time (Supabase's per-request cap) so big imports
+  // (e.g. the Leads Generator's contractor list) don't hide older contacts.
+  const all: any[] = []
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await supabase
+      .from('contacts')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .range(from, from + 999)
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    all.push(...(data || []))
+    if (!data || data.length < 1000 || from >= 49000) break
+  }
+  return NextResponse.json(all)
 }
 
 export async function POST(req: NextRequest) {

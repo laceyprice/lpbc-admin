@@ -10,4 +10,5 @@ export const BUSINESS = {
   brandDark: '#2f5a5e',
   logo: '/logo.png',
   planStudio: true,                      // LPBC only: Plan & Design Studio in the menu
+  leadsGenerator: true,                  // LPBC only: cabinet-sales Leads Generator (menu + daily permit job)
 }

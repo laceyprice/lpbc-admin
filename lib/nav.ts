@@ -1,4 +1,4 @@
-import { LayoutDashboard, Users, FileText, BookOpen, Calendar, CalendarDays, ClipboardList, Receipt, BarChart3, UserCog, Sparkles, MapPin, ShieldCheck, Package, FileCheck, Wallet, PenLine, KeyRound, Settings, Link2, Repeat, Car, ClipboardCheck, Hammer, Banknote, TrendingUp, SlidersHorizontal, HardHat, Landmark, FolderLock } from 'lucide-react'
+import { LayoutDashboard, Users, FileText, BookOpen, Calendar, CalendarDays, ClipboardList, Receipt, BarChart3, UserCog, Sparkles, MapPin, ShieldCheck, Package, FileCheck, Wallet, PenLine, KeyRound, Settings, Link2, Repeat, Car, ClipboardCheck, Hammer, Banknote, TrendingUp, SlidersHorizontal, HardHat, Landmark, FolderLock, Target } from 'lucide-react'
 import { BUSINESS } from '@/lib/business'
 
 // The admin menu, defined once. Both apps share this file; the only per-business switch is
@@ -23,6 +23,7 @@ export const GROUPS: NavGroup[] = [
   {
     id: 'customers', label: 'Customers & Sales', icon: Users, items: [
       { href: '/admin/crm', label: 'CRM & Email', icon: Users, roles: ALL },
+      ...((BUSINESS as { leadsGenerator?: boolean }).leadsGenerator ? [{ href: '/admin/leads', label: 'Leads Generator', icon: Target, roles: STAFF } as NavItem] : []),
       { href: '/admin/invoices', label: 'Invoices & Quotes', icon: FileText, roles: ALL },
       { href: '/admin/collections', label: 'Collections (Who Owes Me)', icon: Banknote, roles: STAFF },
       { href: '/admin/agreements', label: 'Service Agreements', icon: Repeat, roles: STAFF },

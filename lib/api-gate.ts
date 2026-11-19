@@ -16,7 +16,7 @@ const INVOICING_BLOCKED = [
   '/api/business-tax-docs', '/api/vendor-documents', '/api/vault', '/api/vault-accounts', '/api/google-token', '/api/notepad',
   '/api/user-roles', '/api/record-files', '/api/licenses', '/api/permits', '/api/permit-jurisdictions', '/api/suppliers',
   '/api/inventory', '/api/materials-lists', '/api/property-materials', '/api/email-scan', '/api/bootstrap', '/api/parse-receipt', '/api/expirations',
-  '/api/job-profit', '/api/agreements', '/api/mileage', '/api/checklists', '/api/subcontractors', '/api/settings', '/api/notify',
+  '/api/job-profit', '/api/agreements', '/api/mileage', '/api/checklists', '/api/subcontractors', '/api/settings', '/api/notify', '/api/leads',
 ]
 
 const startsWithPath = (path: string, base: string) => path === base || path.startsWith(base + '/')
@@ -35,6 +35,7 @@ export function decide(i: GateInput): GateResult {
   if (path === '/api/version' && m === 'GET') return { level: 'public' }
   if ((path === '/api/daily-cron' || path === '/api/reminder-cron') && m === 'GET') return { level: 'public' }  // route requires CRON_SECRET
   if (path === '/api/google-callback' && m === 'GET') return { level: 'public' }     // Google OAuth redirect
+  if (path === '/api/leads-unsubscribe' && (m === 'GET' || m === 'POST')) return { level: 'public' }   // unsubscribe link in Leads Generator emails (secret token)
   if (path === '/api/twilio-voice' && m === 'POST') return { level: 'public' }        // Twilio missed-call webhook (route verifies Twilio's signature)
   // LPBC e-signature links: the signer has a private token, not a login.
   if (path === '/api/signature-requests') {

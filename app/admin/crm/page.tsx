@@ -5,7 +5,7 @@ import { useRef } from 'react'
 import { formatPhone } from '@/lib/utils'
 import { EmailInbox } from '@/app/admin/email/page'
 
-interface Contact { id: string; first_name: string; last_name: string; email: string; phone: string; address: string; city: string; state: string; zip: string; company_name: string; notes: string; source: string; created_at: string }
+interface Contact { id: string; first_name: string; last_name: string; email: string; phone: string; address: string; city: string; state: string; zip: string; company_name: string; notes: string; source: string; created_at: string; tags?: string[] | null; license_number?: string | null; email_opt_out?: boolean }
 const empty: Partial<Contact> = { first_name:'',last_name:'',email:'',phone:'',address:'',city:'',state:'',zip:'',company_name:'',notes:'' }
 
 export default function CRMPage() {
@@ -19,6 +19,9 @@ export default function CRMPage() {
   const [form, setForm] = useState<Partial<Contact>>(empty)
   const [saving, setSaving] = useState(false)
   const [importing, setImporting] = useState(false)
+  // Leads Generator: contractor leads (tag "cabinet contractor") are hidden from the main list by default
+  const [leadFilter, setLeadFilter] = useState<'main' | 'leads' | 'cabinet' | 'all'>('main')
+  const [converting, setConverting] = useState(false)
   const importRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => { fetch() }, [])
@@ -81,13 +84,29 @@ export default function CRMPage() {
     finally { setImporting(false); if (importRef.current) importRef.current.value = '' }
   }
 
-  const filtered = contacts.filter(c => !search || `${c.first_name} ${c.last_name} ${c.email} ${c.phone} ${c.company_name}`.toLowerCase().includes(search.toLowerCase()))
+  const hasTags = contacts.some(c => Array.isArray(c.tags) && c.tags.length)
+  const isLead = (c: Contact) => !!c.tags?.includes('cabinet contractor')
+  const leadCount = contacts.filter(isLead).length
+  const inFilter = (c: Contact) => !hasTags || leadFilter === 'all' || (leadFilter === 'main' ? !isLead(c) : leadFilter === 'leads' ? isLead(c) : !!c.tags?.includes('cabinet customer'))
+
+  async function convertToCustomer(c: Contact) {
+    if (!confirm(`Mark ${c.company_name || c.first_name} as a cabinet customer?`)) return
+    setConverting(true)
+    try {
+      const res = await window.fetch('/api/leads?action=convert', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contact_id: c.id }) })
+      const j = await res.json()
+      if (!res.ok) throw new Error(j.error || 'Failed')
+      setSelected({ ...c, tags: j.tags }); await fetch()
+    } catch (e: any) { alert(e.message) } finally { setConverting(false) }
+  }
+
+  const filtered = contacts.filter(inFilter).filter(c => !search || `${c.first_name} ${c.last_name} ${c.email} ${c.phone} ${c.company_name}`.toLowerCase().includes(search.toLowerCase()))
   const inputCls = 'w-full px-3 py-2.5 rounded-xl border border-gray-200 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:border-blue-400'
 
   return (
     <div className="p-4 md:p-8 pt-16 md:pt-8 h-full">
       <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
-        <div><h1 className="text-2xl font-extrabold text-gray-900">CRM</h1><p className="text-gray-500 text-sm">{tab === 'contacts' ? `${contacts.length} contacts` : 'Email inbox'}</p></div>
+        <div><h1 className="text-2xl font-extrabold text-gray-900">CRM</h1><p className="text-gray-500 text-sm">{tab === 'contacts' ? `${contacts.filter(inFilter).length} contacts` : 'Email inbox'}</p></div>
         {tab === 'contacts' && (
           <div className="flex gap-3">
             <label className={`flex items-center gap-2 border border-gray-200 text-gray-600 font-semibold px-4 py-2.5 rounded-xl cursor-pointer hover:bg-gray-50 ${importing ? 'opacity-60 cursor-not-allowed' : ''}`}>
@@ -114,6 +133,13 @@ export default function CRMPage() {
       </div>
       {tab === 'email' && <EmailInbox embedded />}
       {tab === 'contacts' && <>
+      {hasTags && (
+        <div className="flex flex-wrap gap-2 mb-3">
+          {([['main', 'Customers & contacts'], ['leads', `Cabinet leads (${leadCount})`], ['cabinet', 'Cabinet customers'], ['all', 'Everyone']] as const).map(([k, l]) => (
+            <button key={k} onClick={() => setLeadFilter(k)} className={`px-3 py-1.5 rounded-full text-xs font-semibold ${leadFilter === k ? 'text-white' : 'bg-white border border-gray-200 text-gray-600'}`} style={leadFilter === k ? { background: '#b8895a' } : undefined}>{l}</button>
+          ))}
+        </div>
+      )}
       <div className="relative mb-5">
         <Search size={15} className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" />
         <input value={search} onChange={e => setSearch(e.target.value)} onKeyDown={e => e.key==='Enter' && fetch(search)} placeholder="Search by name, email, phone..." className="w-full pl-11 pr-4 py-3 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:border-blue-400" />
@@ -133,6 +159,7 @@ export default function CRMPage() {
                     <div className="font-semibold text-gray-900 text-sm truncate">{c.first_name} {c.last_name}</div>
                     <div className="text-gray-500 text-xs truncate">{c.email || formatPhone(c.phone || '')}</div>
                     {c.company_name && <div className="text-xs truncate" style={{ color:'#b8895a' }}>{c.company_name}</div>}
+                    {!!c.tags?.length && <div className="flex flex-wrap gap-1 mt-0.5">{c.tags.map(t => <span key={t} className="text-[10px] bg-amber-50 text-amber-700 px-1.5 rounded-full">{t}</span>)}</div>}
                   </div>
                   <div className="flex gap-1">
                     <button onClick={e => { e.stopPropagation(); setForm({...c}); setEditing(true); setShowForm(true) }} className="p-1.5 rounded-lg hover:bg-blue-50 text-gray-400 hover:text-blue-600 transition-colors"><Edit2 size={13} /></button>
@@ -153,6 +180,9 @@ export default function CRMPage() {
                     <h2 className="text-xl font-bold text-gray-900">{selected.first_name} {selected.last_name}</h2>
                     {selected.company_name && <p className="text-sm" style={{ color:'#b8895a' }}>{selected.company_name}</p>}
                     <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full mt-1 inline-block capitalize">{selected.source||'manual'}</span>
+                    {selected.tags?.map(t => <span key={t} className="text-xs bg-amber-50 text-amber-700 px-2 py-0.5 rounded-full mt-1 ml-1 inline-block">{t}</span>)}
+                    {selected.license_number && <span className="text-xs text-gray-500 ml-1">{selected.license_number}</span>}
+                    {selected.email_opt_out && <span className="text-xs text-red-600 font-semibold ml-1">Unsubscribed from marketing</span>}
                   </div>
                 </div>
                 <button onClick={() => setSelected(null)}><X size={18} className="text-gray-400" /></button>
@@ -163,6 +193,11 @@ export default function CRMPage() {
                 {selected.address && <div className="flex items-start gap-3 p-3 rounded-xl"><MapPin size={15} className="mt-0.5" style={{ color:'#b8895a' }} /><div className="text-sm text-gray-700"><div>{selected.address}</div><div>{[selected.city,selected.state,selected.zip].filter(Boolean).join(', ')}</div></div></div>}
               </div>
               {selected.notes && <div className="mt-5 p-4 bg-yellow-50 rounded-xl border border-yellow-100"><h3 className="text-xs font-bold text-yellow-700 uppercase tracking-wider mb-2">Notes</h3><p className="text-sm text-gray-700 whitespace-pre-wrap">{selected.notes}</p></div>}
+              {isLead(selected) && (
+                <button onClick={() => convertToCustomer(selected)} disabled={converting} className="mt-5 w-full flex items-center justify-center gap-2 border-2 font-semibold py-2.5 rounded-xl disabled:opacity-60" style={{ borderColor:'#b8895a', color:'#b8895a' }}>
+                  {converting ? <Loader2 size={14} className="animate-spin" /> : <User size={14} />}Became a cabinet customer
+                </button>
+              )}
               <div className="mt-5 flex gap-3">
                 <button onClick={() => { setForm({...selected}); setEditing(true); setShowForm(true) }} className="flex-1 flex items-center justify-center gap-2 text-white font-semibold py-2.5 rounded-xl" style={{ background:'#b8895a' }}><Edit2 size={14} />Edit</button>
                 <button onClick={() => del(selected.id)} className="flex items-center gap-2 bg-red-50 text-red-600 font-semibold px-4 py-2.5 rounded-xl"><Trash2 size={14} /></button>
