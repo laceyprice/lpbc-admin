@@ -74,6 +74,27 @@ export default function ReportsPage() {
   }, [tab, from, to, selectedAccountId])
   useEffect(() => { if (tab === 'generate') loadSavedReports() }, [tab])
 
+  // Are the Bank tab and Posted tab categories in step? If not, reports (which read different sides) disagree with the books.
+  const [drift, setDrift] = useState<any>(null)
+  const [driftBusy, setDriftBusy] = useState(false)
+  const [driftOpen, setDriftOpen] = useState(false)
+  const loadDrift = () => fetch('/api/books-sync').then(r => r.json()).then(d => setDrift(d && !d.error ? d : null)).catch(() => {})
+  useEffect(() => { loadDrift() }, [])
+  async function fixDrift(prefer: 'bank' | 'posted') {
+    const msg = prefer === 'bank'
+      ? 'Copy the Bank tab categories onto the Posted entries so they match?'
+      : 'Copy the Posted tab categories back onto the bank transactions so they match?'
+    if (!confirm(msg)) return
+    setDriftBusy(true)
+    try {
+      const res = await fetch('/api/books-sync', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prefer }) })
+      const d = await res.json()
+      if (!res.ok) { alert(d.error || 'Could not sync'); return }
+      await loadDrift()
+      if (tab !== 'generate') await load(true)
+    } finally { setDriftBusy(false) }
+  }
+
   async function loadSavedReports() {
     setSavedLoading(true)
     try {
@@ -550,6 +571,31 @@ export default function ReportsPage() {
           </div>
         )}
       </div>
+
+      {drift && drift.total > 0 && (
+        <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+            <div className="flex-1 min-w-[16rem]">
+              <b>{drift.total} transaction{drift.total === 1 ? '' : 's'} don’t match between the Bank and Posted tabs.</b>{' '}
+              Reports read different sides (Profit &amp; Loss uses Posted, Cash Flow uses Bank), so a category changed in one place may not show on the other.
+              <button onClick={() => setDriftOpen(o => !o)} className="ml-2 underline">{driftOpen ? 'hide' : 'see examples'}</button>
+            </div>
+            <button onClick={() => fixDrift('bank')} disabled={driftBusy} className="px-3 py-1.5 rounded-lg text-xs font-bold text-white disabled:opacity-60" style={{ background: '#b8895a' }}>Use Bank categories</button>
+            <button onClick={() => fixDrift('posted')} disabled={driftBusy} className="px-3 py-1.5 rounded-lg text-xs font-bold bg-white border border-amber-300 disabled:opacity-60">Use Posted categories</button>
+          </div>
+          {driftOpen && (
+            <div className="mt-3 text-xs">
+              <div className="mb-1 text-amber-800">{drift.categoryMismatch} category differences · {drift.missingEntries} categorized but not posted · {drift.accountMismatch} bank-account differences{drift.duplicateEntries ? ` · ${drift.duplicateEntries} duplicated entries` : ''}</div>
+              {(drift.samples || []).map((s: any, i: number) => (
+                <div key={i} className="py-1 border-t border-amber-100 flex flex-wrap gap-x-3">
+                  <span className="text-amber-700">{s.date}</span><span className="font-medium truncate max-w-[18rem]">{s.description}</span>
+                  <span>Bank: <b>{s.bank}</b></span><span>Posted: <b>{s.posted}</b></span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Account Selector */}
       {financialAccounts.length > 0 && (

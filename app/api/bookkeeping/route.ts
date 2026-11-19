@@ -323,16 +323,16 @@ export async function PATCH(req: NextRequest) {
 
   // If a bank transaction gets categorized (legacy `category` text or new
   // `account_id`), sync the change into the accounting ledger.
-  if (tableName === 'bank_transactions' && (updates.category || updates.account_id)) {
+  // Includes clearing a category (account_id → null) and changing which bank account it belongs to.
+  if (tableName === 'bank_transactions' && (updates.category || 'account_id' in updates || 'financial_account_id' in updates)) {
     const tx = data
-    const existingEntry = await supabase
+    const existingEntries = await supabase
       .from('accounting_entries')
       .select('id')
       .eq('bank_transaction_id', id)
-      .single()
 
-    if (!existingEntry.data) {
-      await supabase.from('accounting_entries').insert({
+    if (!(existingEntries.data || []).length) {
+      if (tx.account_id || tx.category) await supabase.from('accounting_entries').insert({
         transaction_date: tx.transaction_date,
         description: tx.description,
         amount: tx.amount,
@@ -348,12 +348,22 @@ export async function PATCH(req: NextRequest) {
     } else {
       const sync: Record<string, unknown> = {}
       if (updates.category) sync.category = updates.category
-      if (updates.account_id) sync.account_id = updates.account_id
+      if ('account_id' in updates) sync.account_id = updates.account_id || null
+      if ('financial_account_id' in updates) sync.financial_account_id = updates.financial_account_id || null
       if (updates.check_number !== undefined) sync.check_number = updates.check_number
-      await supabase.from('accounting_entries')
+      if (Object.keys(sync).length) await supabase.from('accounting_entries')
         .update(sync)
         .eq('bank_transaction_id', id)
     }
+  }
+
+  // The other direction: re-categorizing a posted entry also updates the bank transaction it came from,
+  // so Cash Flow / Reconciliation (bank side) and Profit & Loss (posted side) stay in agreement.
+  if (tableName === 'accounting_entries' && data?.bank_transaction_id && ('account_id' in updates || 'category' in updates)) {
+    const back: Record<string, unknown> = {}
+    if ('account_id' in updates) back.account_id = updates.account_id || null
+    if ('category' in updates) back.category = updates.category || null
+    await supabase.from('bank_transactions').update(back).eq('id', data.bank_transaction_id)
   }
 
   return NextResponse.json(data)

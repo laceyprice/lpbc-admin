@@ -11,7 +11,7 @@ export type GateResult = { level: 'public' } | { level: 'user' } | { level: 'sta
 
 // The "invoicing" role (office help who only send invoices) must NOT reach financial / sensitive APIs.
 const INVOICING_BLOCKED = [
-  '/api/bookkeeping', '/api/reports', '/api/saved-reports', '/api/reconciliation', '/api/bank-accounts', '/api/bank-statements',
+  '/api/bookkeeping', '/api/books-sync', '/api/reports', '/api/saved-reports', '/api/reconciliation', '/api/bank-accounts', '/api/bank-statements',
   '/api/plaid', '/api/expenses', '/api/chart-of-accounts', '/api/financial-accounts', '/api/transaction-images', '/api/tax-documents',
   '/api/business-tax-docs', '/api/vendor-documents', '/api/vault', '/api/vault-accounts', '/api/google-token', '/api/notepad',
   '/api/user-roles', '/api/record-files', '/api/licenses', '/api/permits', '/api/permit-jurisdictions', '/api/suppliers',
