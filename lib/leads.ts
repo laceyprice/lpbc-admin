@@ -247,6 +247,7 @@ export async function fetchEnergovPermits(src: EnergovSource, since: Date, known
   const h = await energovHeaders(src.base)
   const crit = (await (await fetch(`${src.base}/api/energov/search/criteria`, { headers: h, cache: 'no-store' })).json()).Result
   const permits: PermitIn[] = []
+  const todo: any[] = []
   let scanned = 0, newest: string | null = null
   for (let page = 1; page <= maxPages; page++) {
     const body = { ...crit, SearchModule: 1, FilterModule: 2, PageNumber: page, PageSize: 100, SortBy: 'ApplyDate', SortAscending: false,
@@ -263,9 +264,17 @@ export async function fetchEnergovPermits(src: EnergovSource, since: Date, known
       if (applied && applied < since) { reachedOld = true; continue }
       if (!isLeadPermit(x.CaseType || '', x.CaseWorkclass || '')) continue
       if (known.has(`${src.key}|${x.CaseNumber}`)) continue
-      // contractor details live on the permit itself
-      let d: any = null
-      try { d = (await (await fetch(`${src.base}/api/energov/permits/permit/${x.CaseId}`, { headers: h, cache: 'no-store' })).json())?.Result } catch { /* keep the permit without contacts */ }
+      todo.push(x)
+    }
+    if (reachedOld) break
+  }
+  // contractor details live on the permit itself; fetch 8 at a time (one by one outlasts the request timeout)
+  for (let i = 0; i < todo.length; i += 8) {
+    const details = await Promise.all(todo.slice(i, i + 8).map(async x => {
+      try { return (await (await fetch(`${src.base}/api/energov/permits/permit/${x.CaseId}`, { headers: h, cache: 'no-store' })).json())?.Result } catch { return null } // keep the permit without contacts
+    }))
+    todo.slice(i, i + 8).forEach((x, k) => {
+      const d: any = details[k]
       const contacts: any[] = d?.Contacts || []
       const con = contacts.find(c => /^contractor$/i.test(c.ContactTypeName)) || contacts.find(c => /contractor/i.test(`${c.ContactTypeName} ${c.Title}`))
       permits.push({
@@ -275,8 +284,7 @@ export async function fetchEnergovPermits(src: EnergovSource, since: Date, known
         contractor_company: titleCase(clean(con?.GlobalEntityName)), contractor_name: titleCase(clean(`${con?.FirstName || ''} ${con?.LastName || ''}`)),
         contractor_email: normEmail(con?.EmailTo || con?.OtherEmail), contractor_phone: clean(con?.Phone), contractor_license: clean(con?.ContactNumber),
       })
-    }
-    if (reachedOld) break
+    })
   }
   return { permits, scanned, newest }
 }

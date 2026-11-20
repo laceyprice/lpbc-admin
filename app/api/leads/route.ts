@@ -18,6 +18,15 @@ import {
 //   GET  ?view=preview                    → rendered sample of the current template
 //   POST ?action=import_dbpr | run_now | send | cancel | convert | upload_permits | save_settings | approve | set_auto_send
 
+// One background job of each kind per server process (a double click won't start two).
+const running = new Set<string>()
+function startJob(kind: string, job: () => Promise<any>, onError: (e: any) => Promise<any>) {
+  if (running.has(kind)) return { started: false, already_running: true }
+  running.add(kind)
+  job().catch(e => onError(e).catch(() => {})).finally(() => running.delete(kind))
+  return { started: true }
+}
+
 const err = (e: any, status = 500) => NextResponse.json({ error: e?.message || String(e) }, { status })
 
 export async function GET(req: NextRequest) {
@@ -83,11 +92,15 @@ export async function POST(req: NextRequest) {
   const sb = createServerClient()
   try {
     switch (action) {
+      // Both jobs take longer than the gateway's ~60s timeout, so start them in the background and
+      // return straight away. The page polls the summary until last_import / last_run changes.
       case 'import_dbpr':
-        return NextResponse.json(await importDbpr({ licenseTypes: body.license_types, includeInactive: !!body.include_inactive }))
+        return NextResponse.json(startJob('import', () => importDbpr({ licenseTypes: body.license_types, includeInactive: !!body.include_inactive }),
+          e => saveLeadSettings({ last_import: { at: new Date().toISOString(), summary: { error: e?.message || 'failed' } } })))
 
       case 'run_now':
-        return NextResponse.json(await runLeadsDaily({ manual: true }))
+        return NextResponse.json(startJob('run', () => runLeadsDaily({ manual: true }),
+          e => saveLeadSettings({ last_run: { at: new Date().toISOString(), summary: { error: e?.message || 'failed' } } })))
 
       case 'send': {
         // Sending real marketing email — admin only, and only with an approved template (checked in sendLeadEmails).

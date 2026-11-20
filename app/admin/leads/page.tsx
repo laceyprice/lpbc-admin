@@ -39,6 +39,32 @@ export default function LeadsPage() {
     finally { setBusy('') }
   }
 
+  // Import and permit check run in the background on the server (they outlast the gateway timeout).
+  // Start the job, then poll the summary until its last_import / last_run timestamp changes.
+  async function runJob(label: 'import' | 'run', action: string, key: 'last_import' | 'last_run', verb: string) {
+    setBusy(label); setMsg({ ok: true, text: `${verb}… this can take a few minutes. You can stay on this page.` })
+    try {
+      const before = data?.settings?.[key]?.at || null
+      const r = await api(`/api/leads?action=${action}`, {})
+      if (r.already_running) setMsg({ ok: true, text: `Already running. Waiting for it to finish…` })
+      const deadline = Date.now() + 15 * 60000
+      while (Date.now() < deadline) {
+        await new Promise(res => setTimeout(res, 5000))
+        let d: any
+        try { d = await api('/api/leads?view=summary') } catch { continue }
+        const now = d?.settings?.[key]
+        if (now?.at && now.at !== before) {
+          setData(d)
+          if (now.summary?.error) setMsg({ ok: false, text: `${verb} failed: ${now.summary.error}` })
+          else setMsg({ ok: true, text: `Done: ${summaryText(now.summary)}` })
+          return
+        }
+      }
+      setMsg({ ok: false, text: 'Still running after 15 minutes. Refresh the page later to see the result.' })
+    } catch (e: any) { setMsg({ ok: false, text: e.message }) }
+    finally { setBusy('') }
+  }
+
   async function showPreview(id?: string) {
     try { setPreview(await api(`/api/leads?view=preview${id ? `&id=${id}` : ''}`)) } catch (e: any) { setMsg({ ok: false, text: e.message }) }
   }
@@ -80,7 +106,7 @@ export default function LeadsPage() {
       </div>
 
       {!data && !loadError && <div className="flex justify-center py-16"><Loader2 className="animate-spin" style={{ color: BRAND }} /></div>}
-      {data && tab === 'overview' && <Overview data={data} busy={busy} run={run} />}
+      {data && tab === 'overview' && <Overview data={data} busy={busy} run={run} runJob={runJob} />}
       {data && tab === 'permits' && <Permits data={data} busy={busy} run={run} />}
       {data && tab === 'queue' && <Queue data={data} busy={busy} run={run} showPreview={showPreview} />}
       {data && tab === 'contractors' && <Contractors run={run} busy={busy} />}
@@ -113,7 +139,7 @@ const Btn = ({ onClick, busy, icon: Icon, children, primary, disabled }: any) =>
 const Card = ({ children, className = '' }: any) => <div className={`bg-white rounded-2xl border border-gray-100 shadow-sm p-5 ${className}`}>{children}</div>
 const summaryText = (r: any) => Object.entries(r || {}).filter(([k]) => k !== 'ran_at' && k !== 'manual').map(([k, v]) => `${k.replace(/_/g, ' ')}: ${v}`).join(' · ')
 
-function Overview({ data, busy, run }: { data: any; busy: string; run: RunFn }) {
+function Overview({ data, busy, runJob }: { data: any; busy: string; run: RunFn; runJob: (label: "import" | "run", action: string, key: "last_import" | "last_run", verb: string) => Promise<void> }) {
   const { counts, settings: s } = data
   const stats = [
     { label: 'Contractor leads', v: counts.leads }, { label: 'Leads with email', v: counts.leadsWithEmail },
@@ -131,14 +157,14 @@ function Overview({ data, busy, run }: { data: any; busy: string; run: RunFn }) 
           <p className="text-sm text-gray-600 mb-3">Downloads the state's licensee file and adds every active general and building contractor whose address is in the three counties to the CRM, tagged <b>cabinet contractor</b>. People already in the CRM are matched (licence, name + city) and tagged instead of duplicated. It refreshes automatically on the 1st of each month.</p>
           <p className="text-xs text-gray-500 mb-3">Licence types: {s.license_types.join(', ')}. The state file has no emails or phone numbers. Those come from permits, or you can add them yourself.</p>
           {s.last_import && <p className="text-xs text-gray-500 mb-3">Last import {fmtDateTime(s.last_import.at)}: {summaryText(s.last_import.summary)}</p>}
-          <Btn primary busy={busy === 'import'} icon={Download} onClick={() => run('import', () => api('/api/leads?action=import_dbpr', {}), r => `Imported: ${summaryText(r)}`)}>Import / refresh contractors</Btn>
+          <Btn primary busy={busy === 'import'} icon={Download} disabled={!!busy} onClick={() => runJob('import', 'import_dbpr', 'last_import', 'Importing contractors')}>Import / refresh contractors</Btn>
         </Card>
 
         <Card>
           <h2 className="font-bold text-gray-900 mb-1">2 · Daily permit check</h2>
           <p className="text-sm text-gray-600 mb-3">Every day the daily job reads new <b>new-construction and remodel</b> permits from the Okaloosa and Walton county portals, saves the contractor (with email and phone) to the CRM, and queues one email per contractor. It never emails the same contractor more often than every {s.min_days_between} days.</p>
           {s.last_run && <p className="text-xs text-gray-500 mb-3">Last run {fmtDateTime(s.last_run.at)}: {summaryText(s.last_run.summary)}</p>}
-          <Btn busy={busy === 'run'} icon={RefreshCw} onClick={() => run('run', () => api('/api/leads?action=run_now', {}), r => `Checked: ${summaryText(r)}`)}>Check for new permits now</Btn>
+          <Btn busy={busy === 'run'} icon={RefreshCw} disabled={!!busy} onClick={() => runJob('run', 'run_now', 'last_run', 'Checking permits')}>Check for new permits now</Btn>
         </Card>
       </div>
 
