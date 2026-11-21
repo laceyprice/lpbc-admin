@@ -1,7 +1,8 @@
 'use client'
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useMemo } from 'react'
 import { Target, Download, RefreshCw, Loader2, Mail, FileCheck, Users, Settings, Send, X, Eye, CheckCircle2, AlertTriangle, Upload, Search, UserCheck, Ban, History, Power } from 'lucide-react'
 import { formatPhone } from '@/lib/utils'
+import { gradePermit, builderCounts, type Grade } from '@/lib/permit-grade'
 
 const BRAND = '#b8895a'
 type Tab = 'overview' | 'permits' | 'queue' | 'contractors' | 'template' | 'log'
@@ -212,16 +213,68 @@ function Permits({ data, busy, run }: { data: any; busy: string; run: RunFn }) {
           <input type="file" accept=".csv" className="hidden" onChange={upload} />
         </label>
       </Card>
+      <PermitSheets permits={data.permits} />
+    </div>
+  )
+}
+
+// Two sheets (builder grade / custom), each sortable by location, project size, price and $/sq ft.
+type SortKey = 'area' | 'sqft' | 'price' | 'ppsf' | 'applied'
+function PermitSheets({ permits }: { permits: any[] }) {
+  const [sheet, setSheet] = useState<Grade>('custom')
+  const [sort, setSort] = useState<{ key: SortKey; desc: boolean }>({ key: 'area', desc: false })
+  const graded = useMemo(() => { const bc = builderCounts(permits); return permits.map(p => ({ p, g: gradePermit(p, bc) })) }, [permits])
+  const counts = { custom: graded.filter(x => x.g.grade === 'custom').length, builder: graded.filter(x => x.g.grade === 'builder').length }
+  const rows = useMemo(() => {
+    const val = (x: any): any => sort.key === 'area' ? x.g.area.toLowerCase() : sort.key === 'applied' ? (x.p.apply_date || x.p.created_at || '') : x.g[sort.key]
+    return graded.filter(x => x.g.grade === sheet).sort((a, b) => {
+      const va = val(a), vb = val(b)
+      if (va == null || va === '') return vb == null || vb === '' ? 0 : 1        // blanks always last
+      if (vb == null || vb === '') return -1
+      const c = va < vb ? -1 : va > vb ? 1 : 0
+      return (sort.desc ? -c : c) || String(a.p.address || '').localeCompare(String(b.p.address || ''))
+    })
+  }, [graded, sheet, sort])
+  const by = (key: SortKey) => setSort(s => ({ key, desc: s.key === key ? !s.desc : key !== 'area' }))
+  const Th = ({ k, children, right }: { k: SortKey; children: any; right?: boolean }) => (
+    <th className={`p-3 cursor-pointer select-none whitespace-nowrap hover:text-gray-800 ${right ? 'text-right' : ''} ${sort.key === k ? 'text-gray-900' : ''}`} onClick={() => by(k)}>
+      {children}{sort.key === k ? (sort.desc ? ' ▼' : ' ▲') : ''}
+    </th>
+  )
+  function download() {
+    const head = ['Grade', 'Location', 'Address', 'County', 'Permit', 'Type', 'Status', 'Sq ft', 'Price', '$/sq ft', 'Applied', 'Contractor', 'Contact name', 'Email', 'Phone', 'Why']
+    const q = (v: any) => `"${String(v ?? '').replace(/"/g, '""')}"`
+    const lines = rows.map(({ p, g }) => [g.grade === 'custom' ? 'Custom' : 'Builder grade', g.area, p.address, p.county, p.permit_number, p.permit_type, p.status, g.sqft, g.price, g.ppsf, fmtDate(p.apply_date || p.created_at), p.contractor_company, p.contractor_name, p.contractor_email, p.contractor_phone, g.reasons.join('; ')].map(q).join(','))
+    const url = URL.createObjectURL(new Blob([[head.map(q).join(','), ...lines].join('\n')], { type: 'text/csv' }))
+    const a = document.createElement('a'); a.href = url; a.download = `permits-${sheet === 'custom' ? 'custom' : 'builder-grade'}.csv`; a.click(); URL.revokeObjectURL(url)
+  }
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-2">
+        {(['custom', 'builder'] as Grade[]).map(k => (
+          <button key={k} onClick={() => setSheet(k)} className={`px-4 py-2 rounded-xl text-sm font-semibold border ${sheet === k ? 'text-white border-transparent' : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'}`} style={sheet === k ? { background: BRAND } : undefined}>
+            {k === 'custom' ? 'Custom' : 'Builder grade'} <span className="opacity-75 ml-1">{counts[k]}</span>
+          </button>
+        ))}
+        <span className="text-xs text-gray-500 flex-1 min-w-[200px]">Sorted by builder, location, size and price. The reasons are under each job. Click a column heading to sort.</span>
+        <button onClick={download} disabled={!rows.length} className="flex items-center gap-2 border border-gray-200 bg-white text-gray-700 font-semibold px-4 py-2 rounded-xl text-sm hover:bg-gray-50 disabled:opacity-50"><Download size={14} /> Download sheet</button>
+      </div>
       <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-x-auto">
         <table className="w-full text-sm">
-          <thead><tr className="text-left text-xs text-gray-500 uppercase border-b"><th className="p-3">Applied</th><th className="p-3">Permit</th><th className="p-3">Address</th><th className="p-3">Contractor</th><th className="p-3">Contact</th></tr></thead>
+          <thead><tr className="text-left text-xs text-gray-500 uppercase border-b">
+            <Th k="area">Location</Th><th className="p-3">Project</th><Th k="sqft" right>Size</Th><Th k="price" right>Price</Th><Th k="ppsf" right>$/sq ft</Th><Th k="applied">Applied</Th><th className="p-3">Contractor</th><th className="p-3">Contact</th>
+          </tr></thead>
           <tbody>
-            {data.permits.length === 0 && <tr><td colSpan={5} className="p-8 text-center text-gray-400">No permits yet. Click “Check for new permits now” on the Overview tab.</td></tr>}
-            {data.permits.map((p: any) => (
+            {rows.length === 0 && <tr><td colSpan={8} className="p-8 text-center text-gray-400">{permits.length ? 'No permits on this sheet.' : 'No permits yet. Click “Check for new permits now” on the Overview tab.'}</td></tr>}
+            {rows.map(({ p, g }) => (
               <tr key={p.id} className="border-b border-gray-50 align-top">
-                <td className="p-3 whitespace-nowrap">{fmtDate(p.apply_date || p.created_at)}<div className="text-xs text-gray-400">{p.county}</div></td>
-                <td className="p-3"><div className="font-semibold">{p.permit_number}</div><div className="text-xs text-gray-500">{p.permit_type}</div><div className="text-xs text-gray-400">{[p.status, p.square_feet ? `${p.square_feet} sq ft` : '', money(p.valuation)].filter(Boolean).join(' · ')}</div></td>
-                <td className="p-3">{p.address}</td>
+                <td className="p-3"><div className="font-semibold">{g.area}</div><div className="text-xs text-gray-500">{p.address}</div><div className="text-xs text-gray-400">{p.county}</div></td>
+                <td className="p-3"><div className="font-semibold">{p.permit_number}</div><div className="text-xs text-gray-500">{p.permit_type}</div><div className="text-xs text-gray-400">{p.status}</div>
+                  <div className={`text-xs mt-1 ${g.grade === 'custom' ? 'text-amber-700' : 'text-slate-500'}`}>{g.reasons.join(' · ') || 'not enough info'}</div></td>
+                <td className="p-3 text-right whitespace-nowrap">{g.sqft ? `${g.sqft.toLocaleString()} sq ft` : <span className="text-gray-300">—</span>}</td>
+                <td className="p-3 text-right whitespace-nowrap">{g.price ? money(g.price) : <span className="text-gray-300">—</span>}</td>
+                <td className="p-3 text-right whitespace-nowrap">{g.ppsf ? `${g.ppsf}` : <span className="text-gray-300" title={/okaloosa/i.test(p.county || '') ? 'Okaloosa sets the price by a flat rate per sq ft, so it says nothing about the finish' : ''}>—</span>}</td>
+                <td className="p-3 whitespace-nowrap">{fmtDate(p.apply_date || p.created_at)}</td>
                 <td className="p-3">{p.contractor_company || p.contractor_name || <span className="text-gray-400">Owner/none listed</span>}{p.contractor_company && p.contractor_name && <div className="text-xs text-gray-500">{p.contractor_name}</div>}</td>
                 <td className="p-3 text-xs">{p.contractor_email && <div>{p.contractor_email}</div>}{p.contractor_phone && <div>{formatPhone(p.contractor_phone)}</div>}{p.contact_id && <div className="text-green-700 font-semibold">In CRM</div>}</td>
               </tr>
